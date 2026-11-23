@@ -9,8 +9,9 @@ export default function ContactsPage() {
       <div>
         <h2 className="text-sm font-medium text-muted">Contacts</h2>
         <p className="text-xs text-muted/80">
-          Server-rendered shell, client-side table fed by{" "}
-          <code>GET /api/contacts</code> through TanStack Query.
+          The CRM table you maintain by hand (<code>public.contacts</code>). Addresses we extracted
+          from a payload live per lead instead — under <b>Found channels</b> on any lead, with a
+          one-click “add to contacts list”.
         </p>
       </div>
       <ContactsView />

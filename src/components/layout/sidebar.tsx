@@ -4,15 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-const NAV = [
-  { href: "/", label: "Overview", icon: "◧" },
-  { href: "/leads", label: "Leads", icon: "⌁" },
-  { href: "/contacts", label: "Contacts", icon: "◉" },
-  { href: "/emails", label: "Email log", icon: "✉" },
-  { href: "/settings/senders", label: "Senders", icon: "⚙" },
-  { href: "/settings/prompts", label: "Prompts", icon: "✎" },
-  { href: "/api-docs", label: "API", icon: "{}" },
-] as const;
+import { NAV } from "./nav";
 
 export function Sidebar() {
   const pathname = usePathname();

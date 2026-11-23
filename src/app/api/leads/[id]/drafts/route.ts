@@ -7,6 +7,7 @@ import { manualDraftSchema } from "@/lib/validation/outreach";
 import { draftsRepo, proposalsRepo } from "@/server/db/outreach.repo";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { textToHtml } from "@/server/services/templates";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ async function readJson(request: NextRequest) {
 /** GET /api/leads/:id/drafts — every draft on the lead. */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   return ok({ drafts: await leadsRepo.drafts(id) });
 });
 
@@ -45,7 +46,7 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const input = parseOrThrow(manualDraftSchema, await readJson(request));
 
   const recipient = input.toEmail.trim().toLowerCase();

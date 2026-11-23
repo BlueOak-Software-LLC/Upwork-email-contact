@@ -4,6 +4,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { parseOrThrow } from "@/server/http/errors";
 import { sendDraftSchema } from "@/lib/validation/outreach";
 import { sendDraft } from "@/server/services/draft.service";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // PDF render + SMTP
@@ -21,7 +22,7 @@ type Ctx = { id: string };
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "draft id");
   const body = await request.text();
   const input = parseOrThrow(
     sendDraftSchema,

@@ -379,6 +379,79 @@ function toBlock(value: unknown, verifiedReferences: Array<{ name: string; url: 
 
 const normalizeUrl = (value: string) => value.toLowerCase().replace(/[\/.]+$/, "").trim();
 
+/**
+ * Tell a human reviewer what their edit lost.
+ *
+ * `sanitizePpd` legitimately throws away content that cannot be rendered — an
+ * empty block, empty list lines, a reference nobody vouches for, anything past
+ * the per-section caps. Silently doing that is exactly how "I edited it and my
+ * change disappeared" looks, so the edit endpoint walks the submitted document
+ * and reports each drop in plain words.
+ */
+export function describePpdEditDrops(
+  input: unknown,
+  verifiedReferences: Array<{ name: string; url: string }> = [],
+): string[] {
+  const notes: string[] = [];
+  const obj = record(input);
+  const ppdRaw = record(pick(obj, ["ppd", "proposal", "document", "professional_proposal"]) ?? obj);
+  const sectionsRaw = array(pick(ppdRaw, ["sections", "blocks", "content"]));
+  if (!sectionsRaw.length) return ["no sections in the submitted document — the stored text was kept"];
+
+  sectionsRaw.slice(MAX.sections).forEach((_, offset) => {
+    notes.push(
+      `section ${MAX.sections + offset + 1} dropped: a document holds at most ${MAX.sections} sections`,
+    );
+  });
+
+  sectionsRaw.slice(0, MAX.sections).forEach((entry, index) => {
+    const raw = record(entry);
+    const title =
+      flat(pick(raw, ["title", "heading", "name"]), 60) ||
+      flat(raw.id, 40) ||
+      `section ${index + 1}`;
+    const blocksRaw = array(pick(raw, ["blocks", "content", "body"]));
+
+    blocksRaw.slice(MAX.blocksPerSection).forEach((extra, offset) => {
+      notes.push(
+        `“${title}”: block ${MAX.blocksPerSection + offset + 1} dropped (${MAX.blocksPerSection} per section is the limit)`,
+      );
+    });
+
+    blocksRaw.slice(0, MAX.blocksPerSection).forEach((blockRaw, blockIndex) => {
+      const block = toBlock(blockRaw, verifiedReferences);
+      const type = flat(record(blockRaw).type, 40) || "untyped";
+      if (!block) {
+        if (type === "references" || type === "reference" || type === "portfolio") {
+          notes.push(
+            `“${title}” block ${blockIndex + 1}: every reference was dropped — only URLs we have verified ourselves can be printed`,
+          );
+        } else {
+          notes.push(`“${title}” block ${blockIndex + 1} (${type}) dropped: it contained no text`);
+        }
+        return;
+      }
+
+      const inItems = array(
+        pick(record(blockRaw), ["items", "bullets", "points", "paragraphs", "steps", "rows"]),
+      ).length;
+      const outItems =
+        block.type === "keyValueTable" ? block.rows.length : block.type === "note" ? 1 : block.items.length;
+
+      if (inItems > outItems) {
+        const lost = inItems - outItems;
+        notes.push(
+          block.type === "references"
+            ? `“${title}”: ${lost} reference(s) dropped — only URLs we have verified can be printed`
+            : `“${title}”: ${lost} empty line(s) removed from the ${block.type} block`,
+        );
+      }
+    });
+  });
+
+  return notes.slice(0, 8);
+}
+
 function fallbackSections(): PpdSection[] {
   return [
     {

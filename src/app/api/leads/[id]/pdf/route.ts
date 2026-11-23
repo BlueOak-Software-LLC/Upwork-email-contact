@@ -6,6 +6,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { proposalsRepo } from "@/server/db/outreach.repo";
+import { requireParamId } from "@/server/http/id";
 import {
   createProposalPdfUrl,
   loadProposalPdfBytes,
@@ -43,7 +44,7 @@ const querySchema = z.object({
  */
 export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const query = parseOrThrow(querySchema, Object.fromEntries(request.nextUrl.searchParams));
 
   const proposals = await leadsRepo.proposals(id);

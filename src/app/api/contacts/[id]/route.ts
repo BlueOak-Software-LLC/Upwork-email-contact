@@ -5,6 +5,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { contactsRepo } from "@/server/db/contacts.repo";
 import { updateContactSchema } from "@/lib/validation/contact";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -22,14 +23,14 @@ async function readJson(request: NextRequest) {
 /** GET /api/contacts/:id */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "contact id");
   return ok({ contact: await contactsRepo.byId(id) });
 });
 
 /** PATCH /api/contacts/:id — partial update (status changes, notes, tags…). */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "contact id");
   const patch = parseOrThrow(updateContactSchema, await readJson(request));
   return ok({ contact: await contactsRepo.update(id, patch) });
 });
@@ -37,7 +38,7 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
 /** DELETE /api/contacts/:id */
 export const DELETE = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "contact id");
   await contactsRepo.remove(id);
   return noContent();
 });

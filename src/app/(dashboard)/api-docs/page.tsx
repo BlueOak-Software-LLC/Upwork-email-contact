@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { CodeBlock } from "@/components/ui/code-block";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "API" };
@@ -131,8 +132,10 @@ const ENDPOINTS: Endpoint[] = [
     sample: `curl -s -X PATCH $APP_URL/api/proposals/$PROPOSAL_ID -H "content-type: application/json" \\`
       + ` -H "x-api-key: $API_MASTER_KEY" -d '{"ppd": { …the edited document… }}'`,
     response: `{ "data": { "proposal": { "ppd": …, "ppd_reviewed_at": "…", "pdf_status": "pending" },
-  "warnings": ["ppd updated — the PDF will be re-rendered from it on the next preview or send"],
-  "lead": { …full detail… } } }`,
+  "warnings": ["ppd updated — the PDF will be re-rendered from it on the next preview or send",
+    "“Deliverables” block 2 (bullets) dropped: it contained no text",
+    "“Deliverables”: 1 empty line(s) will be removed from the bullets block"],
+  "lead": { …full refreshed detail — the dashboard writes this straight to cache… } } }`,
   },
   {
     method: "POST",
@@ -247,8 +250,24 @@ export default function ApiDocsPage() {
         </p>
       </div>
 
+      <nav className="card flex flex-wrap gap-x-4 gap-y-1 p-4 text-[11px]">
+        {ENDPOINTS.map((ep) => (
+          <a
+            key={ep.method + ep.path}
+            href={`#${ep.method}-${ep.path.replace(/[^a-z0-9]/gi, "-")}`}
+            className="text-muted transition hover:text-brand"
+          >
+            {ep.method} {ep.path}
+          </a>
+        ))}
+      </nav>
+
       {ENDPOINTS.map((ep) => (
-        <section key={ep.method + ep.path} className="card space-y-3 p-5">
+        <section
+          key={ep.method + ep.path}
+          id={`${ep.method}-${ep.path.replace(/[^a-z0-9]/gi, "-")}`}
+          className="card scroll-mt-24 space-y-3 p-5"
+        >
           <div className="flex flex-wrap items-center gap-3">
             <Badge tone={ep.method === "GET" ? "brand" : "warn"}>{ep.method}</Badge>
             <code className="text-sm font-medium">{ep.path}</code>
@@ -257,12 +276,8 @@ export default function ApiDocsPage() {
           <p className="text-xs text-muted">
             <span className="text-muted/70">params:</span> {ep.params}
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-canvas p-3 text-[11px] leading-relaxed text-muted">
-            {ep.sample}
-          </pre>
-          <pre className="overflow-x-auto rounded-lg bg-canvas p-3 text-[11px] leading-relaxed text-muted/80">
-            {ep.response}
-          </pre>
+          <CodeBlock code={ep.sample} label="Copy request" />
+          <CodeBlock code={ep.response} label="Copy shape" collapseAt={8} />
         </section>
       ))}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,17 +25,45 @@ export function Modal({
   className?: string;
 }) {
   const id = useId();
+  const panel = useRef<HTMLDivElement>(null);
+  const restoreTo = useRef<Element | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    restoreTo.current = document.activeElement;
+    panel.current?.focus();
+
+    const FOCUSABLE =
+      'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])';
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      // Keep the tab order inside the dialog while it is open.
+      const items = [...(panel.current?.querySelectorAll(FOCUSABLE) ?? [])].filter(
+        (node) => (node as HTMLElement).offsetParent !== null,
+      ) as HTMLElement[];
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      (restoreTo.current as HTMLElement | null)?.focus?.();
     };
   }, [open, onClose]);
 
@@ -49,10 +77,15 @@ export function Modal({
       }}
     >
       <div
+        ref={panel}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={`${id}-title`}
-        className={cn("card w-full max-w-lg p-5 shadow-2xl", className)}
+        className={cn(
+          "animate-pop-in card w-full max-w-lg p-5 shadow-2xl outline-none",
+          className,
+        )}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>

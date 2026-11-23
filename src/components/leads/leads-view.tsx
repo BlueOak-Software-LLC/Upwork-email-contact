@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
-import { useLeads } from "@/lib/api/outreach-hooks";
+import { useLeads, type LeadSummary } from "@/lib/api/outreach-hooks";
+import { IngestDialog } from "./ingest-dialog";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TimeAgo } from "@/components/ui/time-ago";
 import { Input, Select } from "@/components/ui/input";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
@@ -40,6 +43,7 @@ function LeadsTable() {
   const { data, isLoading, isFetching, error, refetch } = useLeads(filters);
   const rows = data?.data ?? [];
   const meta = data?.meta;
+  const [ingestOpen, setIngestOpen] = useState(false);
 
   const setParam = (key: string, value: string | undefined) => {
     const next = new URLSearchParams(params.toString());
@@ -96,27 +100,86 @@ function LeadsTable() {
             Apply
           </Button>
         </form>
-        <Button variant="ghost" size="sm" onClick={() => refetch()} loading={isFetching}>
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 text-[11px] text-muted">
+            {isFetching ? (
+              <>
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> updating
+              </>
+            ) : (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-brand/60" /> live
+              </>
+            )}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => refetch()} loading={isFetching}>
+            Refresh
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setIngestOpen(true)}>
+            Ingest payload
+          </Button>
+        </div>
       </div>
+
+      <IngestDialog open={ingestOpen} onClose={() => setIngestOpen(false)} />
 
       <div className="card overflow-hidden">
         {isLoading ? (
           <TableSkeleton rows={8} />
         ) : error ? (
-          <div className="p-6 text-sm text-danger">
-            {(error as Error).message}
-            <p className="mt-2 text-xs text-muted">
-              POST a payload to <code>/api/leads</code> first, or apply the 0002 migration.
-            </p>
-          </div>
+          <EmptyState
+            tone="danger"
+            icon="✕"
+            title="Leads could not be loaded"
+            description={
+              <>
+                {(error as Error).message} — the table reads <code>GET /api/leads</code>; apply the
+                migrations and set the Supabase env vars if this is a fresh deploy.
+              </>
+            }
+            action={
+              <Button size="sm" onClick={() => refetch()} loading={isFetching}>
+                Try again
+              </Button>
+            }
+          />
         ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-sm text-muted">
-            No leads yet —{" "}
-            <code>POST {`{ "job_information": … }`}</code> to{" "}
-            <code>/api/leads</code> and they appear here.
-          </div>
+          <EmptyState
+            title={
+              params.get("q") || params.get("status")
+                ? "Nothing matches these filters"
+                : "No leads yet"
+            }
+            description={
+              params.get("q") || params.get("status") ? (
+                <>Search covers the title, company, client, industry and the whole post body.</>
+              ) : (
+                <>
+                  Every object posted to <code>POST /api/leads</code> lands here. Paste one now, or
+                  point your scraper at the endpoint.
+                </>
+              )
+            }
+            action={
+              <>
+                {params.get("q") || params.get("status") ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setSearch("");
+                      router.replace(pathname);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : null}
+                <Button size="sm" onClick={() => setIngestOpen(true)}>
+                  Ingest payload
+                </Button>
+              </>
+            }
+          />
         ) : (
           <Table>
             <THead>
@@ -124,18 +187,23 @@ function LeadsTable() {
                 <Th>Job</Th>
                 <Th>Client / company</Th>
                 <Th>Confidence</Th>
-                <Th>Channels</Th>
+                <Th>Pipeline</Th>
                 <Th>Status</Th>
                 <Th>Received</Th>
               </Tr>
             </THead>
             <TBody>
               {rows.map((lead) => (
-                <Tr key={lead.id}>
+                <Tr
+                  key={lead.id}
+                  onClick={() => router.push(`/leads/${lead.id}`)}
+                  className="cursor-pointer transition hover:bg-surface-2/60"
+                >
                   <Td className="max-w-sm">
                     <Link
                       href={`/leads/${lead.id}`}
                       className="font-medium text-ink hover:text-brand focus-ring"
+                      onClick={(event) => event.stopPropagation()}
                     >
                       {truncate(lead.job_title ?? "[untitled job]", 68)}
                     </Link>
@@ -153,18 +221,14 @@ function LeadsTable() {
                   <Td>
                     <ConfidenceBadge value={lead.overall_confidence} />
                   </Td>
-                  <Td className="tabular text-muted">
-                    {(lead.contact_count ?? 0) > 0 ? (
-                      <span>{lead.contact_count} found</span>
-                    ) : (
-                      <span className="text-muted/60">—</span>
-                    )}
+                  <Td>
+                    <PipelineChips lead={lead} />
                   </Td>
                   <Td>
                     <StatusBadge status={lead.status} />
                   </Td>
-                  <Td className="tabular text-xs text-muted">
-                    {new Date(lead.received_at).toLocaleDateString()}
+                  <Td className="text-xs text-muted">
+                    <TimeAgo value={lead.received_at} />
                   </Td>
                 </Tr>
               ))}
@@ -213,6 +277,40 @@ function Pager({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Four dots = the pipeline at a glance: text, channel, document, delivery. */
+function PipelineChips({ lead }: { lead: LeadSummary }) {
+  const stages = [
+    {
+      key: "post",
+      on: Boolean(lead.job_description?.trim() || lead.job_title?.trim()),
+      label: lead.job_description?.trim()
+        ? `${lead.job_description.trim().length} chars of post text`
+        : "no post text",
+    },
+    { key: "channel", on: (lead.contact_count ?? 0) > 0, label: `${lead.contact_count ?? 0} channel(s) found` },
+    {
+      key: "doc",
+      on: ["enriched", "proposal_ready", "draft_created", "sent"].includes(lead.status),
+      label: "document written",
+    },
+    { key: "sent", on: lead.status === "sent", label: "email delivered" },
+  ];
+
+  return (
+    <span className="flex items-center gap-1" title={stages.map((s) => `${s.label}${s.on ? " ✓" : " ✗"}`).join("\n")}>
+      {stages.map((stage) => (
+        <span
+          key={stage.key}
+          className={cn(
+            "h-1.5 w-5 rounded-full",
+            stage.on ? "bg-brand" : "bg-surface-2 border border-line",
+          )}
+        />
+      ))}
+    </span>
   );
 }
 

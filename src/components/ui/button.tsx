@@ -23,12 +23,14 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { className, variant = "primary", size = "md", loading, children, disabled, ...props },
+  { className, variant = "primary", size = "md", loading, children, disabled, type = "button", ...props },
   ref,
 ) {
   return (
     <button
       ref={ref}
+      type={type}
+      aria-busy={loading || undefined}
       disabled={disabled || loading}
       className={cn(
         "inline-flex select-none items-center gap-2 rounded-lg font-medium transition focus-ring disabled:cursor-not-allowed disabled:opacity-60",

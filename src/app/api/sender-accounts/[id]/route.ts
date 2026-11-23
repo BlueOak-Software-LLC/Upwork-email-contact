@@ -5,6 +5,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { updateSenderAccountSchema } from "@/lib/validation/outreach";
 import { senderAccountsRepo } from "@/server/db/sender-accounts.repo";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -22,14 +23,14 @@ async function readJson(request: NextRequest) {
 /** GET /api/sender-accounts/:id */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "sender account id");
   return ok({ account: await senderAccountsRepo.getPublic(id) });
 });
 
 /** PATCH /api/sender-accounts/:id — omit `smtpPassword` to keep the stored one. */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "sender account id");
   const input = parseOrThrow(updateSenderAccountSchema, await readJson(request));
 
   const account = await senderAccountsRepo.update(id, {
@@ -53,7 +54,7 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
 /** DELETE /api/sender-accounts/:id */
 export const DELETE = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "sender account id");
   await senderAccountsRepo.remove(id);
   return noContent();
 });

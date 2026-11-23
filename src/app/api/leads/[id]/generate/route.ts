@@ -6,6 +6,7 @@ import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { generateProposalSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { generatePpdDocument, resolveRecipientContact } from "@/server/services/proposal.service";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // Groq (with retries)
@@ -37,7 +38,7 @@ async function readJsonOrEmpty(request: NextRequest) {
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const input = parseOrThrow(generateProposalSchema, await readJsonOrEmpty(request));
 
   const lead = await leadsRepo.byId(id);
@@ -86,6 +87,6 @@ export const POST = withApi<Ctx>(async (request, { params }) => {
 /** GET /api/leads/:id/generate — proposal history for the lead. */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   return ok({ proposals: await leadsRepo.proposals(id) });
 });

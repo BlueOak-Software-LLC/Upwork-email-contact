@@ -70,3 +70,33 @@ function safeJson(text: string) {
     return { error: { code: "bad_gateway", message: text.slice(0, 200) } };
   }
 }
+
+/**
+ * Binary sibling of `apiFetch` for routes that answer with a file (the PDF
+ * renderer). Goes through `fetch` so the same auth headers apply as for JSON
+ * calls — an <iframe src> could not send them.
+ */
+export async function apiFetchBlob(
+  path: string,
+  query?: FetchInit["query"],
+): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await fetch(buildUrl(path, query), {
+    headers: { accept: "application/pdf" },
+    credentials: "same-origin",
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const err = safeJson(text)?.error;
+    throw new ApiClientError(err?.message ?? `PDF request failed (${response.status})`, {
+      status: response.status,
+      code: err?.code ?? "http_error",
+      details: err?.details,
+    });
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? null;
+  return { blob, filename };
+}

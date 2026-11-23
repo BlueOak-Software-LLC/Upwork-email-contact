@@ -6,6 +6,7 @@ import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { generateEmailSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { generateEmailDraft } from "@/server/services/proposal.service";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -38,7 +39,7 @@ async function readJsonOrEmpty(request: NextRequest) {
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const input = parseOrThrow(generateEmailSchema, await readJsonOrEmpty(request));
 
   const proposals = await leadsRepo.proposals(id);

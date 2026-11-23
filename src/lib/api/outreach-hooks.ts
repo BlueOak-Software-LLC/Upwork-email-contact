@@ -1,5 +1,9 @@
+"use client";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchBlob } from "./client";
+import { useToast } from "@/components/ui/toast";
+import { errorMessage } from "./errors";
 import type {
   EmailDraftRow,
   LeadContactRow,
@@ -22,11 +26,119 @@ export interface LeadDetailDto {
   rawPayload: Record<string, unknown>;
 }
 
+export const leadKey = (id: string) => ["lead", id] as const;
+
+/**
+ * The single source of truth for one lead page.
+ *
+ * The server renders the first paint (passed in as `initialData`), then every
+ * mutation writes its result back into this cache — so generating, reviewing,
+ * drafting or sending updates the screen immediately. Nobody should have to
+ * press the browser refresh to see what they just did.
+ */
+export function useLead(leadId: string, initialData?: LeadDetailDto) {
+  return useQuery({
+    queryKey: leadKey(leadId),
+    queryFn: async () => (await apiFetch<LeadDetailDto>(`/api/leads/${leadId}`)).data,
+    initialData,
+    staleTime: 5_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+/** Replace the cached lead with a server-returned copy (mutations return it). */
+export function useLeadCache(leadId: string) {
+  const qc = useQueryClient();
+  return (detail: LeadDetailDto) => qc.setQueryData(leadKey(leadId), detail);
+}
+
+/**
+ * Render the PDF server-side from the reviewed PPD and keep it in memory only
+ * long enough to show or download it. Fetched as a blob because the route is
+ * header-authenticated, which a bare <iframe src> could not satisfy.
+ */
+export function useRenderPdf(leadId: string) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: ({
+      proposalId,
+      download,
+    }: {
+      proposalId?: string;
+      download?: boolean;
+      attachToDraftId?: string | null;
+    }) =>
+      apiFetchBlob(`/api/leads/${leadId}/pdf`, {
+        proposalId,
+        render: true,
+        ...(download ? { download: true } : {}),
+      }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: leadKey(leadId) });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      toast.success(
+        "PDF compiled",
+        `${(result.blob.size / 1024).toFixed(0)} KB from the reviewed document${
+          result.filename ? ` · ${result.filename}` : ""
+        }`,
+      );
+    },
+    onError: (error) => {
+      toast.error("PDF could not be rendered", errorMessage(error));
+    },
+  });
+}
+
+export interface IngestResponse {
+  lead: LeadRow;
+  created: boolean;
+  contacts: LeadContactRow[];
+  proposals: ProposalRow[];
+  drafts: EmailDraftRow[];
+  warnings: string[];
+  generation: {
+    attempted: number;
+    succeeded: number;
+    failed: number;
+    skipped?: boolean;
+    reason?: string;
+  } | null;
+}
+
+/**
+ * POST /api/leads — the same contract your scraper uses, so a payload can be
+ * pasted straight into the dashboard for testing or recovery.
+ */
+export function useIngestLead() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      apiFetch<IngestResponse>("/api/leads", { method: "POST", body: payload }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: leadKey(data.lead.id) });
+      toast.success(
+        data.created ? "Lead ingested" : "Lead updated (same dedupe key)",
+        `${data.contacts.length} contact(s) · ${
+          data.generation?.attempted
+            ? `${data.generation.succeeded} document(s) written`
+            : data.generation?.reason ?? "no document generated yet"
+        }`,
+      );
+      for (const warning of data.warnings) toast.warn("Ingest warning", warning);
+    },
+    onError: (error) => toast.error("Ingest failed", errorMessage(error)),
+  });
+}
+
 export function useLeads(filters: Record<string, string | number | undefined> = {}) {
   return useQuery({
     queryKey: ["leads", filters],
     queryFn: () => apiFetch<LeadSummary[]>("/api/leads", { query: filters }),
-    staleTime: 15_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -41,34 +153,50 @@ export function useSenderAccounts() {
 
 export function useCreateSenderAccount() {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       apiFetch<{ account: SenderAccountDto }>("/api/sender-accounts", {
         method: "POST",
         body,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sender-accounts"] }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["sender-accounts"] });
+      toast.success("Sender account added", data.account.from_email);
+    },
+    onError: (error) => toast.error("Could not add the account", errorMessage(error)),
   });
 }
 
 export function useDeleteSenderAccount() {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (id: string) =>
       apiFetch<null>(`/api/sender-accounts/${id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sender-accounts"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sender-accounts"] });
+      toast.success("Sender account removed");
+    },
+    onError: (error) => toast.error("Could not remove it", errorMessage(error)),
   });
 }
 
 export function useTestSenderAccount() {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (id: string) =>
       apiFetch<{ ok: boolean; account: string; error?: string }>(
         `/api/sender-accounts/${id}/test`,
         { method: "POST" },
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sender-accounts"] }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["sender-accounts"] });
+      if (data.ok) toast.success("SMTP login worked", data.account);
+      else toast.error("SMTP login failed", data.error ?? null);
+    },
+    onError: (error) => toast.error("Test could not run", errorMessage(error)),
   });
 }
 
@@ -118,6 +246,7 @@ export interface EmailRun {
 
 export function useGenerateProposal(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (body: {
       contactId?: string;
@@ -127,17 +256,25 @@ export function useGenerateProposal(leadId: string) {
       reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
     } = {}) =>
       apiFetch<PpdRun>(`/api/leads/${leadId}/generate`, { method: "POST", body }),
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: leadKey(leadId) });
       qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["lead", leadId] });
-      qc.invalidateQueries({ queryKey: ["proposal"] });
+      toast.success(
+        `PPD v${data.proposal.version} written`,
+        `${data.documentWords} words${
+          data.recipient ? ` for ${data.recipient.email}` : " with no recipient yet"
+        }${data.costUsd !== null ? ` · ~$${data.costUsd.toFixed(5)}` : ""}`,
+      );
+      for (const warning of data.warnings) toast.warn("PPD warning", warning);
     },
+    onError: (error) => toast.error("PPD generation failed", errorMessage(error)),
   });
 }
 
 /** Step 2: write the email for the reviewed PPD and open the draft. */
 export function useGenerateEmailDraft(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (body: {
       proposalId?: string;
@@ -149,16 +286,34 @@ export function useGenerateEmailDraft(leadId: string) {
       reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
     } = {}) =>
       apiFetch<EmailRun>(`/api/leads/${leadId}/generate-email`, { method: "POST", body }),
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: leadKey(leadId) });
       qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["lead", leadId] });
+      qc.invalidateQueries({ queryKey: ["email-logs"] });
+      if (data.draftError) {
+        toast.warn("Email written, draft not created", data.draftError);
+      } else {
+        toast.success(
+          data.draft ? "Email draft created" : "Email copy written to the proposal",
+          data.email.subject,
+        );
+      }
+      for (const warning of data.warnings) toast.warn("Email warning", warning);
     },
+    onError: (error) => toast.error("Email draft failed", errorMessage(error)),
   });
 }
 
-/** The review step: save an edited PPD back onto the proposal. */
+/**
+ * The review step: save an edited PPD back onto the proposal.
+ *
+ * The PATCH answer carries the refreshed lead in full, so the cache is replaced
+ * straight from it — the read view, the step chips and the PDF badge change in
+ * the same frame the save lands. No refetch, no manual refresh.
+ */
 export function useSaveProposal(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: ({
       proposalId,
@@ -167,20 +322,27 @@ export function useSaveProposal(leadId: string) {
       proposalId: string;
       patch: { ppd?: unknown; emailSubject?: string; emailContent?: string; reviewed?: boolean };
     }) =>
-      apiFetch<{ proposal: ProposalRow; warnings: string[] }>(`/api/proposals/${proposalId}`, {
-        method: "PATCH",
-        body: patch,
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["lead", leadId] });
+      apiFetch<{ proposal: ProposalRow; warnings: string[]; lead: LeadDetailDto }>(
+        `/api/proposals/${proposalId}`,
+        { method: "PATCH", body: patch },
+      ),
+    onSuccess: ({ data }) => {
+      qc.setQueryData(leadKey(leadId), data.lead);
       qc.invalidateQueries({ queryKey: ["leads"] });
+      toast.success(
+        "Document saved and marked reviewed",
+        data.warnings[0] ?? "The PDF re-renders from this text on preview or send.",
+      );
+      for (const warning of data.warnings.slice(1)) toast.warn("Saved with a warning", warning);
     },
+    onError: (error) => toast.error("Could not save the document", errorMessage(error)),
   });
 }
 
 /** A hand-written draft to any address, no Groq call. */
 export function useCreateManualDraft(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (body: {
       toEmail: string;
@@ -189,8 +351,18 @@ export function useCreateManualDraft(leadId: string) {
       bodyText: string;
       proposalId?: string | null;
       senderAccountId?: string | null;
-    }) => apiFetch<{ draft: EmailDraftRow }>(`/api/leads/${leadId}/drafts`, { method: "POST", body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lead", leadId] }),
+    }) =>
+      apiFetch<{ draft: EmailDraftRow; lead?: LeadDetailDto }>(`/api/leads/${leadId}/drafts`, {
+        method: "POST",
+        body,
+      }),
+    onSuccess: ({ data }) => {
+      if (data.lead) qc.setQueryData(leadKey(leadId), data.lead);
+      else qc.invalidateQueries({ queryKey: leadKey(leadId) });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      toast.success("Draft created", `to ${data.draft.to_email}`);
+    },
+    onError: (error) => toast.error("Could not create the draft", errorMessage(error)),
   });
 }
 
@@ -223,6 +395,7 @@ export function usePrompts() {
 
 export function useSavePrompt() {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (body: {
       key: PromptDto["key"];
@@ -233,25 +406,49 @@ export function useSavePrompt() {
       maxTokens?: number | null;
       reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | null;
       note?: string | null;
-    }) => apiFetch<{ prompt: PromptDto }>("/api/prompts", { method: "PUT", body }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompts"] }),
+    }) =>
+      apiFetch<{ prompt: PromptDto; warnings?: string[] }>("/api/prompts", {
+        method: "PUT",
+        body,
+      }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["prompts"] });
+      qc.invalidateQueries({ queryKey: ["lead"] });
+      toast.success(`${data.prompt.label} prompt saved`, "It applies to the next generation.");
+      for (const warning of data.warnings ?? []) toast.warn("Saved with a warning", warning);
+    },
+    onError: (error) => toast.error("Could not save the prompt", errorMessage(error)),
   });
 }
 
 export function useResetPrompt() {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: (key: PromptDto["key"]) =>
       apiFetch<{ prompt: PromptDto; reset: boolean }>(`/api/prompts/${key}/reset`, {
         method: "POST",
         body: {},
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["prompts"] }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["prompts"] });
+      qc.invalidateQueries({ queryKey: ["lead"] });
+      toast.success(`${data.prompt.label} prompt reset`, "Back to the code default.");
+    },
+    onError: (error) => toast.error("Could not reset the prompt", errorMessage(error)),
   });
+}
+
+export interface SendResult {
+  status: string;
+  to: string;
+  provider: string;
+  error: string | null;
 }
 
 export function useSendDraft(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: ({
       draftId,
@@ -262,23 +459,42 @@ export function useSendDraft(leadId: string) {
       attachPdf?: boolean;
       senderAccountId?: string;
     }) =>
-      apiFetch<{
-        draft: EmailDraftRow;
-        results: Array<{ status: string; to: string; provider: string; error: string | null }>;
-      }>(`/api/drafts/${draftId}/send`, {
-        method: "POST",
-        body: { attachPdf, ...(senderAccountId ? { senderAccountId } : {}) },
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["lead", leadId] });
+      apiFetch<{ draft: EmailDraftRow; results: SendResult[]; lead?: LeadDetailDto }>(
+        `/api/drafts/${draftId}/send`,
+        { method: "POST", body: { attachPdf, ...(senderAccountId ? { senderAccountId } : {}) } },
+      ),
+    onSuccess: ({ data }) => {
+      if (data.lead) qc.setQueryData(leadKey(leadId), data.lead);
+      else qc.invalidateQueries({ queryKey: leadKey(leadId) });
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: ["email-logs"] });
+
+      const provider = data.results[0]?.provider ?? "smtp";
+      const notSent = data.results.filter((r) => r.status !== "sent" && r.status !== "queued");
+      if (notSent.length) {
+        toast.error(
+          `${notSent.length} recipient(s) not delivered`,
+          notSent.map((r) => `${r.to}: ${r.error ?? r.status}`).join("\n"),
+        );
+      } else if (provider === "log") {
+        toast.warn(
+          "Dry run — nothing left this server",
+          `EMAIL_PROVIDER=log recorded ${data.results.map((r) => r.to).join(", ")} instead of sending.`,
+        );
+      } else {
+        toast.success(
+          "Draft sent",
+          `${data.results.map((r) => r.to).join(", ")} · ${provider}`,
+        );
+      }
     },
+    onError: (error) => toast.error("Send failed", errorMessage(error)),
   });
 }
 
 export function useEditDraft(leadId: string) {
   const qc = useQueryClient();
+  const toast = useToast();
   return useMutation({
     mutationFn: ({
       draftId,
@@ -295,11 +511,56 @@ export function useEditDraft(leadId: string) {
         status?: "draft" | "queued" | "cancelled";
       };
     }) =>
-      apiFetch<{ draft: EmailDraftRow }>(`/api/drafts/${draftId}`, {
+      apiFetch<{ draft: EmailDraftRow; lead?: LeadDetailDto }>(`/api/drafts/${draftId}`, {
         method: "PATCH",
         body: patch,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["lead", leadId] }),
+    onSuccess: ({ data }) => {
+      if (data.lead) qc.setQueryData(leadKey(leadId), data.lead);
+      else qc.invalidateQueries({ queryKey: leadKey(leadId) });
+      toast.success("Draft saved", data.draft.subject || "(no subject)");
+    },
+    onError: (error) => toast.error("Could not save the draft", errorMessage(error)),
+  });
+}
+
+/** PATCH /api/leads/:id — status change, or a late job_description. */
+export function useUpdateLead(leadId: string) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (patch: {
+      status?: string;
+      job_description?: string | null;
+      error?: string | null;
+    }) =>
+      apiFetch<LeadDetailDto & { hints?: string[] }>(`/api/leads/${leadId}`, {
+        method: "PATCH",
+        body: patch,
+      }),
+    onSuccess: (response) => {
+      qc.setQueryData(leadKey(leadId), response.data);
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      const hints = response.data.hints ?? [];
+      if (hints.length) toast.info("Lead updated", hints.join("\n"));
+      else toast.success("Lead updated");
+    },
+    onError: (error) => toast.error("Could not update the lead", errorMessage(error)),
+  });
+}
+
+/** DELETE /api/leads/:id — used by the destructive action on the lead page. */
+export function useDeleteLead() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (leadId: string) => apiFetch<null>(`/api/leads/${leadId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      qc.invalidateQueries({ queryKey: ["email-logs"] });
+      toast.success("Lead deleted");
+    },
+    onError: (error) => toast.error("Could not delete the lead", errorMessage(error)),
   });
 }
 

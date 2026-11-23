@@ -15,8 +15,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
               if (status && status < 500) return false;
               return count < 2;
             },
-            refetchOnWindowFocus: false,
-            staleTime: 15_000,
+            // Coming back to the tab should always show current data — the
+            // alternative the user complained about was pressing F5.
+            refetchOnWindowFocus: true,
+            staleTime: 10_000,
           },
           mutations: { retry: 0 },
         },

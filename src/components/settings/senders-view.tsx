@@ -8,9 +8,12 @@ import {
   useTestSenderAccount,
 } from "@/lib/api/outreach-hooks";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { StatusBadge } from "@/components/ui/badge";
+import { TimeAgo } from "@/components/ui/time-ago";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 
@@ -103,9 +106,21 @@ export function SendersView() {
         {accounts.isLoading ? (
           <TableSkeleton rows={2} />
         ) : (accounts.data ?? []).length === 0 ? (
-          <p className="p-10 text-center text-sm text-muted">
-            No sender accounts yet — add the first of your two mailboxes.
-          </p>
+          <EmptyState
+            title="No sender accounts yet"
+            description={
+              <>
+                Add the mailbox you want to send from. The SMTP password is encrypted with
+                <code> APP_ENCRYPTION_KEY</code> before it reaches Postgres and is never returned by
+                the API.
+              </>
+            }
+            action={
+              <Button size="sm" onClick={() => setOpen(true)}>
+                Add sender account
+              </Button>
+            }
+          />
         ) : (
           <Table>
             <THead>
@@ -141,13 +156,28 @@ export function SendersView() {
                     </span>
                   </Td>
                   <Td className="text-xs text-muted">
-                    {account.has_password ? account.password_mask : "not set"}
+                    {account.has_password ? (
+                      <span className="tabular">{account.password_mask}</span>
+                    ) : (
+                      <span className="rounded bg-warn/12 px-1.5 py-0.5 text-warn">
+                        password not stored — sending with this account will fail
+                      </span>
+                    )}
                   </Td>
                   <Td className="tabular text-xs text-muted">
                     {account.sent_count}/{account.daily_limit}/day
                   </Td>
                   <Td>
                     <StatusBadge status={account.status} />
+                    <div className="mt-1 text-[11px] text-muted/70">
+                      {account.last_verified_at ? (
+                        <>
+                          verified <TimeAgo value={account.last_verified_at} />
+                        </>
+                      ) : (
+                        "never verified"
+                      )}
+                    </div>
                     {account.last_error ? (
                       <div className="mt-1 max-w-[16rem] truncate text-[11px] text-danger">
                         {account.last_error}
@@ -161,20 +191,15 @@ export function SendersView() {
                       loading={test.isPending && test.variables === account.id}
                       onClick={() => test.mutate(account.id, { onError: () => undefined })}
                     >
-                      Test
+                      Test login
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-danger"
-                      loading={remove.isPending && remove.variables === account.id}
-                      onClick={() => {
-                        if (confirm(`Remove ${account.from_email}?`))
-                          remove.mutate(account.id, { onError: () => undefined });
-                      }}
-                    >
-                      Remove
-                    </Button>
+                    <ConfirmAction
+                      label="Remove"
+                      title={`Remove ${account.from_email}?`}
+                      description="Drafts that chose this sender fall back to the SMTP settings from the environment."
+                      busy={remove.isPending && remove.variables === account.id}
+                      onConfirm={() => remove.mutate(account.id)}
+                    />
                   </Td>
                 </Tr>
               ))}
@@ -184,7 +209,10 @@ export function SendersView() {
       </div>
 
       {test.data ? (
-        <p className={test.data.data.ok ? "text-xs text-brand" : "text-xs text-danger"}>
+        <p
+          className={test.data.data.ok ? "text-xs text-brand" : "text-xs text-danger"}
+          role="status"
+        >
           {test.data.data.ok
             ? `${test.data.data.account}: SMTP login OK`
             : `${test.data.data.account}: ${test.data.data.error}`}

@@ -2,6 +2,7 @@ import { withApi } from "@/server/http/handler";
 import { ok } from "@/server/http/responses";
 import { requireApiKey } from "@/server/http/auth";
 import { verifySmtpAccount } from "@/server/services/smtp.service";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -17,6 +18,6 @@ type Ctx = { id: string };
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "sender account id");
   return ok(await verifySmtpAccount(id));
 });

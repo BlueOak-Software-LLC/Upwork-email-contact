@@ -6,6 +6,7 @@ import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { editDraftSchema } from "@/lib/validation/outreach";
 import { draftsRepo } from "@/server/db/outreach.repo";
 import { editDraft } from "@/server/services/draft.service";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ async function readJson(request: NextRequest) {
 /** GET /api/drafts/:id — the stored draft (subject, body, sender, PDF link). */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "draft id");
   return ok({ draft: await draftsRepo.byId(id) });
 });
 
@@ -36,7 +37,7 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
  */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "draft id");
   const input = parseOrThrow(editDraftSchema, await readJson(request));
   return ok({
     draft: await editDraft(id, {

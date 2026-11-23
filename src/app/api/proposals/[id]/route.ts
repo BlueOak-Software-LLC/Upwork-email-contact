@@ -7,9 +7,11 @@ import { editProposalSchema } from "@/lib/validation/outreach";
 import { proposalsRepo } from "@/server/db/outreach.repo";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { sanitizeEditedPpd } from "@/server/services/proposal.service";
+import { describePpdEditDrops } from "@/server/services/proposal-sanitize";
 import { textToHtml } from "@/server/services/templates";
 import { logger } from "@/lib/logger";
 import type { ProposalPpd } from "@/types/lead";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +29,7 @@ async function readJson(request: NextRequest) {
 /** GET /api/proposals/:id — one version, PPD included. */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "proposal id");
   return ok({ proposal: await proposalsRepo.byId(id) });
 });
 
@@ -43,7 +45,7 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
  */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "proposal id");
   const input = parseOrThrow(editProposalSchema, await readJson(request));
   const existing = await proposalsRepo.byId(id);
 
@@ -58,6 +60,8 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
     // A reviewed-but-then-edited document invalidates the rendered PDF.
     if (existing.pdf_status === "ready") patch.pdf_status = "pending";
     warnings.push("ppd updated — the PDF will be re-rendered from it on the next preview or send");
+    // Nothing may vanish on a reviewer's edit without them being told why.
+    warnings.push(...describePpdEditDrops(input.ppd));
   }
 
   if (input.reviewed && input.ppd === undefined) {

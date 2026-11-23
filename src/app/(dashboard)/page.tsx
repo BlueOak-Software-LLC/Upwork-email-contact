@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { MetricCard, SparkBars } from "@/components/dashboard/metric-card";
-import { StatusBadge } from "@/components/ui/badge";
+import { StatusBadge, Badge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { getMetrics, getRecentContacts } from "@/server/queries";
 import { leadsRepo } from "@/server/db/leads.repo";
-import { formatDate } from "@/lib/utils";
+import { formatDate, relative, truncate } from "@/lib/utils";
 import type { Contact, DashboardMetrics } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
@@ -13,16 +13,19 @@ export const metadata = { title: "Overview" };
 type LeadMetrics = NonNullable<Awaited<ReturnType<typeof leadsRepo.metrics>>>;
 
 export default async function OverviewPage() {
-  const [metrics, recent, leadMetrics] = await Promise.all([
+  const [metrics, recent, leadMetrics, queue] = await Promise.all([
     attempt<DashboardMetrics | null>(() => getMetrics(), null),
     attempt<Contact[]>(() => getRecentContacts(6), []),
     attempt<LeadMetrics | null>(() => leadsRepo.metrics(), null),
+    attempt<Awaited<ReturnType<typeof leadsRepo.queue>> | null>(() => leadsRepo.queue(), null),
   ]);
 
   if (!metrics) return <SetupRequired />;
 
   return (
     <>
+      {queue ? <AttentionQueue queue={queue} /> : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <MetricCard
           label="Leads ingested"
@@ -96,7 +99,9 @@ export default async function OverviewPage() {
           </div>
           {recent.length === 0 ? (
             <p className="p-8 text-center text-sm text-muted">
-              No rows in <code>public.contacts</code> yet.
+              <code>public.contacts</code> is the hand-maintained CRM list. Channels found in a
+              payload sit on each lead under <b>Found channels</b>, and can be promoted here from
+              there.
             </p>
           ) : (
             <Table>
@@ -178,6 +183,103 @@ async function attempt<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   } catch {
     return fallback;
   }
+}
+
+type Queue = Awaited<ReturnType<typeof leadsRepo.queue>>;
+
+/**
+ * The pipeline only advances when a human acts, so the first thing on the
+ * dashboard is the list of things waiting on you, newest first, each linking
+ * straight to the step that unblocks it.
+ */
+function AttentionQueue({ queue }: { queue: Queue }) {
+  const groups = [
+    {
+      key: "review",
+      title: "Documents waiting for review",
+      tone: "brand" as const,
+      hint: "Open the lead, edit or accept the PPD, then save it as reviewed.",
+      rows: queue.awaitingReview.map((row) => ({
+        leadId: row.leadId,
+        label: row.title,
+        meta: `PPD v${row.version} · generated ${relative(row.createdAt)}`,
+        href: `/leads/${row.leadId}`,
+      })),
+    },
+    {
+      key: "email",
+      title: "Reviewed, no email yet",
+      tone: "warn" as const,
+      hint: "The document is approved — write the email from it (step 3).",
+      rows: queue.reviewedAwaitingEmail.map((row) => ({
+        leadId: row.leadId,
+        label: row.title,
+        meta: `reviewed PPD v${row.version}`,
+        href: `/leads/${row.leadId}`,
+      })),
+    },
+    {
+      key: "send",
+      title: "Drafts ready to send",
+      tone: "neutral" as const,
+      hint: "Sending compiles the PDF from the reviewed document and attaches it.",
+      rows: queue.draftsToSend.map((row) => ({
+        leadId: row.leadId,
+        label: row.title,
+        meta: `to ${row.to} · ${row.subject}`,
+        href: `/leads/${row.leadId}`,
+      })),
+    },
+    {
+      key: "pdf",
+      title: "PDFs marked stale after an edit",
+      tone: "neutral" as const,
+      hint: "Preview to re-render now, or let the send do it.",
+      rows: queue.pdfsAwaitingRender.map((row) => ({
+        leadId: row.leadId,
+        label: row.title,
+        meta: `v${row.version} · pdf pending`,
+        href: `/leads/${row.leadId}`,
+      })),
+    },
+  ];
+
+  const live = groups.filter((group) => group.rows.length > 0);
+  if (live.length === 0) {
+    return (
+      <div className="card px-5 py-4 text-sm text-muted">
+        Nothing is waiting on you — every generated document is reviewed and no draft is sitting
+        unsent. New payloads appear here automatically.
+      </div>
+    );
+  }
+
+  return (
+    <section className="grid gap-4 lg:grid-cols-2">
+      {live.map((group) => (
+        <div key={group.key} className="card space-y-2 p-5">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium">{group.title}</h2>
+            <Badge tone={group.tone}>{group.rows.length}</Badge>
+          </div>
+          <p className="text-xs text-muted/80">{group.hint}</p>
+          <ul className="divide-y divide-line/50">
+            {group.rows.slice(0, 6).map((row) => (
+              <li key={`${group.key}-${row.leadId}-${row.meta}`} className="py-2">
+                <Link href={row.href} className="text-sm text-ink hover:text-brand focus-ring">
+                  {truncate(row.label, 54)}
+                </Link>
+                <div className="text-[11px] text-muted/70">{row.meta}</div>
+              </li>
+            ))}
+          </ul>
+          {group.rows.length > 6 ? (
+            <p className="text-[11px] text-muted/60">+{group.rows.length - 6} more</p>
+          ) : null}
+        </div>
+      ))}
+    </section>
+  );
 }
 
 function SetupRequired() {

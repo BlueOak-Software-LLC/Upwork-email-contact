@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
+import { useCreateContact } from "@/lib/api/hooks";
 import type { LeadContactRow } from "@/types/lead";
 import { Badge, StatusBadge } from "@/components/ui/badge";
-import { formatDate, truncate } from "@/lib/utils";
+import { CopyButton } from "@/components/ui/copy-button";
+import { TimeAgo } from "@/components/ui/time-ago";
+import { truncate } from "@/lib/utils";
 
 const LIST_LABEL: Record<string, string> = {
   verified: "Verified",
@@ -15,12 +20,23 @@ const LIST_LABEL: Record<string, string> = {
 /**
  * Every channel we found for the lead. Email rows are the ones that can be
  * turned into a proposal + draft; the rest are research links.
+ *
+ * With `leadId` present, an email can also be promoted into the CRM table
+ * (`public.contacts`, what /contacts lists) in one click, so a good address
+ * found by research survives after the lead is archived.
  */
-export function ContactsList({ contacts }: { contacts: LeadContactRow[] }) {
+export function ContactsList({
+  contacts,
+  leadId,
+}: {
+  contacts: LeadContactRow[];
+  leadId?: string;
+}) {
   if (contacts.length === 0) {
     return (
       <p className="rounded-lg bg-canvas p-4 text-sm text-muted">
-        The payload carried no contacts.
+        The payload carried no contacts. The document can still be written from the post text, and
+        any address you type later is stored here as a manual contact.
       </p>
     );
   }
@@ -52,19 +68,29 @@ export function ContactsList({ contacts }: { contacts: LeadContactRow[] }) {
                   )}
                   {contact.confidence ? <StatusBadge status={contact.confidence} /> : null}
                   {contact.is_primary ? <Badge tone="warn">primary</Badge> : null}
+                  {contact.contact_type === "manual" ? (
+                    <Badge tone="brand">added by hand</Badge>
+                  ) : null}
                   <span className="ml-auto text-[11px] text-muted/70">
-                    {formatDate(contact.created_at)}
+                    <TimeAgo value={contact.created_at} />
                   </span>
                 </div>
 
-                <div className="mt-2 text-sm">
+                <div className="mt-2 flex items-center gap-1.5 text-sm">
                   {contact.is_email ? (
-                    <a
-                      href={`mailto:${contact.normalized_value ?? contact.contact_value}`}
-                      className="font-medium text-brand hover:underline"
-                    >
-                      {contact.normalized_value ?? contact.contact_value}
-                    </a>
+                    <>
+                      <a
+                        href={`mailto:${contact.normalized_value ?? contact.contact_value}`}
+                        className="min-w-0 truncate font-medium text-brand hover:underline"
+                      >
+                        {contact.normalized_value ?? contact.contact_value}
+                      </a>
+                      <CopyButton
+                        value={contact.normalized_value ?? contact.contact_value}
+                        size="icon"
+                        label="Copy address"
+                      />
+                    </>
                   ) : contact.channel === "url" ? (
                     <Link
                       href={contact.contact_value}
@@ -104,11 +130,51 @@ export function ContactsList({ contacts }: { contacts: LeadContactRow[] }) {
                     source ↗
                   </a>
                 ) : null}
+
+                {contact.is_email && leadId ? (
+                  <PromoteToCrm contact={contact} />
+                ) : null}
               </li>
             ))}
           </ul>
         </section>
       ))}
     </div>
+  );
+}
+
+/**
+ * One click into the CRM table, prefilled from the payload (name, role,
+ * company, where it came from). A duplicate address is rejected by the API's
+ * unique index and the toast says so instead of silently duplicating a row.
+ */
+function PromoteToCrm({ contact }: { contact: LeadContactRow }) {
+  const create = useCreateContact();
+  const email = contact.normalized_value ?? contact.contact_value;
+
+  return (
+    <button
+      type="button"
+      disabled={create.isPending}
+      onClick={() =>
+        create.mutate(
+          {
+            name: contact.name ?? email,
+            email,
+            company: contact.company ?? null,
+            role: contact.role ?? null,
+            status: "new",
+            source: `lead_${contact.list_type}`,
+            notes: contact.rationale
+              ? String(contact.rationale).slice(0, 2000)
+              : `Extracted from an Upwork payload (${contact.contact_type ?? contact.channel}).`,
+          },
+          { onError: () => undefined },
+        )
+      }
+      className="mt-2 block text-[11px] text-muted underline-offset-2 transition hover:text-brand hover:underline disabled:opacity-60 focus-ring"
+    >
+      {create.isPending ? "adding…" : create.isSuccess ? "✓ in contacts" : "+ add to contacts list"}
+    </button>
   );
 }

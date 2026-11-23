@@ -426,4 +426,151 @@ export const leadsRepo = {
       last7Days: [...perDay.entries()].map(([day, count]) => ({ day, count })),
     };
   },
+
+  /**
+   * What a human should do next, newest first. The overview shows this instead
+   * of a wall of counts, because the pipeline only moves when somebody reviews
+   * a document or approves a draft.
+   *
+   * Each block degrades to an empty list: a missing table or column must never
+   * take the dashboard down.
+   */
+  async queue(limit = 12) {
+    const supabase = getAdminClient();
+
+    /**
+     * The PostgREST builder is thenable but has no `.catch`, and a missing
+     * table or column must never take the dashboard down — so every block is
+     * awaited through this and degrades to an empty list.
+     */
+    const safe = async <T,>(
+      run: () => PromiseLike<{ data: T[] | null; error?: { message: string } | null }>,
+    ): Promise<T[]> => {
+      try {
+        const result = await run();
+        if (result.error) return [];
+        return result.data ?? [];
+      } catch {
+        return [];
+      }
+    };
+
+    const [unreviewed, reviewedNoEmail, drafts, pdfsPending] = await Promise.all([
+      safe<ProposalQueueRow>(() =>
+        supabase
+          .from("proposals")
+          .select("id,lead_id,version,created_at,ppd_reviewed_at")
+          .is("ppd_reviewed_at", null)
+          .order("created_at", { ascending: false })
+          .limit(limit),
+      ),
+      safe<ReviewedEmailRow>(() =>
+        supabase
+          .from("proposals")
+          .select("id,lead_id,version,ppd_reviewed_at,email_subject")
+          .not("ppd_reviewed_at", "is", null)
+          .eq("email_subject", "")
+          .order("ppd_reviewed_at", { ascending: false })
+          .limit(limit),
+      ),
+      safe<DraftQueueRow>(() =>
+        supabase
+          .from("email_drafts")
+          .select("id,lead_id,proposal_id,subject,to_email,status,updated_at")
+          .eq("status", "draft")
+          .order("updated_at", { ascending: false })
+          .limit(limit),
+      ),
+      safe<PdfQueueRow>(() =>
+        supabase
+          .from("proposals")
+          .select("id,lead_id,version,pdf_status")
+          .eq("pdf_status", "pending")
+          .not("ppd_reviewed_at", "is", null)
+          .limit(limit),
+      ),
+    ]);
+
+    const leadIds = [
+      ...new Set(
+        [...unreviewed, ...reviewedNoEmail, ...drafts, ...pdfsPending]
+          .map((row) => row.lead_id)
+          .filter((value): value is string => typeof value === "string"),
+      ),
+    ];
+
+    const titles = new Map<string, string>();
+    if (leadIds.length) {
+      const rows = await safe<{ id: string; job_title: string | null; dedupe_key: string }>(() =>
+        supabase.from("leads").select("id,job_title,dedupe_key").in("id", leadIds),
+      );
+      for (const lead of rows) {
+        titles.set(lead.id, lead.job_title ?? `[untitled] ${lead.dedupe_key.slice(0, 8)}`);
+      }
+    }
+
+    const title = (leadId: string) => titles.get(leadId) ?? leadId.slice(0, 8);
+
+    return {
+      awaitingReview: unreviewed.map((row) => ({
+        leadId: row.lead_id,
+        proposalId: row.id,
+        version: row.version,
+        title: title(row.lead_id),
+        createdAt: row.created_at,
+      })),
+      reviewedAwaitingEmail: reviewedNoEmail.map((row) => ({
+        leadId: row.lead_id,
+        proposalId: row.id,
+        version: row.version,
+        title: title(row.lead_id),
+      })),
+      draftsToSend: drafts.map((row) => ({
+        leadId: row.lead_id,
+        draftId: row.id,
+        to: row.to_email,
+        subject: row.subject || "(no subject)",
+        title: title(row.lead_id),
+      })),
+      pdfsAwaitingRender: pdfsPending.map((row) => ({
+        leadId: row.lead_id,
+        proposalId: row.id,
+        version: row.version,
+        title: title(row.lead_id),
+      })),
+    };
+  },
 };
+
+interface ProposalQueueRow {
+  id: string;
+  lead_id: string;
+  version: number;
+  created_at: string;
+  ppd_reviewed_at: string | null;
+}
+
+interface ReviewedEmailRow {
+  id: string;
+  lead_id: string;
+  version: number;
+  ppd_reviewed_at: string;
+  email_subject: string;
+}
+
+interface DraftQueueRow {
+  id: string;
+  lead_id: string;
+  proposal_id: string | null;
+  subject: string;
+  to_email: string;
+  status: string;
+  updated_at: string;
+}
+
+interface PdfQueueRow {
+  id: string;
+  lead_id: string;
+  version: number;
+  pdf_status: string;
+}

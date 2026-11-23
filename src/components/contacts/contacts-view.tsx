@@ -5,11 +5,14 @@ import { useContacts, useDeleteContact } from "@/lib/api/hooks";
 import type { Contact, ContactStatus } from "@/types/domain";
 import { CONTACT_STATUSES } from "@/types/domain";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmAction } from "@/components/ui/confirm-action";
+import { CopyButton } from "@/components/ui/copy-button";
+import { TimeAgo } from "@/components/ui/time-ago";
 import { Input, Select } from "@/components/ui/input";
 import { StatusBadge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
-import { formatDate } from "@/lib/utils";
 import { NewContactDialog } from "./new-contact-dialog";
 import { SendEmailDialog } from "./send-email-dialog";
 
@@ -105,18 +108,37 @@ export function ContactsView() {
         {isLoading ? (
           <TableSkeleton />
         ) : error ? (
-          <div className="p-6 text-sm text-danger">
-            Could not load contacts:{" "}
-            {(error as Error).message}
-            <div className="mt-2 text-xs text-muted">
-              Is the migration applied and are the Supabase env vars set?
-            </div>
-          </div>
+          <EmptyState
+            tone="danger"
+            icon="✕"
+            title="Contacts could not be loaded"
+            description={
+              <>
+                {(error as Error).message} — is the migration applied and are the Supabase env vars
+                set?
+              </>
+            }
+            action={
+              <Button size="sm" onClick={() => refetch()} loading={isFetching}>
+                Try again
+              </Button>
+            }
+          />
         ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-sm text-muted">
-            No contacts yet. Add one with <b>New contact</b>, or run{" "}
-            <code className="rounded bg-surface-2 px-1">psql … -f supabase/seed.sql</code>.
-          </div>
+          <EmptyState
+            title="No CRM contacts yet"
+            description={
+              <>
+                This table is the list you keep by hand. Addresses found in an Upwork payload are
+                stored on the lead (Found channels) and can be promoted here with one click.
+              </>
+            }
+            action={
+              <Button size="sm" onClick={() => setCreating(true)}>
+                New contact
+              </Button>
+            }
+          />
         ) : (
           <Table>
             <THead>
@@ -155,7 +177,10 @@ export function ContactsView() {
                     />
                   </Td>
                   <Td>
-                    <div className="font-medium">{contact.name}</div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {contact.name}
+                      <CopyButton value={contact.email} size="icon" label="Copy email" />
+                    </div>
                     <div className="text-xs text-muted">{contact.email}</div>
                   </Td>
                   <Td className="text-muted">
@@ -169,7 +194,7 @@ export function ContactsView() {
                   </Td>
                   <Td className="text-muted">{contact.source}</Td>
                   <Td className="tabular text-muted">
-                    {formatDate(contact.last_contacted_at)}
+                    {contact.last_contacted_at ? <TimeAgo value={contact.last_contacted_at} /> : "never"}
                   </Td>
                   <Td className="text-right">
                     <Button
@@ -182,17 +207,13 @@ export function ContactsView() {
                     >
                       Email
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-danger"
-                      loading={remove.isPending && remove.variables === contact.id}
-                      onClick={() => {
-                        if (confirm(`Delete ${contact.email}?`)) remove.mutate(contact.id);
-                      }}
-                    >
-                      Delete
-                    </Button>
+                    <ConfirmAction
+                      label="Delete"
+                      title={`Delete ${contact.email}?`}
+                      description="The contact row is removed; email log entries that referenced it keep their history."
+                      busy={remove.isPending && remove.variables === contact.id}
+                      onConfirm={() => remove.mutate(contact.id)}
+                    />
                   </Td>
                 </Tr>
               ))}

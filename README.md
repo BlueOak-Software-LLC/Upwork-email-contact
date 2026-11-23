@@ -260,7 +260,66 @@ Lessons baked into the code:
 > *“The requested module '@pdfme/common' does not provide an export named
 > 'createDynamicLayoutSplitRange'”*. If you bump one, bump all three.
 
-## 6. Setup
+## 6. The dashboard (review-first UX)
+
+Everything a human touches lives under `src/app/(dashboard)` and reads through
+`/api` only — never Supabase directly — so validation, encryption and logging
+stay on the server.
+
+**Data freshness.** `/leads/[id]` is server-rendered for the first paint, then
+handed to TanStack Query (`useLead(leadId, initialData)`), which every mutation
+either writes into directly or invalidates:
+
+| Action | Where the cache is updated |
+| --- | --- |
+| Save / mark reviewed a PPD | `PATCH /api/proposals/:id` returns the whole refreshed lead → `setQueryData` |
+| Create or edit a draft, send | returns `lead` when present → `setQueryData`, else invalidate |
+| Generate PPD / email, render PDF | invalidate `["lead", id]` + `["leads"]` |
+| Status or late `job_description` | `PATCH /api/leads/:id` → `setQueryData` |
+| Contacts | `useUpdateContact` patches the row into the list caches |
+| Overview, email log (server components) | `<LiveRefresh />` re-runs them on focus / reconnect / 30 s |
+
+So the document you just edited, the `✓ reviewed` step chip, the
+`pdf pending → ready` badge, the new draft card and the header status all change
+in place. Focusing the tab revalidates. Nothing needs F5.
+
+**Feedback.** `src/components/ui/toast.tsx` is a dependency-free live region
+(`role=status`, errors `role=alert`), pushed from inside the query hooks so every
+screen gets the same wording: what ran, for whom, how many words, what it cost,
+and what happens next. `EMAIL_PROVIDER=log` announces itself as a dry run instead
+of pretending a message went out.
+
+**Review workspace** (`components/leads/proposal-card.tsx`, four tabs):
+
+- **Read** — the document as it will be typeset, plus *Approve as reviewed* for
+  the common case of accepting the model's text unchanged.
+- **Edit document** (`ppd-editor.tsx`) — block-aware editor: sections and blocks
+  can be added, removed and reordered; paragraphs, bullets, numbered steps,
+  requirement→approach matrices and label/value tables each get their own
+  inputs. `company / website / prepared_by / job_title / job_reference` are shown
+  locked, because `sanitizeEditedPpd()` re-applies them server-side anyway.
+- **JSON** — same document as text; a syntax error blocks the save and says why.
+- **Prompts** — both prompt pairs inline, with click-to-insert `{{variables}}`
+  and a budget warning when `max_tokens` is below what that step needs.
+
+The draft buffer is mirrored to `localStorage` per proposal, so a closed tab
+cannot lose a review pass, and ⌘/Ctrl-S saves.
+
+**Nothing disappears silently.** An edit that the compiler must clip or drop
+(empty block, empty lines, unverified reference, over the per-section cap) is
+listed *before* saving (`ppdEditIssues`) and again as `warnings[]` on the PATCH
+response (`describePpdEditDrops`) — which the toast layer shows.
+
+**Other screens.** `/leads` rows are clickable with a four-dot pipeline chip and
+an *Ingest payload* dialog (paste the scraper JSON, `auto` override, live char
+count, honest 30–60 s progress note when generation runs inline). `/settings/senders`
+shows which mailbox has no stored password and uses a modal for destructive
+actions instead of `window.confirm`. `/emails` marks dry-run rows. The overview
+leads with an **attention queue**: documents awaiting review, reviewed docs with
+no email, drafts ready to send, PDFs marked stale after an edit — each linking to
+the step that clears it. Navigation collapses into a drawer below `md`.
+
+## 7. Setup
 
 ```bash
 npm install                       # Next 15 + Supabase + Groq(fetch) + pdfme 6.2.8 + nodemailer
@@ -310,7 +369,7 @@ npm run check      # tsc --noEmit + eslint
 npm run db:types   # regenerate src/types/database.ts after schema changes
 ```
 
-## 7. Run it end to end
+## 8. Run it end to end
 
 The pipeline has four steps, and the PDF is deliberately last — nothing is
 rendered until a human has approved the document it would be rendered from.
@@ -399,7 +458,7 @@ template (`{{job_title}}`, `{{research_notes}}`, `{{rate}}`, `{{ppd_summary}}`, 
 with the generation report so you can see what produced what. Unknown slots are
 reported instead of silently blanked.
 
-## 8. Deploy to Vercel
+## 9. Deploy to Vercel
 
 ```bash
 vercel --prod        # or push to GitHub → Import Project
@@ -420,7 +479,7 @@ vercel --prod        # or push to GitHub → Import Project
    `x-api-key`; in production either sign in on the dashboard or use
    `?url=true` to get a signed Storage link instead.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -439,7 +498,7 @@ vercel --prod        # or push to GitHub → Import Project
 In dev, `/api/*` is open when `API_MASTER_KEY` is empty (logged as `api_open_dev_mode`);
 the same config in production answers `403` until you set a key.
 
-## 10. Security notes
+## 11. Security notes
 
 * The Groq key you pasted into chat should be **rotated** — treat it as public.
 * SMTP passwords are `v1:iv:tag:ciphertext` AES-256-GCM; without
@@ -453,7 +512,7 @@ the same config in production answers `403` until you set a key.
   prices/facts, and `sanitizeProposal()` caps lengths; still, **a human reviews the
   draft before `POST /api/drafts/:id/send`**. Nothing sends automatically.
 
-## 11. Next steps
+## 12. Next steps
 
 * [ ] Replace the sample `deliverables`/`pricing` wording with your real service catalogue
 * [ ] Add `job_description` to the scraper payload so proposals get the full text

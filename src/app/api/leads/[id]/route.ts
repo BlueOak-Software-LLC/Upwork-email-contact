@@ -5,6 +5,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { updateLeadSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
+import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ async function readJson(request: NextRequest) {
  */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   return ok(await leadsRepo.detail(id));
 });
 
@@ -37,7 +38,7 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
  */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const patch = parseOrThrow(updateLeadSchema, await readJson(request));
   await leadsRepo.updateManual(id, patch);
   const detail = await leadsRepo.detail(id);
@@ -57,7 +58,7 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
 /** DELETE /api/leads/:id — removes the lead and cascades contacts/proposals/drafts. */
 export const DELETE = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
-  const { id } = await params;
+  const id = requireParamId((await params).id, "lead id");
   const supabase = (await import("@/lib/supabase/admin")).getAdminClient();
   const { error, count } = await supabase.from("leads").delete({ count: "exact" }).eq("id", id);
   if (error) throw ApiError.upstream(`Failed to delete lead: ${error.message}`);
