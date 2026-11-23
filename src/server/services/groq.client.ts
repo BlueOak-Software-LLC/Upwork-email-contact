@@ -2,16 +2,29 @@ import { groqConfig } from "@/lib/env-extras";
 import { logger } from "@/lib/logger";
 import { ApiError } from "@/server/http/errors";
 
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high";
+
 export interface GroqMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
+export interface GroqUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  /** GPT-OSS bills reasoning inside the completion budget — useful for tuning. */
+  reasoning_tokens?: number;
+}
+
 export interface GroqResult<T> {
   data: T;
   raw: string;
-  usage: { prompt_tokens: number; completion_tokens: number } | null;
+  usage: GroqUsage | null;
   model: string;
+  /** The effort actually sent: the client tunes it down when the budget is tight. */
+  reasoningEffort: ReasoningEffort;
+  /** The completion budget actually sent (TPM-clamped, may be resized after a 413). */
+  completionBudget: number;
 }
 
 /**
@@ -21,19 +34,51 @@ export interface GroqResult<T> {
 export async function groqJson<T = Record<string, unknown>>({
   messages,
   temperature = 0.4,
-  maxTokens = 3000,
+  maxTokens,
+  reasoningEffort: reasoningEffortOverride,
   schemaHint,
   model: modelOverride,
 }: {
   messages: GroqMessage[];
   temperature?: number;
+  /** Defaults to `GROQ_MAX_TOKENS`, clamped to the TPM allowance. */
   maxTokens?: number;
+  /**
+   * Overrides `GROQ_REASONING_EFFORT`. "low" is fast and cheap but terser;
+   * "medium"/"high" write longer documents but burn the completion budget on
+   * thinking first.
+   */
+  reasoningEffort?: ReasoningEffort;
   schemaHint?: string;
   /** Overrides `GROQ_MODEL` for this call. */
   model?: string;
 }): Promise<GroqResult<T>> {
-  const { apiKey, model: configuredModel, baseUrl, timeoutMs } = groqConfig();
+  const {
+    apiKey,
+    model: configuredModel,
+    baseUrl,
+    timeoutMs,
+    maxTokens: configuredMax,
+    tokensPerMinute,
+    reasoningEffort: configuredEffort,
+  } = groqConfig();
   const model = modelOverride ?? configuredModel;
+  const reasoningEffort = reasoningEffortOverride ?? configuredEffort;
+  // A request whose prompt + completion budget passes the tier's TPM allowance
+  // comes back as 413, so start under it: ~4 characters per token for the prompt.
+  const promptEstimate = Math.ceil(messages.reduce((sum, m) => sum + m.content.length, 0) / 4);
+  let completionBudget = Math.min(
+    maxTokens ?? configuredMax,
+    Math.max(1024, tokensPerMinute - promptEstimate - 256),
+  );
+  // GPT-OSS spends the same completion budget on hidden reasoning as on the
+  // document itself, and this tier allows ~8,000 tokens per minute all-in. When
+  // the room left after the prompt is small, reasoning has to give way to the
+  // answer or the JSON never lands. An explicit per-run effort is always
+  // honoured; the configured default is what gets tuned down.
+  const autoEffort = (budget: number): ReasoningEffort =>
+    budget < 2600 ? "none" : budget < 4200 ? "low" : reasoningEffort;
+  let effort: ReasoningEffort = reasoningEffortOverride ?? autoEffort(completionBudget);
   if (!apiKey) {
     throw ApiError.internal(
       "GROQ_API_KEY is not configured — cannot generate proposals. Add it to .env.local.",
@@ -43,8 +88,19 @@ export async function groqJson<T = Record<string, unknown>>({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const bodyFor = (temp: number) =>
-    JSON.stringify({
+  type BodyVariant = { tokenParam: "max_completion_tokens" | "max_tokens"; reasoning: boolean };
+  // Compatibility ladder: Groq's current names first, then the legacy/less
+  // capable shapes, so a proxy or older gateway still gets a usable request.
+  const VARIANTS: BodyVariant[] = [
+    { tokenParam: "max_completion_tokens", reasoning: true },
+    { tokenParam: "max_tokens", reasoning: true },
+    { tokenParam: "max_tokens", reasoning: false },
+  ];
+
+  const bodyFor = (temp: number, variant: BodyVariant, override?: ReasoningEffort) => {
+    // A retry may force a different effort than the budget-derived default.
+    const used = override ?? effort;
+    return JSON.stringify({
       model,
       messages: schemaHint
         ? [
@@ -56,9 +112,14 @@ export async function groqJson<T = Record<string, unknown>>({
           ]
         : messages,
       temperature: temp,
-      max_tokens: maxTokens,
+      // `max_tokens` is the legacy alias of `max_completion_tokens`.
+      [variant.tokenParam]: completionBudget,
+      // GPT-OSS spends part of the completion budget on hidden reasoning; on a
+      // tight allowance it is dropped so the visible document actually finishes.
+      ...(variant.reasoning && used ? { reasoning_effort: used } : {}),
       response_format: { type: "json_object" },
     });
+  };
 
   try {
     // Groq's own body names the offending model, which is the only way to tell
@@ -69,12 +130,18 @@ export async function groqJson<T = Record<string, unknown>>({
           ? " — check GROQ_API_KEY (and rotate it if it was ever shared)"
           : status === 404
             ? ` — model "${model}" not found at ${baseUrl} (set GROQ_MODEL to a current one)`
-            : status === 429
-              ? " — rate limited, retry shortly"
-              : ""
+            : status === 413
+              ? ` — the request exceeds your ${tokensPerMinute} tokens-per-minute allowance (GROQ_TOKENS_PER_MINUTE); lower GROQ_MAX_TOKENS or upgrade the tier`
+              : status === 429
+                ? " — rate limited, retry shortly"
+                : ""
       }${text ? ` :: ${text.slice(0, 220)}` : ""}`;
 
-    const send = async (temp: number) => {
+    const send = async (
+      temp: number,
+      variant: BodyVariant,
+      override?: ReasoningEffort,
+    ) => {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         signal: controller.signal,
@@ -83,19 +150,63 @@ export async function groqJson<T = Record<string, unknown>>({
           "content-type": "application/json",
           accept: "application/json",
         },
-        body: bodyFor(temp),
+        body: bodyFor(temp, variant, override),
       });
       const text = response.ok ? "" : await response.text().catch(() => "");
       return { response, text };
     };
 
-    let { response, text } = await send(temperature);
+    let attempt = await send(temperature, VARIANTS[0]!);
+    let response = attempt.response;
+    let text = attempt.text;
 
-    // `json_object` mode intermittently refuses a valid prompt with
-    // "Failed to generate JSON"; one cooler retry usually clears it.
-    if (!response.ok && response.status === 400 && /failed to generate json/i.test(text)) {
-      logger.warn("groq_json_mode_retry", { model });
-      const retry = await send(Math.min(temperature, 0.2));
+    // A 400 that names a parameter means the endpoint is older than the body we
+    // sent — walk down the ladder instead of failing the generation.
+    const paramProblem =
+      /max_completion_tokens|reasoning_effort|unknown (parameter|field)|unexpected (parameter|field)|unsupported parameter|not supported/i;
+    for (let index = 1; !response.ok && response.status === 400 && paramProblem.test(text) && index < VARIANTS.length; index += 1) {
+      logger.warn("groq_request_body_fallback", { model, variant: VARIANTS[index] });
+      attempt = await send(temperature, VARIANTS[index]!);
+      response = attempt.response;
+      text = attempt.text;
+    }
+
+    // A 413 names the real allowance and the size it rejected, which is the only
+    // accurate way to resize the completion budget — retry once with that math.
+    if (!response.ok && response.status === 413) {
+      const limit = Number(/Limit (\d+)/i.exec(text)?.[1] ?? 0);
+      const requested = Number(/Requested (\d+)/i.exec(text)?.[1] ?? 0);
+      if (limit > 0) {
+        const promptPart = requested > completionBudget ? requested - completionBudget : promptEstimate;
+        const resized = Math.max(1024, limit - promptPart - 128);
+        if (resized < completionBudget) {
+          logger.warn("groq_tpm_resize", { model, limit, requested, completionBudget, resized });
+          completionBudget = resized;
+          // Fewer tokens left means reasoning has to give way as well.
+          if (!reasoningEffortOverride) effort = autoEffort(resized);
+          const retry = await send(temperature, VARIANTS[0]!);
+          response = retry.response;
+          text = retry.text;
+        }
+      }
+    }
+
+    // json_object mode intermittently answers a valid prompt with
+    // "Failed to generate/validate JSON" and an empty generation. Two backed-off
+    // retries: cooler first, then cooler + low reasoning (the long structured
+    // brief is what trips the validator, and reasoning competes with it for the
+    // same completion budget).
+    const jsonModeProblem = /failed to (generate|validate) json|json_validate_failed/i;
+    const recoveries: Array<{ temp: number; effort?: ReasoningEffort; waitMs: number }> = [
+      { temp: Math.min(temperature, 0.2), waitMs: 1200 },
+      { temp: 0.1, effort: "low", waitMs: 2500 },
+      { temp: 0.1, effort: "none", waitMs: 3000 },
+    ];
+    for (const recovery of recoveries) {
+      if (response.ok || response.status !== 400 || !jsonModeProblem.test(text)) break;
+      logger.warn("groq_json_mode_retry", { model, effort: recovery.effort ?? "env", temp: recovery.temp });
+      await sleep(recovery.waitMs);
+      const retry = await send(recovery.temp, VARIANTS[0]!, recovery.effort);
       response = retry.response;
       text = retry.text;
     }
@@ -111,8 +222,15 @@ export async function groqJson<T = Record<string, unknown>>({
     }
 
     const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      choices?: Array<{
+        message?: { content?: string };
+        finish_reason?: string;
+      }>;
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        completion_tokens_details?: { reasoning_tokens?: number };
+      };
       model?: string;
     };
 
@@ -124,18 +242,30 @@ export async function groqJson<T = Record<string, unknown>>({
       data = JSON.parse(stripFences(raw)) as T;
     } catch {
       logger.error("groq_json_parse_failed", { raw: raw.slice(0, 500) });
-      throw ApiError.upstream("Groq returned JSON we could not parse");
+      throw ApiError.upstream(
+        payload.choices?.[0]?.finish_reason === "length"
+          ? `Groq hit the ${completionBudget}-token completion limit before finishing the JSON — raise GROQ_MAX_TOKENS.`
+          : "Groq returned JSON we could not parse",
+      );
     }
 
     return {
       data,
       raw,
       model: payload.model ?? model,
+      reasoningEffort: effort,
+      completionBudget,
       usage:
         payload.usage?.prompt_tokens !== undefined
           ? {
               prompt_tokens: payload.usage.prompt_tokens,
               completion_tokens: payload.usage.completion_tokens ?? 0,
+              ...(payload.usage.completion_tokens_details?.reasoning_tokens !== undefined
+                ? {
+                    reasoning_tokens:
+                      payload.usage.completion_tokens_details.reasoning_tokens,
+                  }
+                : {}),
             }
           : null,
     };
@@ -157,3 +287,5 @@ function stripFences(text: string) {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return (fenced?.[1] ?? trimmed).trim();
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

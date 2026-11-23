@@ -36,9 +36,10 @@ const querySchema = z.object({
 
 /**
  * GET /api/leads/:id/pdf
- * Returns the stored proposal PDF. `?render=true` re-renders from the saved PPD
- * (useful right after you swap the pdfme template), `?url=true` returns a short
- * signed Storage link instead of bytes.
+ * Returns the stored proposal PDF. In the review-first flow the normal PDF is
+ * only compiled at send time, so this endpoint doubles as the explicit
+ * **preview**: `?render=true` compiles it from the stored (reviewed) PPD.
+ * `?url=true` returns a short signed Storage link instead of bytes.
  */
 export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
   await requireApiKey(request);
@@ -74,6 +75,7 @@ export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
     await proposalsRepo.update(proposal.id, {
       pdf_path: rendered.path,
       pdf_status: "ready",
+      pdf_generated_at: new Date().toISOString(),
     });
     if (rendered.bytes) {
       return pdfResponse(rendered.bytes, proposal.version, query.download);

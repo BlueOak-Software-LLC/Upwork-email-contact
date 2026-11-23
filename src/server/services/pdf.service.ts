@@ -1,9 +1,9 @@
 import { getAdminClient } from "@/lib/supabase/admin";
 import { pdfConfig } from "@/lib/env-extras";
 import { logger } from "@/lib/logger";
-import { ppdToPdfmeInputs, type PdfmeInputs } from "@/lib/pdfme/mapper";
-import { proposalTemplate, type PdfmeTemplate } from "@/lib/pdfme/template";
-import type { ProposalPpd, ProposalRow } from "@/types/lead";
+import { compileProposalPdfme, type PdfmeInputs } from "@/lib/pdfme/compiler";
+import type { PdfmeTemplate } from "@/lib/pdfme/template";
+import type { ProposalRow } from "@/types/lead";
 
 export const PDF_BUCKET = "proposals";
 
@@ -12,13 +12,17 @@ export interface PdfRenderResult {
   status: "ready" | "skipped" | "failed";
   bytes?: Uint8Array;
   error?: string;
+  pages?: number;
+  fields?: number;
 }
 
 /**
- * PPD JSON → pdfme → PDF bytes → Supabase Storage (`proposals/{leadId}/{proposalId}-v{n}.pdf`).
+ * PPD JSON → compiled pdfme template → PDF bytes → Supabase Storage
+ * (`proposals/{leadId}/{proposalId}-v{n}.pdf`).
  *
- * Requires: `npm i @pdfme/common @pdfme/generator`.
- * Set PDF_PROVIDER=none to skip rendering (the PPD JSON + detail page still work).
+ * The template is built from the content (`lib/pdfme/compiler.ts`), so document
+ * length is not capped by a static layout. Set `PDF_PROVIDER=none` to skip
+ * rendering (the PPD JSON + detail page keep working).
  */
 export async function renderProposalPdf({
   proposal,
@@ -30,12 +34,8 @@ export async function renderProposalPdf({
     return { path: null, status: "skipped" };
   }
 
-  const ppd = proposal.ppd as unknown as ProposalPpd;
-  const inputs = ppdToPdfmeInputs(ppd, {
-    generatedAt: new Date(proposal.created_at).toISOString().slice(0, 10),
-  });
-
-  const bytes = await runPdfme(inputs);
+  const compiled = compileProposalPdfme(proposal.ppd as never);
+  const bytes = await runPdfme(compiled.template, compiled.inputs);
   const path = `${proposal.lead_id}/${proposal.id}-v${proposal.version}.pdf`;
 
   const supabase = getAdminClient();
@@ -45,18 +45,30 @@ export async function renderProposalPdf({
 
   if (error) {
     logger.warn("proposal_pdf_upload_failed", { path, error: error.message });
-    return { path: null, status: "failed", bytes, error: error.message };
+    return {
+      path: null,
+      status: "failed",
+      bytes,
+      error: error.message,
+      pages: compiled.pages,
+      fields: compiled.fieldCount,
+    };
   }
 
-  logger.info("proposal_pdf_ready", { proposalId: proposal.id, path });
-  return { path, status: "ready", bytes };
+  logger.info("proposal_pdf_ready", {
+    proposalId: proposal.id,
+    path,
+    pages: compiled.pages,
+    fields: compiled.fieldCount,
+  });
+  return { path, status: "ready", bytes, pages: compiled.pages, fields: compiled.fieldCount };
 }
 
 /**
- * pdfme v6 `@pdfme/generator` exposes `generate` (older/newer builds sometimes
- * name it `renderPdf`); support both. `inputs` is one record per document.
+ * pdfme v6 `@pdfme/generator` exposes `generate` (some builds name it
+ * `renderPdf`); support both. `inputs` is one record per **document**.
  */
-async function runPdfme(inputs: PdfmeInputs): Promise<Uint8Array> {
+async function runPdfme(template: PdfmeTemplate, inputs: PdfmeInputs): Promise<Uint8Array> {
   const mod = (await import("@pdfme/generator")) as unknown as {
     renderPdf?: (opts: PdfmeOptions) => Promise<Uint8Array | ArrayBuffer>;
     generate?: (opts: PdfmeOptions) => Promise<Uint8Array | ArrayBuffer>;
@@ -69,7 +81,7 @@ async function runPdfme(inputs: PdfmeInputs): Promise<Uint8Array> {
     );
   }
 
-  const out = await fn({ template: proposalTemplate, inputs });
+  const out = await fn({ template, inputs });
   return out instanceof Uint8Array ? out : new Uint8Array(out);
 }
 

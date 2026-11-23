@@ -3,7 +3,7 @@ import type { EmailLogRow, EmailLogStatus, Maybe, Paged } from "@/types/domain";
 import { ApiError } from "@/server/http/errors";
 
 const LOG_COLUMNS =
-  "id,contact_id,to_email,from_email,subject,body_text,status,provider,provider_message_id,error,sent_at,created_at";
+  "id,contact_id,draft_id,proposal_id,sender_account_id,to_email,from_email,subject,body_text,status,provider,provider_message_id,error,sent_at,created_at";
 
 export interface ListEmailLogsQuery {
   page: number;

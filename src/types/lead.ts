@@ -118,46 +118,120 @@ export interface NormalizedContact {
   isPrimary: boolean;
 }
 
-/** ── pdfme field contract: keys here must exist in the template JSON ───── */
+/**
+ * ── PPD contract ── what Groq returns and what the pdfme compiler renders.
+ *
+ * The document is **block-based**, not fixed-slot: `lib/pdfme/compiler.ts`
+ * turns each block into positioned pdfme `text` fields, pre-wraps the lines to
+ * the column width and paginates (A4, mm), repeating the footer + `n / total`
+ * page number on every page. A 600-word proposal becomes 2 pages and a
+ * 3,000-word one becomes 6 — no template edit needed either way.
+ *
+ * This is the TypeScript port of the `compile_pdfme.py` contract
+ * (`blueoak_pdfme_fixed.zip`), so the same content JSON also renders with that
+ * script if you prefer the Python designer flow.
+ */
+export type PpdBlockType =
+  | "paragraph"
+  | "note"
+  | "bullets"
+  | "numberedSteps"
+  | "capabilityMatrix"
+  | "keyValueTable"
+  | "references";
+
+export interface PpdParagraphBlock {
+  type: "paragraph";
+  items: string[];
+}
+export interface PpdNoteBlock {
+  type: "note";
+  text: string;
+}
+export interface PpdBulletsBlock {
+  type: "bullets";
+  items: string[];
+}
+export interface PpdStep {
+  title: string;
+  description: string;
+}
+export interface PpdNumberedStepsBlock {
+  type: "numberedSteps";
+  items: PpdStep[];
+}
+export interface PpdCapability {
+  requirement: string;
+  approach: string;
+}
+export interface PpdCapabilityMatrixBlock {
+  type: "capabilityMatrix";
+  items: PpdCapability[];
+}
+export interface PpdKeyValue {
+  label: string;
+  value: string;
+}
+export interface PpdKeyValueTableBlock {
+  type: "keyValueTable";
+  rows: PpdKeyValue[];
+}
+export interface PpdReference {
+  name: string;
+  url: string;
+  verified: boolean;
+}
+export interface PpdReferencesBlock {
+  type: "references";
+  items: PpdReference[];
+}
+
+export type PpdBlock =
+  | PpdParagraphBlock
+  | PpdNoteBlock
+  | PpdBulletsBlock
+  | PpdNumberedStepsBlock
+  | PpdCapabilityMatrixBlock
+  | PpdKeyValueTableBlock
+  | PpdReferencesBlock;
+
+export interface PpdSection {
+  id: string;
+  title: string;
+  blocks: PpdBlock[];
+}
+
 export interface ProposalPpd {
+  /** Our company — comes from PROPOSAL_COMPANY, never from the model. */
+  company: string;
   document_title: string;
-  proposal_subtitle: string;
-  prepared_for: string;
-  client_company: string;
-  contact_name: string;
-  contact_role: string;
-  prepared_by: string;
-  prepared_date: string;
-  valid_until: string;
+  subtitle: string;
   job_title: string;
   job_reference: string;
-  job_url: string;
+  prepared_for: string;
+  prepared_by: string;
+  rate: string;
+  engagement: string;
+  website: string;
+  sections: PpdSection[];
+  closing: string;
+}
+
+/** The flat v1 PPD that older `proposals.ppd` rows still hold. */
+export interface LegacyProposalPpd {
+  document_title: string;
+  proposal_subtitle: string;
   engagement_summary: string;
   understanding: string;
-  scope_title: string;
-  deliverables: string[]; // max 6 slots in the template
-  approach: string[]; // max 5
-  timeline_label_1: string;
-  timeline_value_1: string;
-  timeline_label_2: string;
-  timeline_value_2: string;
-  timeline_label_3: string;
-  timeline_value_3: string;
-  pricing_title: string;
-  pricing_option_1_name: string;
-  pricing_option_1_price: string;
-  pricing_option_1_notes: string;
-  pricing_option_2_name: string;
-  pricing_option_2_price: string;
-  pricing_option_2_notes: string;
-  includes: string[]; // max 6
-  assumptions: string[]; // max 5
-  next_steps: string[]; // max 4
-  why_us: string[]; // max 5
-  contact_email: string;
-  contact_name_signature: string;
+  deliverables: string[];
+  approach: string[];
+  includes: string[];
+  assumptions: string[];
+  next_steps: string[];
+  why_us: string[];
   closing_note: string;
   footer_note: string;
+  [key: string]: unknown;
 }
 
 export interface ProposalOutput {

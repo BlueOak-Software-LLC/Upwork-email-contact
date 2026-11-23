@@ -49,7 +49,12 @@ export function LeadWorkspace({ detail }: { detail: LeadDetailDto }) {
         />
 
         {drafts.map((draft) => (
-          <DraftCard key={draft.id} leadId={detail.lead.id} draft={draft} />
+          <DraftCard
+            key={draft.id}
+            leadId={detail.lead.id}
+            draft={draft}
+            contacts={detail.contacts}
+          />
         ))}
 
         <details className="card p-4">

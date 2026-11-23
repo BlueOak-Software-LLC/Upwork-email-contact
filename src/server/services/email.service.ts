@@ -26,6 +26,10 @@ export interface SendEmailOptions {
  *  - `senderAccountId` → SMTP from `public.sender_accounts` (dashboard drafts)
  *  - otherwise          → the env provider (`resend` | `smtp` | `log`)
  *
+ * `EMAIL_PROVIDER=log` is a hard stop, not a fallback: even with a sender
+ * account it decrypts nothing and opens no socket, so a staging run cannot mail
+ * a real mailbox by accident.
+ *
  * One provider call per recipient (no bcc leakage, per-recipient personalising),
  * every attempt persisted in `public.email_logs`.
  */
@@ -41,9 +45,10 @@ export async function sendEmail(
     throw ApiError.badRequest(`At most ${MAX_RECIPIENTS} recipients per request`);
   }
 
-  const account = input.senderAccountId
-    ? await senderAccountsRepo.credentials(input.senderAccountId)
-    : null;
+  const account =
+    input.senderAccountId && getServerEnv().EMAIL_PROVIDER !== "log"
+      ? await senderAccountsRepo.credentials(input.senderAccountId)
+      : null;
 
   const contact = input.contactId
     ? await contactsRepo.byId(input.contactId).catch(() => null)

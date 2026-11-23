@@ -41,8 +41,44 @@ const ServerEnvSchema = z.object({
   // (404 model_not_found), so the default is a model verified against the API.
   GROQ_API_KEY: z.string().optional(),
   GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
-  GROQ_TIMEOUT_MS: z.coerce.number().int().min(1000).default(45_000),
+  // Retries share one abort timer: medium reasoning takes ~20 s per attempt on
+  // this model, so the budget has to cover a retry pair.
+  GROQ_TIMEOUT_MS: z.coerce.number().int().min(1000).default(90_000),
+  /**
+   * Completion budget for the ONE call that returns both the PPD and the email.
+   * GPT-OSS bills its *reasoning* against this same cap — a measured run spent
+   * 6,296 of 8,000 tokens thinking before writing ~950 words — so the default
+   * leaves real headroom (Groq allows up to 65,536 for gpt-oss-120b).
+   */
+  GROQ_MAX_TOKENS: z.coerce.number().int().min(512).max(65_536).default(12_000),
+  /**
+   * Your organization's tokens-per-minute allowance for GROQ_MODEL. A request
+   * whose prompt + completion budget exceeds it is rejected with HTTP 413, so we
+   * clamp the completion budget to fit. Free/developer tiers are commonly 8k.
+   */
+  GROQ_TOKENS_PER_MINUTE: z.coerce.number().int().min(1024).default(8_000),
+  /**
+   * `reasoning_effort` for GPT-OSS. Measured here: "low" ≈ 6 s / $0.0013 but a
+   * 500-word document, "medium" ≈ 22 s / $0.0021 with fuller prose, unset
+   * (model default) burned 6,296 reasoning tokens and hit the cap. "medium" is
+   * the balance. Leave empty for models that do not accept the parameter.
+   */
+  GROQ_REASONING_EFFORT: z
+    .enum(["none", "minimal", "low", "medium", "high"])
+    .default("medium"),
+  /** List price per million tokens (GPT-OSS 120B): used for cost logging only. */
+  GROQ_PRICE_INPUT_PER_M: z.coerce.number().min(0).default(0.15),
+  GROQ_PRICE_OUTPUT_PER_M: z.coerce.number().min(0).default(0.6),
   PROPOSAL_LANGUAGE: z.string().default("English"),
+  /**
+   * Branding stamped onto every PPD. These win over whatever the model wrote,
+   * so the LLM is never allowed to state our own company details.
+   */
+  PROPOSAL_COMPANY: z.string().max(120).default(""),
+  PROPOSAL_WEBSITE: z.string().max(200).default(""),
+  PROPOSAL_PREPARED_BY: z.string().max(120).default(""),
+  /** e.g. "USD 45–65/hour — indicative, confirmed after a scoping call". */
+  PROPOSAL_RATE: z.string().max(160).default(""),
   AUTO_ENRICH_LEADS: booleanish(true),
 
   // Proposal PDF rendering
@@ -170,6 +206,21 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
       "APP_ENCRYPTION_KEY unset: sender_accounts SMTP passwords cannot be saved. Set `openssl rand -hex 32`.";
     envWarnings.push(msg);
     console.warn("[env]", msg);
+  }
+  if (env.AUTO_ENRICH_LEADS && !env.GROQ_API_KEY) {
+    envWarnings.push(
+      "AUTO_ENRICH_LEADS is on but GROQ_API_KEY is unset: ingested leads are stored without proposals — generate them from the lead page once the key is set.",
+    );
+  }
+  if (env.GROQ_MAX_TOKENS < 8000) {
+    envWarnings.push(
+      `GROQ_MAX_TOKENS=${env.GROQ_MAX_TOKENS} is tight: GPT-OSS bills reasoning against the same cap, so a 4–6 page document can run out mid-JSON.`,
+    );
+  }
+  if (env.PDF_PROVIDER === "pdfme" && !env.PROPOSAL_COMPANY) {
+    envWarnings.push(
+      "PROPOSAL_COMPANY is unset: proposal PDFs fall back to the EMAIL_FROM display name for the header and footer branding.",
+    );
   }
   return {
     ...env,

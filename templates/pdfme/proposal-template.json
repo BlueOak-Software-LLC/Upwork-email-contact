@@ -13,1129 +13,2024 @@
   "schemas": [
     [
       {
-        "name": "doc_title",
+        "name": "eyebrow_0001",
         "type": "text",
-        "content": "Proposal",
         "position": {
-          "x": 18,
-          "y": 16
-        },
-        "width": 174,
-        "height": 12,
-        "fontSize": 22,
-        "fontColor": "#0f1115",
-        "alignment": "left"
-      },
-      {
-        "name": "proposal_subtitle",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 30
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 11,
-        "fontColor": "#4b5563",
-        "alignment": "left"
-      },
-      {
-        "name": "meta_label",
-        "type": "text",
-        "content": "Prepared for",
-        "position": {
-          "x": 18,
-          "y": 48
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "prepared_for",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 48
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "company_label",
-        "type": "text",
-        "content": "Company",
-        "position": {
-          "x": 18,
-          "y": 55
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "client_company",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 55
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "contact_label",
-        "type": "text",
-        "content": "Attention",
-        "position": {
-          "x": 18,
-          "y": 62
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "contact_name",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 62
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "role_label",
-        "type": "text",
-        "content": "Role",
-        "position": {
-          "x": 18,
-          "y": 69
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "contact_role",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 69
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "from_label",
-        "type": "text",
-        "content": "Submitted by",
-        "position": {
-          "x": 18,
-          "y": 76
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "prepared_by",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 76
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "date_label",
-        "type": "text",
-        "content": "Date",
-        "position": {
-          "x": 18,
-          "y": 83
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "prepared_date",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 83
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "valid_label",
-        "type": "text",
-        "content": "Valid until",
-        "position": {
-          "x": 18,
-          "y": 90
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "valid_until",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 90
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "job_label",
-        "type": "text",
-        "content": "Regarding",
-        "position": {
-          "x": 18,
-          "y": 97
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "job_title",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 97
-        },
-        "width": 128,
-        "height": 10,
-        "fontSize": 11,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "ref_label",
-        "type": "text",
-        "content": "Job reference",
-        "position": {
-          "x": 18,
-          "y": 108
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "job_reference",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 108
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#111827"
-      },
-      {
-        "name": "url_label",
-        "type": "text",
-        "content": "Job link",
-        "position": {
-          "x": 18,
-          "y": 115
-        },
-        "width": 44,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#6b7280",
-        "readOnly": true
-      },
-      {
-        "name": "job_url",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 64,
-          "y": 115
-        },
-        "width": 128,
-        "height": 6,
-        "fontSize": 9,
-        "fontColor": "#2563eb"
-      },
-      {
-        "name": "summary_label",
-        "type": "text",
-        "content": "1. Engagement summary",
-        "position": {
-          "x": 18,
-          "y": 128
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
-      },
-      {
-        "name": "engagement_summary",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 136
-        },
-        "width": 174,
-        "height": 26,
-        "fontSize": 10,
-        "fontColor": "#1f2937",
-        "lineHeight": 1.35
-      },
-      {
-        "name": "understanding_label",
-        "type": "text",
-        "content": "2. Our understanding of the job",
-        "position": {
-          "x": 18,
-          "y": 166
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
-      },
-      {
-        "name": "understanding",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 174
-        },
-        "width": 174,
-        "height": 28,
-        "fontSize": 10,
-        "fontColor": "#1f2937",
-        "lineHeight": 1.35
-      },
-      {
-        "name": "scope_title",
-        "type": "text",
-        "content": "3. Scope of work",
-        "position": {
-          "x": 18,
-          "y": 206
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115"
-      },
-      {
-        "name": "deliverables_label",
-        "type": "text",
-        "content": "Deliverables",
-        "position": {
-          "x": 18,
-          "y": 214
-        },
-        "width": 174,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151",
-        "readOnly": true
-      },
-      {
-        "name": "deliverable_1",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 221
+          "x": 20,
+          "y": 20
         },
         "width": 170,
         "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "deliverable_2",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 228
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "deliverable_3",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 235
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "deliverable_4",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 242
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "deliverable_5",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 249
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "deliverable_6",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 256
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "page_1_footer",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 285
-        },
-        "width": 174,
-        "height": 5,
+        "content": "BLUEOAK SOFTWARE LLC  /  PROFESSIONAL PROPOSAL",
         "fontSize": 8,
-        "fontColor": "#9ca3af",
-        "alignment": "center"
-      }
-    ],
-    [
-      {
-        "name": "approach_label",
-        "type": "text",
-        "content": "4. How we work",
-        "position": {
-          "x": 18,
-          "y": 18
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
+        "fontColor": "#177A89",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "approach_1",
+        "name": "title_0002",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 26
+          "x": 20,
+          "y": 31
         },
         "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
+        "height": 10,
+        "content": "PROJECT CAPABILITY & PROPOSED WORKFLOW",
+        "fontSize": 17,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 15,
+          "max": 17,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "approach_2",
+        "name": "subtitle_0003",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 35
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "approach_3",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
+          "x": 20,
           "y": 44
         },
         "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "approach_4",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 53
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "approach_5",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 62
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "timeline_label",
-        "type": "text",
-        "content": "5. Timeline",
-        "position": {
-          "x": 18,
-          "y": 76
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
-      },
-      {
-        "name": "t1_label",
-        "type": "text",
-        "content": "Kick-off",
-        "position": {
-          "x": 18,
-          "y": 85
-        },
-        "width": 60,
         "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151"
-      },
-      {
-        "name": "t1_value",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 82,
-          "y": 85
-        },
-        "width": 110,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "t2_label",
-        "type": "text",
-        "content": "Production",
-        "position": {
-          "x": 18,
-          "y": 92
-        },
-        "width": 60,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151"
-      },
-      {
-        "name": "t2_value",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 82,
-          "y": 92
-        },
-        "width": 110,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "t3_label",
-        "type": "text",
-        "content": "Delivery",
-        "position": {
-          "x": 18,
-          "y": 99
-        },
-        "width": 60,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151"
-      },
-      {
-        "name": "t3_value",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 82,
-          "y": 99
-        },
-        "width": 110,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "pricing_title",
-        "type": "text",
-        "content": "6. Indicative pricing",
-        "position": {
-          "x": 18,
-          "y": 112
-        },
-        "width": 174,
-        "height": 7,
-        "fontSize": 12,
-        "fontColor": "#0f1115"
-      },
-      {
-        "name": "option_1_name",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 121
-        },
-        "width": 100,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "option_1_price",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 122,
-          "y": 121
-        },
-        "width": 70,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#0f1115",
-        "alignment": "right"
-      },
-      {
-        "name": "option_1_notes",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 128
-        },
-        "width": 174,
-        "height": 6,
+        "content": "A practical implementation plan for customer support routing, AI assistance, CRM",
         "fontSize": 9,
-        "fontColor": "#6b7280"
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "option_2_name",
+        "name": "subtitle_0004",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 18,
-          "y": 138
+          "x": 20,
+          "y": 50
         },
-        "width": 100,
+        "width": 170,
         "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "option_2_price",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 122,
-          "y": 138
-        },
-        "width": 70,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#0f1115",
-        "alignment": "right"
-      },
-      {
-        "name": "option_2_notes",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 18,
-          "y": 145
-        },
-        "width": 174,
-        "height": 6,
+        "content": "synchronization, and production monitoring.",
         "fontSize": 9,
-        "fontColor": "#6b7280"
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "includes_label",
+        "name": "table_shade_0005",
         "type": "text",
-        "content": "What's included",
         "position": {
-          "x": 18,
-          "y": 158
-        },
-        "width": 174,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151",
-        "readOnly": true
-      },
-      {
-        "name": "includes_1",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 165
+          "x": 20,
+          "y": 63
         },
         "width": 170,
-        "height": 6,
+        "height": 7.7,
+        "content": "",
         "fontSize": 10,
-        "fontColor": "#1f2937"
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "includes_2",
+        "name": "table_key_0006",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 172
+          "x": 23,
+          "y": 64
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Prepared for",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0007",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 64
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Hiring team (client name not verified)",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0008",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 72.7
         },
         "width": 170,
-        "height": 6,
+        "height": 7.7,
+        "content": "",
         "fontSize": 10,
-        "fontColor": "#1f2937"
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "includes_3",
+        "name": "table_key_0009",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 179
+          "x": 23,
+          "y": 73.7
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Prepared by",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0010",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 73.7
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Blueoak Software LLC",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0011",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 82.4
         },
         "width": 170,
-        "height": 6,
+        "height": 7.7,
+        "content": "",
         "fontSize": 10,
-        "fontColor": "#1f2937"
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "includes_4",
+        "name": "table_key_0012",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 186
+          "x": 23,
+          "y": 83.4
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Engagement",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0013",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 83.4
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Discovery and milestones to be confirmed",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0014",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 102.1
         },
         "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "includes_5",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 193
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "includes_6",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 200
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "assumptions_label",
-        "type": "text",
-        "content": "Assumptions",
-        "position": {
-          "x": 18,
-          "y": 212
-        },
-        "width": 174,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151",
-        "readOnly": true
-      },
-      {
-        "name": "assumptions_1",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 219
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "assumptions_2",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 226
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "assumptions_3",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 233
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "assumptions_4",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 240
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "assumptions_5",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 247
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "next_steps_label",
-        "type": "text",
-        "content": "Next steps",
-        "position": {
-          "x": 18,
-          "y": 259
-        },
-        "width": 174,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#374151",
-        "readOnly": true
-      },
-      {
-        "name": "next_step_1",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 266
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "next_step_2",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 273
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "next_step_3",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 280
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "next_step_4",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 287
-        },
-        "width": 170,
-        "height": 6,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      }
-    ],
-    [
-      {
-        "name": "why_us_label",
-        "type": "text",
-        "content": "7. Why work with us",
-        "position": {
-          "x": 18,
-          "y": 18
-        },
-        "width": 174,
-        "height": 7,
+        "height": 8,
+        "content": "Project understanding",
         "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "why_us_1",
+        "name": "paragraph_0015",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 22,
-          "y": 26
+          "x": 20,
+          "y": 112.1
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "The job calls for a customer support workflow that can classify incoming requests, make",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0016",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 117.4
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "relevant knowledge available to support agents, and synchronize ticket activity with the CRM.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0017",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 124.7
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "A reliable implementation should account for escalation rules, customer context, permissions,",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0018",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 130
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "response quality, and measurable outcomes rather than relying on AI responses alone.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0019",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 142.3
         },
         "width": 170,
         "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "why_us_2",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 35
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "why_us_3",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 44
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "why_us_4",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 53
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "why_us_5",
-        "type": "text",
-        "content": "",
-        "position": {
-          "x": 22,
-          "y": 62
-        },
-        "width": 170,
-        "height": 8,
-        "fontSize": 10,
-        "fontColor": "#1f2937"
-      },
-      {
-        "name": "contact_block_label",
-        "type": "text",
-        "content": "Contact",
-        "position": {
-          "x": 18,
-          "y": 78
-        },
-        "width": 174,
-        "height": 7,
+        "content": "How the proposed skillset maps to your requirements",
         "fontSize": 12,
-        "fontColor": "#0f1115",
-        "readOnly": true
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "contact_email",
+        "name": "table_shade_0020",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 18,
-          "y": 87
+          "x": 20,
+          "y": 152.3
         },
-        "width": 174,
-        "height": 6,
+        "width": 170,
+        "height": 13.4,
+        "content": "",
         "fontSize": 10,
-        "fontColor": "#2563eb"
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "contact_name_signature",
+        "name": "table_key_0021",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 18,
-          "y": 94
+          "x": 23,
+          "y": 153.3
         },
-        "width": 174,
-        "height": 6,
-        "fontSize": 11,
-        "fontColor": "#0f1115"
+        "width": 58,
+        "height": 5.7,
+        "content": "AI-based ticket classification",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "closing_note",
+        "name": "table_value_0022",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 18,
-          "y": 103
+          "x": 82,
+          "y": 153.3
         },
-        "width": 174,
-        "height": 22,
+        "width": 105,
+        "height": 5.7,
+        "content": "Define supported ticket categories, confidence thresholds, and",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0023",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 159
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "fallbacks to human review.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0024",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 167.7
+        },
+        "width": 170,
+        "height": 13.4,
+        "content": "",
         "fontSize": 10,
-        "fontColor": "#1f2937",
-        "lineHeight": 1.35
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
       },
       {
-        "name": "footer_note",
+        "name": "table_key_0025",
         "type": "text",
-        "content": "",
         "position": {
-          "x": 18,
+          "x": 23,
+          "y": 168.7
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "CRM and helpdesk integration",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0026",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 168.7
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Map identifiers, authentication, event triggers, data contracts,",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0027",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 174.4
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "and synchronization rules.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0028",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 183.1
+        },
+        "width": 170,
+        "height": 13.4,
+        "content": "",
+        "fontSize": 10,
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_key_0029",
+        "type": "text",
+        "position": {
+          "x": 23,
+          "y": 184.1
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Production reliability",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0030",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 184.1
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Include retries, audit logs, permissions, quality checks, and",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0031",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 189.8
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "monitoring from the pilot stage.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0032",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 203.5
+        },
+        "width": 170,
+        "height": 8,
+        "content": "Proposed project workflow",
+        "fontSize": 12,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "step_0033",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 213.5
+        },
+        "width": 170,
+        "height": 7,
+        "content": "01  Discovery and data review",
+        "fontSize": 10,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0034",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 221.5
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "Identify ticket channels, CRM fields, knowledge sources, priority rules, security",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0035",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 226.8
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "constraints, and success metrics.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "step_0036",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 234.1
+        },
+        "width": 170,
+        "height": 7,
+        "content": "02  Solution design",
+        "fontSize": 10,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0037",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 242.1
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "Define the AI classification and retrieval design, API contracts, fallback behavior, and",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0038",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 247.4
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "human approval points.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "step_0039",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 254.7
+        },
+        "width": 170,
+        "height": 7,
+        "content": "03  Pilot implementation",
+        "fontSize": 10,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_rule_0076",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 277
+        },
+        "width": 170,
+        "height": 3,
+        "content": "____________________________________________________________",
+        "fontSize": 8,
+        "fontColor": "#B3C6D1",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_job_title_0077",
+        "type": "text",
+        "position": {
+          "x": 20,
           "y": 282
         },
-        "width": 174,
-        "height": 6,
+        "width": 153,
+        "height": 7,
+        "content": "Build an AI-Powered Customer Support Workflow with CRM Integration",
+        "fontSize": 7,
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 5,
+          "max": 7,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_page_0078",
+        "type": "text",
+        "position": {
+          "x": 176,
+          "y": 282
+        },
+        "width": 14,
+        "height": 7,
+        "content": "1 / 3",
         "fontSize": 8,
-        "fontColor": "#9ca3af",
-        "alignment": "center"
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
+      }
+    ],
+    [
+      {
+        "name": "paragraph_0040",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 20
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "Connect one support channel to the chosen CRM and validate classification, enrichment,",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0041",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 25.3
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "and handoff events.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "step_0042",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 32.6
+        },
+        "width": 170,
+        "height": 7,
+        "content": "04  Quality and failure testing",
+        "fontSize": 10,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0043",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 40.6
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "Test ambiguous tickets, sensitive information, outages, duplicate events, and",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0044",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 45.9
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "low-confidence AI responses.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "step_0045",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 53.2
+        },
+        "width": 170,
+        "height": 7,
+        "content": "05  Rollout and handover",
+        "fontSize": 10,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0046",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 61.2
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "Deploy the approved workflow, establish monitoring, and document maintenance and",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0047",
+        "type": "text",
+        "position": {
+          "x": 28,
+          "y": 66.5
+        },
+        "width": 162,
+        "height": 5.3,
+        "content": "escalation procedures.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0048",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 78.8
+        },
+        "width": 170,
+        "height": 8,
+        "content": "Potential deliverables",
+        "fontSize": 12,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0049",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 88.8
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  Documented integration workflow and CRM field mappings",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0050",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 95.3
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  Configured ticket classification and routing logic within the agreed scope",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0051",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 101.8
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  Test plan covering common failures, escalations, and data handling",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0052",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 108.3
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  Deployment notes, operational monitoring checklist, and handover guide",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0053",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 121.8
+        },
+        "width": 170,
+        "height": 8,
+        "content": "Coordination and quality checks",
+        "fontSize": 12,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0054",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 131.8
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "Start with representative ticket categories and review the quality of classifications and CRM",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0055",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 137.1
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "updates against agreed acceptance criteria. Roll out additional queues only after stakeholders",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0056",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 142.4
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "approve the pilot.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0057",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 149.7
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "Monitor unexpected model outputs, incorrect routing, retry behavior, access-control mistakes,",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0058",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 155
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "and failed CRM synchronization.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0059",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 167.3
+        },
+        "width": 170,
+        "height": 8,
+        "content": "Commercial terms",
+        "fontSize": 12,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0060",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 177.3
+        },
+        "width": 170,
+        "height": 7.7,
+        "content": "",
+        "fontSize": 10,
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_key_0061",
+        "type": "text",
+        "position": {
+          "x": 23,
+          "y": 178.3
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Working basis",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0062",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 178.3
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Milestone-based scope and acceptance criteria to be agreed.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_shade_0063",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 187
+        },
+        "width": 170,
+        "height": 13.4,
+        "content": "",
+        "fontSize": 10,
+        "fontColor": "#243746",
+        "backgroundColor": "#EDF4F8",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 8,
+          "max": 10,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_key_0064",
+        "type": "text",
+        "position": {
+          "x": 23,
+          "y": 188
+        },
+        "width": 58,
+        "height": 5.7,
+        "content": "Initial step",
+        "fontSize": 9,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0065",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 188
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "Review integration access, ticket samples, and the target CRM",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "table_value_0066",
+        "type": "text",
+        "position": {
+          "x": 82,
+          "y": 193.7
+        },
+        "width": 105,
+        "height": 5.7,
+        "content": "workflow.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "section_heading_0067",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 207.4
+        },
+        "width": 170,
+        "height": 8,
+        "content": "Information needed to confirm scope",
+        "fontSize": 12,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 10,
+          "max": 12,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0068",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 217.4
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  Which helpdesk and CRM platforms, including versions, are in scope?",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0069",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 223.9
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  What data may be sent to the AI service, and what human review is required?",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "list_0070",
+        "type": "text",
+        "position": {
+          "x": 22,
+          "y": 230.4
+        },
+        "width": 167,
+        "height": 5.5,
+        "content": "•  What ticket volumes and accuracy metrics should the pilot satisfy?",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0071",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 238.9
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "This document describes a proposed execution plan, not a claim of previously delivered work",
+        "fontSize": 9,
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0072",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 244.2
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "with any particular vendor.",
+        "fontSize": 9,
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "paragraph_0073",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 254.5
+        },
+        "width": 170,
+        "height": 5.3,
+        "content": "Thank you for considering this proposal.",
+        "fontSize": 9,
+        "fontColor": "#243746",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_rule_0079",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 277
+        },
+        "width": 170,
+        "height": 3,
+        "content": "____________________________________________________________",
+        "fontSize": 8,
+        "fontColor": "#B3C6D1",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_job_title_0080",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 282
+        },
+        "width": 153,
+        "height": 7,
+        "content": "Build an AI-Powered Customer Support Workflow with CRM Integration",
+        "fontSize": 7,
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 5,
+          "max": 7,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_page_0081",
+        "type": "text",
+        "position": {
+          "x": 176,
+          "y": 282
+        },
+        "width": 14,
+        "height": 7,
+        "content": "2 / 3",
+        "fontSize": 8,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
+      }
+    ],
+    [
+      {
+        "name": "signature_0074",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 20
+        },
+        "width": 170,
+        "height": 7,
+        "content": "Blueoak Software LLC",
+        "fontSize": 11,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 9,
+          "max": 11,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "website_0075",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 29
+        },
+        "width": 170,
+        "height": 6,
+        "content": "https://blueoaksoftware.cloud",
+        "fontSize": 9,
+        "fontColor": "#177A89",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 7,
+          "max": 9,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_rule_0082",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 277
+        },
+        "width": 170,
+        "height": 3,
+        "content": "____________________________________________________________",
+        "fontSize": 8,
+        "fontColor": "#B3C6D1",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_job_title_0083",
+        "type": "text",
+        "position": {
+          "x": 20,
+          "y": 282
+        },
+        "width": 153,
+        "height": 7,
+        "content": "Build an AI-Powered Customer Support Workflow with CRM Integration",
+        "fontSize": 7,
+        "fontColor": "#53677B",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 5,
+          "max": 7,
+          "fit": "vertical"
+        }
+      },
+      {
+        "name": "footer_page_0084",
+        "type": "text",
+        "position": {
+          "x": 176,
+          "y": 282
+        },
+        "width": 14,
+        "height": 7,
+        "content": "3 / 3",
+        "fontSize": 8,
+        "fontColor": "#193753",
+        "backgroundColor": "",
+        "verticalAlignment": "middle",
+        "alignment": "left",
+        "lineHeight": 1.15,
+        "readOnly": false,
+        "required": false,
+        "dynamicFontSize": {
+          "min": 6,
+          "max": 8,
+          "fit": "vertical"
+        }
       }
     ]
   ]

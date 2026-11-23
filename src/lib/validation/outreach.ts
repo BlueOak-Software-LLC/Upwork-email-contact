@@ -31,17 +31,63 @@ export const ingestOptionsSchema = z.object({
   senderAccountId: z.string().uuid().optional(),
 });
 
+/** Any of "Name <a@b.com>", "a@b.com", "mailto:a@b.com". */
+const recipientEmail = z
+  .string()
+  .trim()
+  .transform((value) =>
+    value
+      .replace(/^mailto:/i, "")
+      .replace(/^.*<([^>]+)>.*$/, "$1")
+      .trim()
+      .toLowerCase(),
+  )
+  .refine((value) => /^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/.test(value), {
+    message: "Not a valid email address",
+  });
+
+const ccList = z
+  .array(recipientEmail)
+  .max(10)
+  .transform((values) => [...new Set(values)]);
+
+export const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high"]).optional();
+
+/** Step 1 — the PPD document only. No email, no PDF. */
 export const generateProposalSchema = z.object({
   /** Which contact to write for; defaults to the lead's primary email. */
   contactId: z.string().uuid().optional(),
+  /**
+   * Write the document for an address that is not in the payload. Stored as a
+   * manual `lead_contacts` row so the audit trail explains where it came from.
+   */
+  toEmail: recipientEmail.optional(),
   regenerate: z.boolean().default(true),
-  createDraft: z.boolean().default(true),
-  senderAccountId: z.string().uuid().optional(),
   /**
    * Override `GROQ_MODEL` for this one call — handy when Groq retires a model
    * and you want to test a replacement before changing the environment.
    */
   model: z.string().trim().min(1).max(120).optional(),
+  /**
+   * How much hidden thinking GPT-OSS may spend. Measured on this pipeline:
+   * "low" ≈ 6 s / $0.0013 / terser prose, default ≈ 19 s / $0.005 / longer doc.
+   */
+  reasoningEffort: reasoningEffortSchema,
+});
+
+/** Step 2 — the outreach email for a reviewed PPD, plus the draft it opens. */
+export const generateEmailSchema = z.object({
+  /** Proposal to write the email for; defaults to the newest on the lead. */
+  proposalId: z.string().uuid().optional(),
+  contactId: z.string().uuid().optional(),
+  /** Send-to address; may be a custom one (creates a manual contact). */
+  toEmail: recipientEmail.optional(),
+  cc: ccList.optional(),
+  senderAccountId: z.string().uuid().nullish(),
+  /** false → only write subject/body onto the proposal, open no draft. */
+  createDraft: z.boolean().default(true),
+  model: z.string().trim().min(1).max(120).optional(),
+  reasoningEffort: reasoningEffortSchema,
 });
 
 export const smtpPort = z.coerce.number().int().min(1).max(65535);
@@ -70,6 +116,9 @@ export const editDraftSchema = z
   .object({
     subject: z.string().trim().min(1).max(300).optional(),
     bodyText: z.string().trim().min(1).max(50_000).optional(),
+    /** Re-point the draft at any address, payload contact or not. */
+    toEmail: recipientEmail.optional(),
+    cc: ccList.nullish(),
     senderAccountId: z.string().uuid().nullable().optional(),
     status: z.enum(["draft", "queued", "cancelled"]).optional(),
   })
@@ -77,6 +126,43 @@ export const editDraftSchema = z
 
 export const sendDraftSchema = z.object({
   senderAccountId: z.string().uuid().optional(),
+  /**
+   * true (default) → the proposal PDF is compiled and attached right before the
+   * send, and a render failure blocks the send. false → send the text only.
+   */
+  attachPdf: z.boolean().default(true),
+});
+
+/** Save a human-edited PPD (and/or email copy) back onto the proposal. */
+export const editProposalSchema = z
+  .object({
+    ppd: z.unknown().optional(),
+    emailSubject: z.string().trim().min(1).max(300).optional(),
+    emailContent: z.string().trim().min(1).max(50_000).optional(),
+    /** Explicit review marker; sending a `ppd` sets it automatically. */
+    reviewed: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "No fields to update" });
+
+/** A brand-new draft that skips Groq entirely (write it yourself). */
+export const manualDraftSchema = z.object({
+  toEmail: recipientEmail,
+  cc: ccList.optional(),
+  subject: z.string().trim().min(1).max(300),
+  bodyText: z.string().trim().min(1).max(50_000),
+  proposalId: z.string().uuid().nullish(),
+  senderAccountId: z.string().uuid().nullish(),
+});
+
+export const savePromptSchema = z.object({
+  key: z.enum(["ppd_document", "email_draft"]),
+  label: z.string().trim().max(80).optional(),
+  systemText: z.string().trim().min(10).max(20_000),
+  userTemplate: z.string().trim().min(10).max(60_000),
+  temperature: z.coerce.number().min(0).max(2).default(0.45),
+  maxTokens: z.coerce.number().int().min(512).max(65_536).nullish(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high"]).nullish(),
+  note: z.string().trim().max(500).nullish(),
 });
 
 export type ListLeadsQuery = z.infer<typeof listLeadsQuerySchema>;
@@ -84,3 +170,7 @@ export type CreateSenderAccountInput = z.infer<typeof createSenderAccountSchema>
 export type UpdateSenderAccountInput = z.infer<typeof updateSenderAccountSchema>;
 export type EditDraftInput = z.infer<typeof editDraftSchema>;
 export type GenerateProposalInput = z.infer<typeof generateProposalSchema>;
+export type GenerateEmailInput = z.infer<typeof generateEmailSchema>;
+export type EditProposalInput = z.infer<typeof editProposalSchema>;
+export type ManualDraftInput = z.infer<typeof manualDraftSchema>;
+export type SavePromptInput = z.infer<typeof savePromptSchema>;

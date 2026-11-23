@@ -7,7 +7,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 2. **Store** every field — raw JSON kept as-is, contacts normalised into rows
 3. **Detect** email addresses inside `verified_contacts` / `potential_contacts`
 4. **Generate** with Groq: a **PPD** (Professional Proposal Document as *pdfme* JSON) + email **subject/content**
-5. **Render** the PPD to PDF with a pdfme template (`templates/pdfme/proposal-template.json`) into Supabase Storage
+5. **Render** the PPD: `lib/pdfme/compiler.ts` generates a pdfme template from the content (A4, mm, page numbers) → `@pdfme/generator` → Supabase Storage
 6. **Draft** an email (with the PDF attached) and **send it over SMTP** using credentials stored per sender account
 7. **Review** everything in the dashboard: lead list → lead detail (job description, email subject + content, PPD)
 
@@ -34,7 +34,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   ├── 0001_init.sql                      contacts, email_logs
 │   └── 0002_leads_senders_proposals.sql   sender_accounts, leads, lead_contacts,
 │                                          proposals, email_drafts, storage bucket
-├── templates/pdfme/proposal-template.json # ← edit/export on pdfme.com, keep field names
+├── templates/pdfme/proposal-template.json # ← reference copy of one compiled doc (Designer import)
 ├── src/
 │   ├── app/
 │   │   ├── (dashboard)/                   FRONTEND
@@ -64,7 +64,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   ├── lib/
 │   │   ├── crypto.ts                      AES-256-GCM for stored secrets
 │   │   ├── env.ts · env-extras.ts         validated env + groq/pdf config
-│   │   ├── pdfme/                         template.ts (JSON import) + mapper.ts (PPD → slots)
+│   │   ├── pdfme/                         compiler.ts (PPD → template+inputs) + template.ts (types)
 │   │   ├── validation/                    lead.ts (payload normaliser), outreach.ts, email.ts, contact.ts
 │   │   ├── api/                           client.ts + hooks.ts + outreach-hooks.ts
 │   │   └── supabase/                      client / server / admin / middleware
@@ -124,51 +124,102 @@ What happens next (`src/server/services/lead-ingest.service.ts`):
    (a `key_people` email outranks a generic mailbox), ranked by list → confidence →
    name-known, with `info@/contact@/support@` penalised. Only the top 3 are used.
 5. For each recipient → `generateProposal()`:
-   * Groq JSON-mode call (`groq.client.ts`) with the prompt in
-     `prompts/proposal.prompt.ts`
-   * `sanitizeProposal()` coerces/clips every field, fills placeholders (`[TO CONFIRM]`)
-     and caps list lengths (6/5/6/5/4/5) so it always fits the template slots
+   * One Groq JSON-mode call (`groq.client.ts`) with the prompt in
+     `prompts/proposal.prompt.ts` → returns **both** the PPD and the email
+   * `sanitizeProposal(output, ctx)` coerces/clips every block, fills
+     `[TO CONFIRM]` placeholders, and **overwrites** company / website / prepared-by /
+     job title / job reference from env + the lead, so the model can never state
+     our own details or invent a reply address. Any `references` item whose URL is
+     not on our allowlist is dropped (the allowlist is empty today ⇒ no references
+     ever ship).
    * saves `proposals.ppd` + `email_subject` + `email_content`
-   * renders the PDF (`pdf.service.ts`) and stores it at
-     `proposals/{leadId}/{proposalId}-v{n}.pdf` (failure is recorded, never fatal)
+   * compiles + renders the PDF (`pdf.service.ts` → `lib/pdfme/compiler.ts`) and
+     stores it at `proposals/{leadId}/{proposalId}-v{n}.pdf` (failure recorded, never fatal)
    * creates the `email_drafts` row: subject/content + signature + PDF attachment
 6. Lead status updated; per-recipient errors come back in `warnings[]`.
 
 Flags: `?dry=true` (store only), `?auto=false`, `?regenerate=true` (new version),
 `?senderAccountId=<uuid>`. Env default: `AUTO_ENRICH_LEADS=true`.
 
-## 5. PPD → PDF (pdfme)
+## 5. PPD contract → compiled pdfme template
 
-* `templates/pdfme/proposal-template.json` — **pdfme v6 shape**:
+The document is **block-based**, and the pdfme template is generated from the
+content per proposal — no fixed slots, so a proposal can be 2 pages or 8.
 
 ```jsonc
+// proposals.ppd  (types in src/types/lead.ts; sample: examples/ppd-example.json)
 {
-  "pdfmeVersion": "6.2.8",
-  "basePdf": { "width": 210, "height": 297, "padding": [0, 0, 0, 0] }, // A4 in mm
-  "schemas": [ [ /* page 1 fields */ ], [ /* page 2 */ ], [ /* page 3 */ ] ]
+  "company": "…", "document_title": "…", "subtitle": "…", "job_title": "…", "job_reference": "…",
+  "prepared_for": "…", "prepared_by": "…", "rate": "…", "engagement": "…", "website": "…",
+  "closing": "…",
+  "sections": [{ "id": "workflow", "title": "Proposed workflow", "blocks": [ /* … */ ] }]
 }
 ```
 
-  84 fields over 3 pages, all `type: "text"`. **All coordinates are millimetres**
-  (pdfme converts mm→pt: the rendered page comes out 595×842 pt = A4).
-  20 of them are static captions (`readOnly: true`, e.g. `summary_label`,
-  `deliverables_label`) and are intentionally *not* part of the PPD contract.
-* `src/lib/pdfme/mapper.ts` — `ppdToPdfmeInputs()` returns **one record per
-  document** (`[{…}]`), flattened across all pages, because in v6
-  `inputs.length` = number of documents, not pages (2 inputs on a 3-page
-  template would produce 6 pages). Model lists are expanded into fixed slots
-  (`deliverable_1..6`, `approach_1..5`, `includes_1..6`, `assumptions_1..5`,
-  `next_step_1..4`, `why_us_1..5`); unused slots are emitted as `""`.
-* Re-design at <https://pdfme.com/template-design>, export the JSON, and
-  overwrite the file **keeping the field names**. If you add fields, extend
-  `ProposalPpd` (`src/types/lead.ts`), `sanitizeProposal()` and the mapper.
-* Verified locally: rendering the sample PPD yields a 3-page, 595×842 pt PDF
-  (~14 KB) with 0 unsupplied dynamic fields and 0 unknown input keys.
-* Rendering runs server-side via `@pdfme/generator` (`generate`, with a
-  `renderPdf` fallback for other builds) and uploads to the private `proposals`
-  bucket. `GET /api/leads/:id/pdf?render=true` re-renders from the stored PPD —
-  handy right after swapping a template.
-* `PDF_PROVIDER=none` skips PDFs; the PPD JSON and dashboard view keep working.
+Seven block types, and nothing else: `paragraph {items[]}`, `bullets {items[]}`,
+`numberedSteps {items:[{title,description}]}`, `capabilityMatrix
+{items:[{requirement,approach}]}`, `keyValueTable {rows:[{label,value}]}`,
+`references {items:[{name,url,verified}]}`, `note {text}`.
+
+### `src/lib/pdfme/compiler.ts` — the template generator
+
+Port of `compile_pdfme.py` from the Blueoak PDFme package. It flows the blocks
+down an A4 page in **millimetres** and emits one positioned pdfme `text` field
+per **wrapped line** (`paragraph_0007`, `table_key_0031`, …), starting a new page
+when the cursor passes `y = 273`, then stamps every page with the rule, the job
+title and `n / total`. Output: `{ template, inputs, pages, fieldCount }` where
+`inputs` is a **single record for the whole document** (pdfme v6 counts
+documents, not pages).
+
+* Verified: for `examples/ppd-example.json` it produces **exactly** the same 3
+  pages / 84 fields (same names, coordinates, colours) as the shipped Python
+  compiler, and renders a 14.5 KB, 595×842 pt PDF on `@pdfme/generator` 6.2.8.
+* Geometry stays inside the page for any length: a 4,243-word document compiled
+  to 12 pages / 462 fields with 0 out-of-bounds fields and 0 mismatched keys.
+* `templates/pdfme/proposal-template.json` is the **reference copy** of one
+  compiled document — import it into <https://pdfme.com/template-design> to
+  re-style, or use it as the visual spec. Runtime never reads it; the compiler
+  writes an equivalent template per proposal.
+* Old flat PPD rows (`deliverables[]`, `timeline_*`, `pricing_option_*`) are
+  migrated to sections on the fly, so `?render=true` still works on proposals
+  written before this change.
+* Rendering runs server-side (`generate`, with a `renderPdf` fallback) and
+  uploads to the private `proposals` bucket. It happens **only** on an explicit
+  `GET /api/leads/:id/pdf?render=true` preview or inside
+  `POST /api/drafts/:id/send` — never during generation — so a PDF can only ever
+  be built from a PPD a human has reviewed (`proposals.ppd_reviewed_at`).
+  Saving an edited PPD flips a ready PDF back to `pending` so the stale file is
+  never sent. `PDF_PROVIDER=none` skips PDFs; the PPD JSON and dashboard work.
+
+### Groq tokens, length and cost (measured on this pipeline)
+
+Groq writes the *content*; the PDF is rendered locally and costs **zero** extra
+tokens. `openai/gpt-oss-120b`: 131,072 context / 65,536 max completion tokens,
+$0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*` when pricing moves).
+
+| `GROQ_REASONING_EFFORT` | wall clock | completion tokens (of which reasoning) | document | est. cost |
+| --- | --- | --- | --- | --- |
+| `low` | 6 s | 1,577 (28) | ~500 words → 3 pages | $0.00126 |
+| `medium` (default) | 16 s | 2,755 (1,124) | ~880 words → **4 pages** | $0.00198 |
+| unset (model default ≈ high) | 19 s | 8,000 (**6,296**) | 950 words, then truncated | $0.00511 |
+
+Lessons baked into the code:
+* **Reasoning is billed against the same completion cap** as the visible JSON, so
+  `GROQ_MAX_TOKENS` (12,000) needs headroom; hitting it raises the
+  `completion used N of the M-token budget` warning and a parse error that names
+  the knob to turn.
+* **Your tier's TPM is the real ceiling.** This key allows 8,000 tokens/minute, so
+  a 12k request came back `413 Request too large … Limit 8000, Requested 10090`.
+  The client therefore clamps the budget to `GROQ_TOKENS_PER_MINUTE − estimated
+  prompt − 256`, and on a 413 it re-reads the limit from the error body, resizes
+  and retries once (`groq_tpm_resize`).
+* **A global word target does not steer this model** — 1,200–2,000 words produced
+  504. The prompt now states per-section counts (3×65-word paragraphs, 6 matrix
+  rows, 6 steps of 35–50 words, …), which is what moved it to 880 words / 4 pages.
+* json mode occasionally returns `json_validate_failed` with an empty generation:
+  two backed-off retries (cooler, then cooler + `reasoning_effort: low`).
+* Page-count target: ~800–1,500 words ⇒ 4–6 pages here. `DOC_WORD_TARGET`
+  (`proposal-sanitize.ts`) warns outside 700–2,600 words.
 
 > ⚠ **Keep the three pdfme packages on the same exact version.** They are pinned
 > `6.2.8` (no caret) in `package.json`: `@pdfme/generator` declares its peers as
@@ -191,12 +242,15 @@ npm run build          # production build (24 routes)
 node -e "console.log(require('@pdfme/generator') ? 'pdfme ok' : '')"  # no export-mismatch crash
 ```
 
-Supabase (apply migrations in order — `0001` then `0002`):
+Supabase (apply migrations in order — `0001`, `0002`, then `0003`):
 
 ```bash
 supabase link --project-ref <ref> && supabase db push
-# or paste both files into the SQL editor; the 0002 file also creates the
-# private `proposals` storage bucket
+# or paste each file into the SQL editor. 0002 also creates the private
+# `proposals` storage bucket; 0003 adds prompt_templates, proposals.ppd_reviewed_at
+# / pdf_generated_at and email_drafts.recipient_source (custom recipients).
+# Reading a prompt before 0003 degrades to the code default; stamping a PPD
+# review or a custom recipient fails with the migration named in the error.
 psql "$SUPABASE_DB_URL" -f supabase/seed.sql   # optional demo rows
 ```
 
@@ -209,6 +263,8 @@ Required env (see `.env.example`):
 | `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords at rest |
 | `GROQ_API_KEY` | from <https://console.groq.com/keys>. **Rotate any key that was ever pasted into a chat/ticket/ticket-tracker** — this repo never stores it in code |
 | `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning |
+| `GROQ_MAX_TOKENS` / `GROQ_TOKENS_PER_MINUTE` / `GROQ_REASONING_EFFORT` | completion budget; effort is auto-tuned down on a tight TPM allowance |
+| `PROPOSAL_COMPANY` / `PROPOSAL_WEBSITE` / `PROPOSAL_PREPARED_BY` / `PROPOSAL_RATE` | branding the model cannot override (falls back to `EMAIL_FROM` parsing) |
 | `PDF_PROVIDER` / `PDFME_TEMPLATE_PATH` | `pdfme` \| `none` |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` / `EMAIL_REPLY_TO` + `RESEND_API_KEY` or `SMTP_*` | fallback env-based sending; per-account SMTP wins when `senderAccountId` is given |
 
@@ -220,8 +276,11 @@ npm run db:types   # regenerate src/types/database.ts after schema changes
 
 ## 7. Run it end to end
 
+The pipeline has four steps, and the PDF is deliberately last — nothing is
+rendered until a human has approved the document it would be rendered from.
+
 ```bash
-# 1. our two mailboxes (password is encrypted before it reaches Postgres)
+# 1. our two mailboxes (the SMTP password is encrypted before it reaches Postgres)
 curl -s -X POST http://localhost:3000/api/sender-accounts \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   -d '{"label":"Studio Gmail","fromEmail":"hello@yourdomain.com",
@@ -235,25 +294,58 @@ curl -s -X POST http://localhost:3000/api/sender-accounts/<id>/test -H "x-api-ke
 curl -s -X POST "http://localhost:3000/api/leads" \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   --data-binary @lead.json
-# → lead stored, contacts parsed, Groq wrote the PPD + subject/content, draft created
+# → lead + contacts stored; with AUTO_ENRICH_LEADS=true Groq also writes the PPD
 
-# 3. review in the dashboard: /leads → click a row
-#    (or read it as JSON)
-curl -s http://localhost:3000/api/leads/<leadId> -H "x-api-key: $API_MASTER_KEY"
+# ── STEP 1 · the document only ────────────────────────────────────────────
+curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"toEmail":"client@example.com"}'        # or {"contactId":"<uuid from the payload>"}
+# → ppd JSON, words/tokens/cost, pdf_status: "pending", no draft, no PDF
 
-# 4. send the draft over SMTP (PDF attached automatically when present)
+# ── STEP 2 · review it (dashboard tab "Edit PPD JSON", or PATCH here) ─────
+curl -s -X PATCH http://localhost:3000/api/proposals/<proposalId> \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"ppd": { …the edited document… }}'
+# → stamps ppd_reviewed_at; a previously rendered PDF is marked stale
+
+# optional look before you commit to the email:
+curl -s -o preview.pdf "http://localhost:3000/api/leads/<leadId>/pdf?render=true&download=true" \
+  -H "x-api-key: $API_MASTER_KEY"
+
+# ── STEP 3 · the email, written from the reviewed document ────────────────
+curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate-email \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"toEmail":"client@example.com","cc":["account@yourdomain.com"]}'
+# → subject + plain-text body + a draft addressed to ANY mailbox you name
+
+# ── STEP 4 · send: the PDF is compiled here and attached ──────────────────
 curl -s -X POST http://localhost:3000/api/drafts/<draftId>/send -H "x-api-key: $API_MASTER_KEY"
+curl -s -X POST http://localhost:3000/api/drafts/<draftId>/send \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" -d '{"attachPdf":false}'
 
 # 5. audit
 curl -s "http://localhost:3000/api/email?status=sent" -H "x-api-key: $API_MASTER_KEY"
-curl -s -o proposal.pdf "http://localhost:3000/api/leads/<leadId>/pdf?download=true" \
-  -H "x-api-key: $API_MASTER_KEY"
+curl -s http://localhost:3000/api/prompts -H "x-api-key: $API_MASTER_KEY"
 ```
 
 Dashboard pages: **Overview** · **Leads** (search/filter, click → detail) ·
 **Lead detail** (job description, key people, every channel with its evidence,
-PPD read view + raw JSON, draft editor, Send) · **Contacts** · **Email log** ·
-**Senders** (add/test/remove mailboxes) · **API** (curl reference).
+the four-step PPD workspace: read view · JSON editor · recipient picker with a
+free-text address · both prompts inline) · **Email draft card** (to/cc/subject
+/body, "render PDF + send") · **Contacts** · **Email log** · **Senders** ·
+**Settings → Prompts** · **API** (curl reference).
+
+### The two prompts
+
+`GET/PUT /api/prompts` and `/settings/prompts` expose `ppd_document` (writes the
+block PPD) and `email_draft` (writes subject/body from the reviewed PPD). Both
+are stored in `prompt_templates` — a row only exists once you edit it, so a
+reset falls back to the code default in
+`src/server/services/prompts/proposal.prompt.ts`. Every prompt is a `{{variable}}`
+template (`{{job_title}}`, `{{research_notes}}`, `{{rate}}`, `{{ppd_summary}}`, …;
+`GET /api/prompts` lists them) and the exact text sent on the last run is kept
+with the generation report so you can see what produced what. Unknown slots are
+reported instead of silently blanked.
 
 ## 8. Deploy to Vercel
 
@@ -283,6 +375,9 @@ vercel --prod        # or push to GitHub → Import Project
 | Every route returns 500 `internal_error` — “Invalid environment configuration: API_MASTER_KEY: Too small” | A blank value in `.env.local` (`API_MASTER_KEY=`) is now treated as **unset** (`lib/env.ts` drops empty strings before validating). Pull this fix; previously an empty optional var failed its own constraint. |
 | `TypeError: fetch failed` on `/api/*` | The function could not reach `NEXT_PUBLIC_SUPABASE_URL` (offline sandbox, VPN, wrong project ref, or paused project). `/api/health` shows it as `"status":"degraded"` with the reason. |
 | `upstream_error … Failed to list leads` | Migration `0002_leads_senders_proposals.sql` not applied yet (tables missing). |
+| `Cannot save prompt overrides: the prompt_templates table is missing … apply supabase/migrations/0003_prompt_templates_review_flow.sql` (502 from `PUT /api/prompts`) | Migration **0003** not applied. Until then prompt reads fall back to the code defaults, generation still works, and the review stamp / custom-recipient provenance are dropped from the write with a `db_columns_missing` log line — but you cannot save edited prompts. |
+| PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
+| A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |
 | Crash at import: *“'@pdfme/common' does not provide an export named 'createDynamicLayoutSplitRange'”* | pdfme version skew. Keep `@pdfme/common`, `@pdfme/generator`, `@pdfme/schemas` on the **same exact version** (pinned `6.2.8`, no caret). |
 | 500 responses hide the real reason | Outside production, `withApi` now echoes the message + top of the stack in `error.details` so you can debug without attaching a logger. |

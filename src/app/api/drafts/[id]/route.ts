@@ -29,8 +29,10 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
 
 /**
  * PATCH /api/drafts/:id — edit before sending.
- * { "subject": "...", "bodyText": "...", "senderAccountId": "uuid|null",
+ * { "subject": "…", "bodyText": "…", "toEmail": "any@address.com",
+ *   "cc": ["a@b.com"], "senderAccountId": "uuid|null",
  *   "status": "draft|queued|cancelled" }
+ * `toEmail` is not limited to the addresses in the payload.
  */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
@@ -40,6 +42,8 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
     draft: await editDraft(id, {
       subject: input.subject,
       bodyText: input.bodyText,
+      toEmail: input.toEmail,
+      cc: input.cc ?? undefined,
       senderAccountId: input.senderAccountId,
       status: input.status,
     }),

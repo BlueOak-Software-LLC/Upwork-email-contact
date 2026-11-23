@@ -383,6 +383,8 @@ export interface Database {
           email_html: string | null;
           pdf_path: string | null;
           pdf_status: string;
+          pdf_generated_at: string | null;
+          ppd_reviewed_at: string | null;
           prompt_tokens: number | null;
           completion_tokens: number | null;
           error: string | null;
@@ -402,6 +404,8 @@ export interface Database {
           email_html?: string | null;
           pdf_path?: string | null;
           pdf_status?: string;
+          pdf_generated_at?: string | null;
+          ppd_reviewed_at?: string | null;
           prompt_tokens?: number | null;
           completion_tokens?: number | null;
           error?: string | null;
@@ -421,6 +425,8 @@ export interface Database {
           email_html?: string | null;
           pdf_path?: string | null;
           pdf_status?: string;
+          pdf_generated_at?: string | null;
+          ppd_reviewed_at?: string | null;
           prompt_tokens?: number | null;
           completion_tokens?: number | null;
           error?: string | null;
@@ -450,12 +456,14 @@ export interface Database {
           proposal_id: string | null;
           sender_account_id: string | null;
           to_email: string;
-          cc: Json;
+          cc: string[] | null;
           subject: string;
           body_text: string;
           body_html: string | null;
           attachments: Json;
           status: DraftStatus;
+          /** 'lead_contact' = an address from the payload, 'custom' = typed by a human. */
+          recipient_source: "lead_contact" | "custom";
           scheduled_at: string | null;
           sent_at: string | null;
           error: string | null;
@@ -469,12 +477,13 @@ export interface Database {
           proposal_id?: string | null;
           sender_account_id?: string | null;
           to_email: string;
-          cc?: Json;
+          cc?: string[] | null;
           subject: string;
           body_text: string;
           body_html?: string | null;
           attachments?: Json;
           status?: DraftStatus;
+          recipient_source?: "lead_contact" | "custom";
           scheduled_at?: string | null;
           sent_at?: string | null;
           error?: string | null;
@@ -488,7 +497,7 @@ export interface Database {
           proposal_id?: string | null;
           sender_account_id?: string | null;
           to_email?: string;
-          cc?: Json;
+          cc?: string[] | null;
           subject?: string;
           body_text?: string;
           body_html?: string | null;
@@ -497,6 +506,7 @@ export interface Database {
           scheduled_at?: string | null;
           sent_at?: string | null;
           error?: string | null;
+          recipient_source?: "lead_contact" | "custom";
         };
         Relationships: [
           {
@@ -528,6 +538,47 @@ export interface Database {
             referencedColumns: ["id"];
           },
         ];
+      };
+      /**
+       * Human-edited Groq prompt pairs (0003). A row exists only after an edit;
+       * otherwise `server/services/prompts` uses the code default, and
+       * "Reset to default" deletes the row.
+       */
+      prompt_templates: {
+        Row: {
+          key: string;
+          label: string;
+          system_text: string;
+          user_template: string;
+          temperature: number;
+          max_tokens: number | null;
+          reasoning_effort: string | null;
+          note: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          label: string;
+          system_text: string;
+          user_template: string;
+          temperature?: number;
+          max_tokens?: number | null;
+          reasoning_effort?: string | null;
+          note?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          key?: string;
+          label?: string;
+          system_text?: string;
+          user_template?: string;
+          temperature?: number;
+          max_tokens?: number | null;
+          reasoning_effort?: string | null;
+          note?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
     };
     Views: {

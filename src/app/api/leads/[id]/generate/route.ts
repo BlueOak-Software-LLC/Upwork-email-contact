@@ -5,11 +5,10 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { generateProposalSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
-import { generateProposal } from "@/server/services/proposal.service";
-import { createDraftForProposal } from "@/server/services/draft.service";
+import { generatePpdDocument, resolveRecipientContact } from "@/server/services/proposal.service";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Groq + optional PDF render
+export const maxDuration = 120; // Groq (with retries)
 
 /** Route params: `withApi<P>` wraps P as `{ params: Promise<P> }`. */
 type Ctx = { id: string };
@@ -25,65 +24,56 @@ async function readJsonOrEmpty(request: NextRequest) {
 }
 
 /**
- * POST /api/leads/:id/generate
- * Run Groq for one email contact of this lead: PPD + subject/content →
- * `proposals` row (+ PDF when configured) → `email_drafts` row.
+ * STEP 1 — POST /api/leads/:id/generate
+ * Groq writes **only the PPD document**. No email copy, no draft and no PDF:
+ * those wait until a human has reviewed the document (`generate-email`, `send`).
  *
- * Body (all optional): { "contactId": "uuid", "regenerate": true,
- *                        "createDraft": true, "senderAccountId": "uuid",
- *                        "model": "llama-3.3-70b-versatile" }
- * Without contactId we use the primary email (verified > potential, HIGH first).
+ * Body (all optional):
+ *   { "contactId": "uuid" }        write for a specific contact on the lead
+ *   { "toEmail": "a@b.com" }       write for a custom address (stored as a
+ *                                  manual contact so the trail explains itself)
+ *   { "regenerate": true }         force a new version (default true)
+ *   { "model": "…", "reasoningEffort": "low|medium|high" }
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
   const { id } = await params;
   const input = parseOrThrow(generateProposalSchema, await readJsonOrEmpty(request));
 
-  const detail = await leadsRepo.detail(id);
-  const candidates = detail.contacts.filter((c) => c.is_email);
-  if (candidates.length === 0) {
-    throw ApiError.badRequest(
-      "No email contact on this lead — verified_contacts and potential_contacts had no usable address",
-    );
-  }
+  const lead = await leadsRepo.byId(id);
+  const { contact, source } = await resolveRecipientContact(id, {
+    contactId: input.contactId,
+    toEmail: input.toEmail,
+  });
 
-  const contact = input.contactId
-    ? candidates.find((c) => c.id === input.contactId)
-    : (candidates.find((c) => c.is_primary) ?? candidates[0]);
-
-  if (!contact) throw ApiError.notFound(`Contact ${input.contactId} is not an email of this lead`);
-
-  const { proposal, warnings } = await generateProposal({
-    lead: detail.lead,
+  const result = await generatePpdDocument({
+    lead,
     contact,
     regenerate: input.regenerate,
     model: input.model,
+    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
   });
 
-  let draft = null;
-  let draftError: string | null = null;
-  if (input.createDraft) {
-    try {
-      draft = await createDraftForProposal({
-        proposalId: proposal.id,
-        senderAccountId: input.senderAccountId,
-      });
-    } catch (error) {
-      // The proposal is saved; only the draft step failed (usually no sender account).
-      draftError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
   return created({
-    proposal,
-    draft,
-    draftError,
-    warnings,
-    contact: { id: contact.id, email: contact.normalized_value ?? contact.contact_value },
+    proposal: result.proposal,
+    ppd: result.ppd,
+    documentWords: result.documentWords,
+    usage: result.usage,
+    costUsd: result.costUsd,
+    warnings: result.warnings,
+    recipient: {
+      contactId: contact.id,
+      email: contact.normalized_value ?? contact.contact_value,
+      source,
+    },
+    // The document is intentionally not rendered yet.
+    pdfStatus: result.proposal.pdf_status,
+    prompt: result.prompt,
+    next: `Review or edit the PPD, then POST /api/leads/${id}/generate-email`,
   });
 });
 
-/** GET /api/leads/:id/generate — current proposals for the lead. */
+/** GET /api/leads/:id/generate — proposal history for the lead. */
 export const GET = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
   const { id } = await params;

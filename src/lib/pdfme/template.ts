@@ -1,15 +1,16 @@
-import rawTemplate from "../../../templates/pdfme/proposal-template.json";
+import rawSample from "../../../templates/pdfme/proposal-template.json";
 
 /**
- * pdfme v6 template used to render the PPD.
+ * pdfme v6 template shape: `{ pdfmeVersion, basePdf, schemas: Field[][] }`,
+ * where `schemas` is one entry **per page** and each page lists its fields.
+ * All geometry is **millimetres** (pdfme converts mm→pt; A4 = 210×297).
  *
- * Shape (v6): `{ pdfmeVersion, basePdf, schemas: SchemaItem[][] }` where
- * `schemas` is one entry **per page** and each page lists its fields
- * (`{ name, type, content, position:{x,y}, width, height, fontSize, … }`).
- * All geometry is **millimetres** (pdfme converts mm→pt internally; A4 = 210×297).
- *
- * Edit visually at https://pdfme.com/template-design and replace this file —
- * field **names** are the contract (see `mapper.ts`); geometry is free.
+ * At runtime the proposal template is **generated per document** by
+ * `compiler.ts` (`compileProposalPdfme`) — content drives the layout, so the
+ * proposal can be any length. The JSON imported here is the *reference copy*
+ * of one compiled document: import it into https://pdfme.com/template-design to
+ * inspect or re-style the geometry, and keep `PDFME_TEMPLATE_PATH` pointing at
+ * it.
  */
 export type PdfmeField = {
   name: string;
@@ -20,10 +21,14 @@ export type PdfmeField = {
   height: number;
   fontSize?: number;
   fontColor?: string;
-  alignment?: "left" | "center" | "right";
+  backgroundColor?: string;
+  alignment?: "left" | "center" | "right" | "justify";
+  verticalAlignment?: "top" | "middle" | "bottom";
   lineHeight?: number;
   characterSpacing?: number;
+  dynamicFontSize?: { min: number; max: number; fit: "horizontal" | "vertical" };
   readOnly?: boolean;
+  required?: boolean;
   [key: string]: unknown;
 };
 
@@ -33,12 +38,7 @@ export type PdfmeTemplate = {
   schemas: PdfmeField[][];
 };
 
-export const proposalTemplate = rawTemplate as unknown as PdfmeTemplate;
+/** Compiled from `examples/ppd-example.json` — see README §5. */
+export const sampleProposalTemplate = rawSample as unknown as PdfmeTemplate;
 
-export const proposalTemplateFieldNames = proposalTemplate.schemas.flat().map((f) => f.name);
-
-/** Static captions baked into the template — the mapper must not overwrite them. */
-export const staticFieldNames = proposalTemplate.schemas
-  .flat()
-  .filter((f) => f.readOnly)
-  .map((f) => f.name);
+export const sampleFieldNames = sampleProposalTemplate.schemas.flat().map((f) => f.name);

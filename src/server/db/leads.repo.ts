@@ -121,18 +121,72 @@ export const leadsRepo = {
     const { error: delError } = await supabase
       .from("lead_contacts")
       .delete()
-      .eq("lead_id", leadId);
+      // Manual rows (typed in the dashboard) survive a re-ingest of the same job.
+      .eq("lead_id", leadId)
+      .or("contact_type.is.null,contact_type.neq.manual");
     if (delError) logger.warn("contacts_delete_failed", { leadId, error: delError.message });
 
-    if (rows.length === 0) return [] as LeadContactRow[];
+    const { data: manualRows } = await supabase
+      .from("lead_contacts")
+      .select(LEAD_CONTACT_COLUMNS)
+      .eq("lead_id", leadId)
+      .eq("contact_type", "manual");
+    const keep = new Set(
+      (manualRows ?? []).map((r) =>
+        String(r.normalized_value ?? r.contact_value ?? "").toLowerCase(),
+      ),
+    );
+    const fresh = rows.filter(
+      (r) => !keep.has(String(r.normalized_value ?? r.contact_value ?? "").toLowerCase()),
+    );
+
+    if (fresh.length === 0) return (manualRows ?? []) as LeadContactRow[];
 
     const { data, error } = await supabase
       .from("lead_contacts")
-      .insert(rows as never)
+      .insert(fresh as never)
       .select(LEAD_CONTACT_COLUMNS);
 
     if (error) throw ApiError.upstream(`Failed to store contacts: ${error.message}`);
-    return (data ?? []) as LeadContactRow[];
+    return [...(manualRows ?? []), ...(data ?? [])] as LeadContactRow[];
+  },
+
+  /**
+   * A recipient a human typed in (the "custom email" path). Reused if the same
+   * address is already on the lead, so repeated sends don't pile up rows.
+   */
+  async upsertManualContact(leadId: string, email: string, name?: string | null) {
+    const supabase = getAdminClient();
+    const value = email.trim().toLowerCase();
+
+    const { data: existing } = await supabase
+      .from("lead_contacts")
+      .select(LEAD_CONTACT_COLUMNS)
+      .eq("lead_id", leadId)
+      .ilike("contact_value", value)
+      .maybeSingle();
+    if (existing) return { row: existing as LeadContactRow, created: false };
+
+    const { data, error } = await supabase
+      .from("lead_contacts")
+      .insert({
+        lead_id: leadId,
+        list_type: "potential",
+        name: name ?? null,
+        contact_type: "manual",
+        channel: "email",
+        contact_value: value,
+        normalized_value: value,
+        rationale: "Added manually in the dashboard",
+        is_email: true,
+        is_primary: false,
+      } as never)
+      .select(LEAD_CONTACT_COLUMNS)
+      .single();
+
+    if (error) throw ApiError.upstream(`Failed to add recipient: ${error.message}`);
+    logger.info("manual_recipient_added", { leadId, email: value });
+    return { row: data as LeadContactRow, created: true };
   },
 
   async list(query: ListLeadsQuery) {
@@ -211,6 +265,19 @@ export const leadsRepo = {
     };
   },
 
+  /** Light single-lead read (no JSONB blobs). */
+  async byId(id: string): Promise<LeadRow> {
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("leads")
+      .select(LEAD_COLUMNS)
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw ApiError.upstream(`Failed to load lead: ${error.message}`);
+    if (!data) throw ApiError.notFound(`Lead ${id} not found`);
+    return data as LeadRow;
+  },
+
   async contacts(leadId: string): Promise<LeadContactRow[]> {
     const supabase = getAdminClient();
     const { data, error } = await supabase
@@ -259,12 +326,21 @@ export const leadsRepo = {
 
   async setStatus(id: string, status: LeadStatus, error?: string) {
     const supabase = getAdminClient();
-    const { error: updateError } = await supabase
-      .from("leads")
-      .update({ status, error: error ?? null })
-      .eq("id", id);
-    if (updateError) {
-      logger.warn("lead_status_update_failed", { id, error: updateError.message });
+    // A long Groq call can outlive the keep-alive connection PostgREST handed us,
+    // so the first PATCH sometimes surfaces as "fetch failed". One retry keeps
+    // the lead from looking stuck on `received` after a successful generation.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { error: updateError } = await supabase
+        .from("leads")
+        .update({ status, error: error ?? null })
+        .eq("id", id);
+      if (!updateError) return;
+      if (attempt === 1) {
+        logger.warn("lead_status_update_failed", { id, status, error: updateError.message });
+        return;
+      }
+      logger.warn("lead_status_update_retry", { id, status, error: updateError.message });
+      await new Promise((resolve) => setTimeout(resolve, 400));
     }
   },
 
