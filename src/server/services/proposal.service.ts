@@ -27,10 +27,13 @@ export async function generateProposal({
   lead,
   contact,
   regenerate = false,
+  model,
 }: {
   lead: LeadRow;
   contact: LeadContactRow;
   regenerate?: boolean;
+  /** Overrides `GROQ_MODEL` for this generation. */
+  model?: string;
 }): Promise<GenerateProposalResult> {
   const env = getServerEnv();
   const normalized = rehydrateNormalizedLead(lead);
@@ -59,7 +62,7 @@ export async function generateProposal({
   logger.info("proposal_generation_started", {
     leadId: lead.id,
     contactId: contact.id,
-    model: groqConfig().model,
+    model: model ?? groqConfig().model,
     version,
   });
 
@@ -70,6 +73,7 @@ export async function generateProposal({
     ],
     temperature: 0.45,
     maxTokens: 3500,
+    model,
   });
 
   const output = sanitizeProposal(completion.data);

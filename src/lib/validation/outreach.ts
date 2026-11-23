@@ -37,6 +37,11 @@ export const generateProposalSchema = z.object({
   regenerate: z.boolean().default(true),
   createDraft: z.boolean().default(true),
   senderAccountId: z.string().uuid().optional(),
+  /**
+   * Override `GROQ_MODEL` for this one call — handy when Groq retires a model
+   * and you want to test a replacement before changing the environment.
+   */
+  model: z.string().trim().min(1).max(120).optional(),
 });
 
 export const smtpPort = z.coerce.number().int().min(1).max(65535);

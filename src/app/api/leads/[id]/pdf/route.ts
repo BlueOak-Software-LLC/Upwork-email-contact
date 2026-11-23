@@ -18,12 +18,20 @@ export const maxDuration = 60;
 /** Route params: `withApi<P>` wraps P as `{ params: Promise<P> }`. */
 type Ctx = { id: string };
 
+const flag = (fallback = false) =>
+  z
+    .enum(["true", "false"])
+    .default(fallback ? "true" : "false")
+    // Without this transform, `?url=false` parses to the *string* "false", which
+    // is truthy — so every branch guard reading it as a boolean takes the wrong path.
+    .transform((v) => v === "true");
+
 const querySchema = z.object({
   proposalId: z.string().uuid().optional(),
   contactId: z.string().uuid().optional(),
-  download: z.enum(["true", "false"]).default("false"),
-  render: z.enum(["true", "false"]).default("false"),
-  url: z.enum(["true", "false"]).default("false"),
+  download: flag(),
+  render: flag(),
+  url: flag(),
 });
 
 /**
@@ -51,7 +59,7 @@ export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
 
   let path = proposal.pdf_path;
 
-  if (!path || query.render === "true") {
+  if (!path || query.render) {
     const rendered = await renderProposalPdf({ proposal });
     if (rendered.status !== "ready" || !rendered.path) {
       return fail(
@@ -68,7 +76,7 @@ export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
       pdf_status: "ready",
     });
     if (rendered.bytes) {
-      return pdfResponse(rendered.bytes, proposal.version, query.download === "true");
+      return pdfResponse(rendered.bytes, proposal.version, query.download);
     }
   }
 
@@ -78,7 +86,7 @@ export const GET = withApi<Ctx>(async (request: NextRequest, { params }) => {
       `No stored PDF for this proposal (${proposal.pdf_status}). Retry with ?render=true`,
     );
   }
-  return pdfResponse(loaded.bytes, proposal.version, query.download === "true");
+  return pdfResponse(loaded.bytes, proposal.version, query.download);
 });
 
 function pickProposal(

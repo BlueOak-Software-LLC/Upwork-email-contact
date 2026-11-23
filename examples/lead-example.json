@@ -1,85 +1,79 @@
 {
-  "job_information": {
-    "job_id": "022124125626153755079",
-    "job_title": "3D Hard-Surface Product Animator for Warehouse Robots (AMRs) and Industrial Robot Arms / Cobots",
-    "job_url": "https://www.upwork.com/jobs/~022124125626153755079",
-    "industry": "3D animation, CGI product films, engineering and technology marketing, industrial robotics, and manufacturing.",
-    "job_location": "Worldwide. The job seeks remote freelance animators on a per-project basis.",
-    "company_mentioned": "Uday Animation (Uday Animation Limited)"
-  },
-  "upwork_client": {
-    "client_name": "MUS",
-    "location": "Mahe, Seychelles"
-  },
-  "key_people": [
-    {
-      "confidence": "HIGH",
-      "evidence": "The LinkedIn profile identifies the person as founder of the studio named in the job post.",
-      "linkedin_url": "https://example.com/in/founder-profile",
-      "location": "Germany",
-      "name": "Founder Name",
-      "role": "Founder; mechanical engineer",
-      "source_urls": ["https://example.com/in/founder-profile", "https://example.com/"]
-    }
-  ],
   "contact_information": {
-    "verified_contacts": [
-      {
-        "company": "Uday Animation Limited",
-        "confidence": "HIGH",
-        "contact_type": "Business email",
-        "contact_value": "studio-contact@example.com",
-        "name": "Studio contact",
-        "notes": "Published directly on the official company website.",
-        "role": "Studio contact",
-        "source_url": "https://example.com/"
-      }
-    ],
-    "potential_contacts": [
-      {
-        "company": "Uday Animation Limited",
-        "confidence": "LOW",
-        "contact_type": "Email",
-        "contact_value": "info@example.com",
-        "name": null,
-        "reason": "General business inbox published on the contact page.",
-        "role": "General business contact",
-        "source_url": "https://example.com/contact"
-      },
-      {
-        "company": "Uday Animation Limited",
-        "confidence": "LOW",
-        "contact_type": "Phone",
-        "contact_value": "+1 914-788-0000",
-        "name": null,
-        "reason": "Officially published business number.",
-        "role": "Business telephone",
-        "source_url": "https://example.com/contact"
-      }
-    ],
     "company_contact_pages": [
       {
-        "name": "Official website",
-        "notes": "Describes photoreal 3D product animation and explainer-video services.",
+        "name": "Uday Animation official website",
+        "notes": "The site describes its photoreal 3D product animation and explainer-video services, displays a robotics portfolio category, provides a business email, and identifies Uday Animation Limited in its copyright notice.",
         "type": "Official company website and business inquiry information",
-        "url": "https://example.com/"
+        "url": "https://udayanimation.com/"
       },
       {
-        "name": "Discovery call",
-        "notes": "Booking calendar link on the official site.",
+        "name": "Uday Animation discovery call",
+        "notes": "The official website provides a booking-calendar link for prospective clients. The destination is a general Calendly domain, so a direct company-specific booking URL is not asserted.",
         "type": "Booking link",
         "url": "https://calendly.com/"
       }
     ],
     "linkedin_profiles": [
       {
-        "name": "Company page",
-        "notes": "Posts about explainer videos for technology businesses.",
+        "name": "Udayan K.",
+        "notes": "Identifies the person as founder of Uday Animation and lists Uday Animation Limited.",
+        "type": "Founder profile",
+        "url": "https://de.linkedin.com/in/udayan-k-1507aa260"
+      },
+      {
+        "name": "Uday Animation Limited",
+        "notes": "A post published under the Uday Animation Limited name about explainer videos for technology businesses.",
         "type": "Official company LinkedIn post",
-        "url": "https://www.linkedin.com/company/example"
+        "url": "https://www.linkedin.com/posts/uday-animation-limited_explainervideo-techmarketing-saas-activity-7381581720078405632-xyyU"
+      },
+      {
+        "name": "Uday Animation Limited",
+        "notes": "Describes the studio's work with harpin AI and names its client-side marketing contact.",
+        "type": "Official company LinkedIn post",
+        "url": "https://www.linkedin.com/posts/uday-animation-limited_ai-customerexperience-businessgrowth-activity-7376087163001720832-Fphw"
       }
     ],
-    "social_media_profiles": []
+    "potential_contacts": [],
+    "social_media_profiles": [],
+    "verified_contacts": [
+      {
+        "company": "Uday Animation Limited",
+        "confidence": "HIGH",
+        "contact_type": "Business email",
+        "contact_value": "udaykarmakar@udayanimation.com",
+        "name": "Uday Animation",
+        "notes": "Published directly on the official company website.",
+        "role": "Studio contact",
+        "source_url": "https://udayanimation.com/"
+      }
+    ]
   },
-  "overall_confidence": "HIGH"
+  "job_information": {
+    "company_mentioned": "Udayanimation (Uday Animation / Uday Animation Limited)",
+    "industry": "3D animation, CGI product films, engineering and technology marketing, industrial robotics, and manufacturing.",
+    "job_id": "022124125626153755079",
+    "job_location": "Worldwide. The job seeks remote freelance animators on a per-project basis.",
+    "job_title": "3D Hard-Surface Product Animator for Warehouse Robots (AMRs) and Industrial Robot Arms / Cobots",
+    "job_url": "https://www.upwork.com/jobs/~022124125626153755079"
+  },
+  "key_people": [
+    {
+      "confidence": "HIGH",
+      "evidence": "The LinkedIn profile identifies Udayan K. as the founder of Uday Animation and lists Uday Animation Limited as his professional affiliation. The official company website publishes an email address using the name Uday Karmakar, but the full surname is not independently confirmed by the LinkedIn profile, so it is not expanded here.",
+      "linkedin_url": "https://de.linkedin.com/in/udayan-k-1507aa260",
+      "location": "Germany",
+      "name": "Udayan K.",
+      "role": "Founder of Uday Animation; mechanical engineer",
+      "source_urls": [
+        "https://de.linkedin.com/in/udayan-k-1507aa260",
+        "https://udayanimation.com/"
+      ]
+    }
+  ],
+  "overall_confidence": "HIGH",
+  "upwork_client": {
+    "client_name": "MUS",
+    "location": "Mahe, Seychelles"
+  }
 }

@@ -30,7 +30,8 @@ async function readJsonOrEmpty(request: NextRequest) {
  * `proposals` row (+ PDF when configured) → `email_drafts` row.
  *
  * Body (all optional): { "contactId": "uuid", "regenerate": true,
- *                        "createDraft": true, "senderAccountId": "uuid" }
+ *                        "createDraft": true, "senderAccountId": "uuid",
+ *                        "model": "llama-3.3-70b-versatile" }
  * Without contactId we use the primary email (verified > potential, HIGH first).
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
@@ -56,6 +57,7 @@ export const POST = withApi<Ctx>(async (request, { params }) => {
     lead: detail.lead,
     contact,
     regenerate: input.regenerate,
+    model: input.model,
   });
 
   let draft = null;
