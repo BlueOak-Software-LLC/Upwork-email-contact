@@ -194,7 +194,12 @@ class ProposalBuilder {
 
   private addFooters() {
     const count = this.pages.length;
-    const jobTitle = truncate(this.data.job_title || "PROJECT PROPOSAL", 100);
+    // A recipient-less document has no job_title (the payload may carry none),
+    // so fall back to what the document is actually called.
+    const jobTitle = truncate(
+      this.data.job_title || this.data.document_title || "PROJECT PROPOSAL",
+      100,
+    );
 
     for (const [index, page] of this.pages.entries()) {
       // Footers sit at a fixed y, so they bypass the flowing cursor entirely.

@@ -44,6 +44,9 @@ export const POST = withApi<Ctx>(async (request, { params }) => {
   const { contact, source } = await resolveRecipientContact(id, {
     contactId: input.contactId,
     toEmail: input.toEmail,
+    // A post with a description but no address still gets a document; the email
+    // step is where an address becomes mandatory.
+    requireRecipient: false,
   });
 
   const result = await generatePpdDocument({
@@ -61,11 +64,18 @@ export const POST = withApi<Ctx>(async (request, { params }) => {
     usage: result.usage,
     costUsd: result.costUsd,
     warnings: result.warnings,
-    recipient: {
-      contactId: contact.id,
-      email: contact.normalized_value ?? contact.contact_value,
-      source,
-    },
+    recipient: contact
+      ? {
+          contactId: contact.id,
+          email: contact.normalized_value ?? contact.contact_value,
+          source,
+        }
+      : null,
+    // Written from the post itself when no address was supplied.
+    recipientNote:
+      contact === null
+        ? "no recipient yet — the document is addressed to the hiring team; give the email step a toEmail"
+        : null,
     // The document is intentionally not rendered yet.
     pdfStatus: result.proposal.pdf_status,
     prompt: result.prompt,

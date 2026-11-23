@@ -53,6 +53,7 @@ export async function ingestLeadPayload(
 
   const emailContacts = storedContacts.filter((c) => c.is_email);
   const warnings: string[] = [];
+  const proposalsFromRun: ProposalRow[] = [];
 
   const autoEnrich =
     (options.autoEnrich ?? env.AUTO_ENRICH_LEADS) && !options.dryRun;
@@ -79,12 +80,41 @@ export async function ingestLeadPayload(
   const recipients = emailRecipients(normalized.contacts);
 
   if (recipients.length === 0) {
-    generation.skipped = true;
-    generation.reason = emailContacts.length
-      ? "Emails were found but none sit in verified_contacts/potential_contacts"
-      : "No email address in the payload";
-    await stamp(lead, "received");
-    return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
+    if (!groqConfig().apiKey) {
+      generation.skipped = true;
+      generation.reason = "No recipient email in the payload and generation is not configured";
+      await stamp(lead, "received");
+      return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
+    }
+
+    // Payloads sometimes carry the post but no address at all. The description
+    // is enough to write the document, so do it now and let the reviewer attach
+    // any recipient later (`toEmail` on the email step).
+    if (!(normalized.jobDescription ?? normalized.jobTitle ?? "").trim()) {
+      generation.skipped = true;
+      generation.reason = emailContacts.length
+        ? "Emails were found but none sit in verified_contacts/potential_contacts, and the post carries no text to write from"
+        : "No email address and no job_description/job_title to write from";
+      await stamp(lead, "received");
+      return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
+    }
+
+    warnings.push(
+      "No recipient email in the payload — the PPD was written from the post itself; give the email step a `toEmail`",
+    );
+    generation.attempted = 1;
+    const outcome = await writeRecipientlessPpd(lead, options);
+    if (outcome.ok) {
+      proposalsFromRun.push(outcome.proposal);
+      warnings.push(...outcome.warnings);
+      generation.succeeded = 1;
+      await stamp(lead, "proposal_ready");
+    } else {
+      generation.failed = 1;
+      warnings.push(outcome.error);
+      await stamp(lead, "failed", "recipient-less PPD generation failed");
+    }
+    return buildResult(lead, created, storedContacts, emailContacts, proposalsFromRun, [], warnings, generation);
   }
 
   if (!groqConfig().apiKey) {
@@ -161,6 +191,32 @@ export async function ingestMany(payloads: unknown[], options: IngestOptions) {
  * ingest response never reports the pre-generation status while the dashboard
  * already shows `proposal_ready`.
  */
+/**
+ * A payload with the post text but no address still deserves a document: write
+ * it recipient-less (proposals.lead_contact_id stays null) so the reviewer can
+ * read and edit it now and pick the address at the email step.
+ */
+async function writeRecipientlessPpd(
+  lead: LeadRow,
+  options: IngestOptions,
+): Promise<
+  | { ok: true; proposal: ProposalRow; warnings: string[] }
+  | { ok: false; error: string }
+> {
+  try {
+    const result = await generatePpdDocument({
+      lead,
+      contact: null,
+      regenerate: options.regenerate,
+    });
+    return { ok: true, proposal: result.proposal, warnings: result.warnings };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("lead_enrichment_failed", { leadId: lead.id, mode: "recipient-less", error: message });
+    return { ok: false, error: message };
+  }
+}
+
 async function stamp(lead: LeadRow, status: LeadStatus, error?: string) {
   lead.status = status;
   if (error !== undefined) lead.error = error;

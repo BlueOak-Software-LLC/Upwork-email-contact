@@ -59,7 +59,8 @@ export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "client_name", description: "Upwork display name" },
   { name: "client_location", description: "Upwork client location" },
   { name: "overall_confidence", description: "research confidence of the payload" },
-  { name: "job_description", description: "full post text when the payload carries it, else a note to use the research notes" },
+  { name: "job_description", description: "job_information.job_description — the post text, the primary source of facts (clipped to 3,600 chars)" },
+  { name: "job_description_chars", description: "how many characters of post body we actually have" },
   { name: "research_notes", description: "researcher evidence: company-page notes, LinkedIn notes, contact rationale, key-person evidence, skills" },
   { name: "budget_range", description: "any budget/pay fields found anywhere in the payload" },
   { name: "client_profile", description: "upwork_client keys (name, location, history flags)" },
@@ -89,6 +90,8 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptTemplateText> = {
     system: `You are a senior B2B proposal writer for a small studio replying to an Upwork job post. You write one Professional Proposal Document (PPD) and return it as JSON.
 
 FACTS
+- The post text is the evidence. Every concrete claim in the document must be traceable to it,
+  to the job title, or to the research notes; anything else is written as [TO CONFIRM].
 - Write in clear, professional {{language}}. No hype, no clichés, no bullet spam, no adjectives the job post did not earn.
 - Use ONLY the facts in the brief. Never invent client names, prices, dates, case studies, awards, metrics, team members, or client references.
 - Unknown fact → write a bracketed placeholder exactly like [YOUR PRICING], [START DATE], [CASE STUDY LINK] so a human fills it in. Never fabricate a plausible-looking value.
@@ -117,10 +120,12 @@ BRIEF
 - Upwork client display name: {{client_name}}
 - Client location: {{client_location}}
 - Research confidence: {{overall_confidence}}
-- Job description:
+THE POST TEXT — job_information.job_description ({{job_description_chars}} chars). This is the
+primary source of facts: name the deliverables, tools, volumes, deadlines and formats it
+mentions, and if the title and the text disagree, follow the text.
 {{job_description}}
 
-WHAT OUR RESEARCHER FOUND (facts we may use — never say where they came from)
+WHAT OUR RESEARCHER FOUND (secondary detail — never say where it came from)
 {{research_notes}}
 
 UPWORK CLIENT ACCOUNT METADATA (internal; never quote the account name as the company)
@@ -198,6 +203,7 @@ RULES
 - 90–160 words (about 700–1,200 characters), including the greeting and sign-off.
 - Subject <= 70 characters, specific to this job, never clickbait, no "Re:" prefix needed.
 - Say nothing that is not already established in the reviewed proposal document below. No new numbers, no invented experience, no promises about dates.
+- Open by naming one concrete detail from the post text — the deliverable, the tool, the volume or the deadline — so it reads as an answer to their actual ask rather than a generic pitch. Quote at most a short phrase, never the whole post.
 - Never mention research, scraping, LinkedIn, email finding, or that you located them outside Upwork.
 - Exactly one ask: a 15-minute call this week.
 - Sign off with the literal placeholder [YOUR NAME] — a human replaces it.
@@ -216,7 +222,7 @@ THE JOB
 - Title: {{job_title}} (reference {{job_reference}}, location {{job_location}})
 - Industry: {{industry}}
 - Client display name: {{client_name}} · Company named in the post: {{company_mentioned}}
-- Job description:
+- Post text (job_information.job_description):
 {{job_description}}
 
 THE REVIEWED PROPOSAL THEY WILL RECEIVE ATTACHED
@@ -284,12 +290,13 @@ export function buildPromptVars(args: {
     overall_confidence: lead.overallConfidence,
     job_description: indent(
       lead.jobDescription
-        ? clip(lead.jobDescription, 2600)
-        : "[the post body was not included in this payload — work from the job title, " +
-          "industry, company and the research notes below, and mark anything you cannot " +
-          "ground as [TO CONFIRM]]",
+        ? clip(lead.jobDescription, 3600)
+        : "[no post body: job_information.job_description was empty in this payload — write " +
+          "from the job title, industry, company and the research notes, and mark anything " +
+          "you cannot ground as [TO CONFIRM]]",
     ),
-    research_notes: bulletBlock(payloadNotes(lead.rawPayload), 1100),
+    job_description_chars: String((lead.jobDescription ?? "").length),
+    research_notes: bulletBlock(payloadNotes(lead.rawPayload), 900),
     budget_range: bulletBlock(payloadBudget(lead.rawPayload), 260),
     client_profile: bulletBlock(payloadClientProfile(lead.rawPayload), 400),
     key_people: clip(lead.keyPeople.length ? JSON.stringify(lead.keyPeople) : "[]", 1400),

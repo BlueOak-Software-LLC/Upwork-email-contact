@@ -18,6 +18,7 @@ export default async function LeadDetailPage({
   if (!detail) notFound();
 
   const { lead } = detail;
+  const descriptionChars = (lead.job_description ?? "").length;
 
   return (
     <div className="space-y-5">
@@ -66,12 +67,24 @@ export default async function LeadDetailPage({
         </dl>
 
         <section className="mt-5">
-          <h2 className="text-xs font-medium uppercase tracking-wide text-muted">
+          <h2 className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted">
             Job description
+            <span className="normal-case tracking-normal">
+              · job_information.job_description · {descriptionChars} chars
+            </span>
+            {descriptionChars > 0 ? (
+              <span className="rounded bg-brand/12 px-1.5 py-0.5 normal-case tracking-normal text-brand">
+                fed into the PPD and the email prompt
+              </span>
+            ) : (
+              <span className="rounded bg-warn/12 px-1.5 py-0.5 normal-case tracking-normal text-warn">
+                empty — the document falls back to title + research notes
+              </span>
+            )}
           </h2>
           <p className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-canvas p-4 text-sm leading-relaxed text-ink/90">
             {lead.job_description ??
-              "Not stored — the research payload did not include the description text. You can post it with PATCH /api/leads/" +
+              "No post body in this payload. Re-post the same job_information with job_description filled in (it dedupes onto this lead by job_id), or send it to PATCH /api/leads/" +
                 lead.id}
           </p>
         </section>

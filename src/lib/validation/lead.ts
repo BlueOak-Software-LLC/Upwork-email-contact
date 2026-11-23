@@ -62,6 +62,27 @@ const stringArray = (value: unknown): string[] => {
   return single ? [single] : [];
 };
 
+/**
+ * Free text out of whatever the scraper sent for it: a string, a number, an
+ * array of paragraph strings, or an array of `{ text }` blocks. Paragraphs are
+ * joined with a blank line so the prompt keeps its shape.
+ */
+export function textBlock(value: unknown): string | null {
+  const single = str(value);
+  if (single) return single;
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) =>
+        typeof item === "object" && item !== null
+          ? str((item as JsonRecord).text ?? (item as JsonRecord).value ?? (item as JsonRecord).content)
+          : str(item),
+      )
+      .filter((v): v is string => Boolean(v));
+    return parts.length ? parts.join("\n\n") : null;
+  }
+  return null;
+}
+
 export function confidenceOf(value: unknown): LeadConfidence {
   const raw = (str(value) ?? "").toUpperCase().replace(/[^A-Z]/g, "");
   return (LEAD_CONFIDENCES as readonly string[]).includes(raw)
@@ -218,18 +239,29 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
   const jobUrl = str(job.job_url);
   const jobTitle = str(job.job_title);
   const clientName = str(client.client_name);
+  const jobDescription = str(raw.job_description) ?? str(job.job_description);
+  const companyMentioned = str(job.company_mentioned);
+  const industry = str(job.industry);
 
   return {
-    dedupeKey: jobId ?? (jobUrl ? sha1(jobUrl.toLowerCase()) : sha1(`${(jobTitle ?? "").toLowerCase()}|${(clientName ?? "").toLowerCase()}`)),
+    dedupeKey: computeDedupeKey({
+      jobId,
+      jobUrl,
+      jobTitle,
+      clientName,
+      jobDescription,
+      companyMentioned,
+      industry,
+    }),
     jobId,
     jobTitle,
     jobUrl,
     jobLocation: str(job.job_location),
-    industry: str(job.industry),
-    companyMentioned: str(job.company_mentioned),
+    industry,
+    companyMentioned,
     clientName,
     clientLocation: str(client.location),
-    jobDescription: str(raw.job_description) ?? str(job.job_description),
+    jobDescription,
     overallConfidence: confidenceOf(raw.overall_confidence ?? job.overall_confidence),
     keyPeople: keyPeopleRaw.map(keyPerson),
     contactInformation,
@@ -237,6 +269,41 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
     contacts: deduped,
     primaryEmail: primary,
   };
+}
+
+/**
+ * Which row a payload belongs to.
+ *
+ * `job_id` is the only stable Upwork key, then the URL, then title+client.
+ * A payload can carry **none of those** (the scraper sometimes only has the
+ * description), so the last resort hashes the description itself — hashing the
+ * empty string instead would collapse every such post into one lead and let a
+ * later payload silently overwrite an earlier one.
+ */
+export function computeDedupeKey(parts: {
+  jobId: string | null;
+  jobUrl: string | null;
+  jobTitle: string | null;
+  clientName: string | null;
+  jobDescription: string | null;
+  companyMentioned?: string | null;
+  industry?: string | null;
+}): string {
+  const { jobId, jobUrl, jobTitle, clientName, jobDescription, companyMentioned, industry } = parts;
+  if (jobId) return jobId;
+  if (jobUrl) return sha1(jobUrl.toLowerCase());
+  if (jobTitle || clientName) {
+    return sha1(`${(jobTitle ?? "").toLowerCase()}|${(clientName ?? "").toLowerCase()}`);
+  }
+  const body = (jobDescription ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!body) {
+    // Nothing identifying at all: keep each blank payload separate rather than
+    // merging unrelated leads on one row.
+    return sha1(`blank:${Date.now()}:${Math.random()}`);
+  }
+  return sha1(
+    `desc:${body}|co:${(companyMentioned ?? "").toLowerCase()}|ind:${(industry ?? "").toLowerCase()}`,
+  );
 }
 
 function dedupeContacts(contacts: NormalizedContact[]): NormalizedContact[] {

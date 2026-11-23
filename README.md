@@ -32,8 +32,13 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 ```
 ├── supabase/migrations/
 │   ├── 0001_init.sql                      contacts, email_logs
-│   └── 0002_leads_senders_proposals.sql   sender_accounts, leads, lead_contacts,
-│                                          proposals, email_drafts, storage bucket
+│   ├── 0002_leads_senders_proposals.sql   sender_accounts, leads, lead_contacts,
+│   │                                      proposals, email_drafts, storage bucket
+│   ├── 0003_prompt_templates_review_flow.sql  prompt_templates, ppd_reviewed_at,
+│   │                                          pdf_generated_at, recipient_source
+│   └── 0004_job_description_ingestion.sql job_description in the search tsvector,
+│                                          recipient-less proposal version lane,
+│                                          leads_awaiting_recipient view
 ├── templates/pdfme/proposal-template.json # ← reference copy of one compiled doc (Designer import)
 ├── src/
 │   ├── app/
@@ -41,7 +46,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   │   ├── page.tsx                   overview (contacts + leads + sends)
 │   │   │   ├── leads/page.tsx             ingested payloads, filters, search
 │   │   │   ├── leads/[id]/page.tsx        job description + contacts + proposal + draft
-│   │   │   ├── contacts/ emails/ settings/senders/ api-docs/
+│   │   │   ├── contacts/ emails/ settings/senders/ settings/prompts/ api-docs/
 │   │   │   └── actions.ts                 sign-out server action
 │   │   ├── api/                           BACKEND (route handlers)
 │   │   │   ├── leads/route.ts             GET list (JSON) · POST ingest
@@ -95,48 +100,76 @@ Statuses on a lead: `received → enriched → proposal_ready → draft_created 
 
 ## 4. The ingest contract
 
-`POST /api/leads` accepts exactly your payload shape (all keys nullable; unknown
-keys preserved in `raw_payload`; arrays of payloads accepted too):
+`POST /api/leads` accepts exactly your payload shape — every key nullable, empty
+strings and empty arrays welcome, unknown keys preserved verbatim in
+`raw_payload`, and a bare array of payloads accepted too:
 
 ```jsonc
 {
-  "job_information": { "job_id": null, "job_title": null, "job_url": null,
-                       "industry": null, "job_location": null, "company_mentioned": null },
+  "job_information": {
+    "job_id": null,
+    "job_title": null,
+    "job_description": null,   // ← the post text: what the PPD and the email are written from
+    "job_url": null,
+    "industry": null,
+    "job_location": null,
+    "company_mentioned": null
+  },
   "upwork_client":   { "client_name": null, "location": null },
   "key_people":      [],
   "contact_information": {
     "verified_contacts": [], "potential_contacts": [],
     "company_contact_pages": [], "linkedin_profiles": [], "social_media_profiles": []
   },
-  "overall_confidence": "UNIDENTIFIED"
+  "overall_confidence": ""     // HIGH | MEDIUM | LOW | UNIDENTIFIED | "" (→ UNIDENTIFIED)
 }
 ```
 
+**`job_information.job_description` is the primary input for generation.** It is
+stored as-is in `leads.job_description` (migration `0004` also folds it into the
+`search` tsvector, and `/api/leads?q=` matches it), clipped to 3,600 characters
+when embedded, and injected into **both** prompts — `ppd_document` (labelled
+"THE POST TEXT", the rule being that anything not traceable to it, the title or
+the research notes must be written as `[TO CONFIRM]`) and `email_draft` (which
+must open by naming one concrete detail from it). It is also accepted at the top
+level (`job_description`), as `job_information.description`, and as an array of
+paragraph strings or `{ "text": … }` blocks. A payload with no description is not
+an error: the prompt then says so explicitly and writes from title + industry +
+company + research notes.
+
 What happens next (`src/server/services/lead-ingest.service.ts`):
 
+> `examples/lead-description-only.json` is this envelope with only a post body
+> filled in — every other field null — and it still produces a reviewable
+> document.
+
 1. `normalizeLeadPayload()` — trims strings, maps `notes`/`reason` → `rationale`,
-   `contact_type`/`type` label + value → `channel`, and flags
-   `is_email` when the value matches `^[^@\s]+@[^@\s]+\.[a-z]{2,}$`.
-2. Upsert `leads` on `dedupe_key` = `job_id`, else SHA-1 of `job_url`, else of
-   `job_title + client_name` → re-posting the same job updates instead of duplicating.
-3. Replace `lead_contacts` for that lead.
-4. **Recipients** = emails found in `verified_contacts` + `potential_contacts`
-   (a `key_people` email outranks a generic mailbox), ranked by list → confidence →
-   name-known, with `info@/contact@/support@` penalised. Only the top 3 are used.
-5. For each recipient → `generateProposal()`:
-   * One Groq JSON-mode call (`groq.client.ts`) with the prompt in
-     `prompts/proposal.prompt.ts` → returns **both** the PPD and the email
-   * `sanitizeProposal(output, ctx)` coerces/clips every block, fills
-     `[TO CONFIRM]` placeholders, and **overwrites** company / website / prepared-by /
-     job title / job reference from env + the lead, so the model can never state
-     our own details or invent a reply address. Any `references` item whose URL is
-     not on our allowlist is dropped (the allowlist is empty today ⇒ no references
-     ever ship).
-   * saves `proposals.ppd` + `email_subject` + `email_content`
-   * compiles + renders the PDF (`pdf.service.ts` → `lib/pdfme/compiler.ts`) and
-     stores it at `proposals/{leadId}/{proposalId}-v{n}.pdf` (failure recorded, never fatal)
-   * creates the `email_drafts` row: subject/content + signature + PDF attachment
-6. Lead status updated; per-recipient errors come back in `warnings[]`.
+   `contact_type`/`type` label + value → `channel`, flags `is_email` on
+   `^[^@\s]+@[^@\s]+\.[a-z]{2,}$`, and turns `""` into null rather than an error.
+2. Upsert `leads` on `dedupe_key` (`computeDedupeKey`), in order: `job_id` →
+   SHA-1 of `job_url` → SHA-1 of `job_title + client_name` → **SHA-1 of the
+   description + company + industry**. That last one matters: with every
+   identifier null, hashing the empty string would fold unrelated posts into one
+   row and let a later payload silently overwrite an earlier one.
+3. `replaceContacts` rewrites `lead_contacts` but **keeps manual contacts**
+   (addresses a human typed in), so re-ingesting never deletes a recipient you chose.
+4. **Recipients** = emails in `verified_contacts` + `potential_contacts` (a
+   `key_people` email outranks a generic mailbox), ranked list → confidence →
+   name-known, `info@/contact@/support@` penalised, top 3 used.
+5. With `AUTO_ENRICH_LEADS=true` each recipient gets **step 1 only**: a PPD
+   written by `generatePpdDocument()`. No email copy, no draft, no PDF.
+   * **No address in the payload but the post text is there** → one
+     recipient-less PPD is still written (`proposals.lead_contact_id is null`,
+     its own version lane from `0004`) and the response warns
+     *"the PPD was written from the post itself; give the email step a `toEmail`"*.
+   * Nothing to write from at all → `generation.skipped` with the reason.
+6. Model output goes through `sanitizePpd(raw, ctx)`: block types coerced, lengths
+   clipped, and company / website / prepared-by / job title / job reference
+   **overwritten** from env + the lead, so the model can never state our details
+   or invent a reply address. `references` entries whose URL is not on our
+   allowlist are dropped (allowlist empty ⇒ nothing ships).
+7. Lead status is stamped (and returned) as `proposal_ready`; per-recipient errors
+   come back in `warnings[]`.
 
 Flags: `?dry=true` (store only), `?auto=false`, `?regenerate=true` (new version),
 `?senderAccountId=<uuid>`. Env default: `AUTO_ENRICH_LEADS=true`.
@@ -242,15 +275,18 @@ npm run build          # production build (24 routes)
 node -e "console.log(require('@pdfme/generator') ? 'pdfme ok' : '')"  # no export-mismatch crash
 ```
 
-Supabase (apply migrations in order — `0001`, `0002`, then `0003`):
+Supabase (apply migrations in order — `0001`, `0002`, `0003`, then `0004`):
 
 ```bash
 supabase link --project-ref <ref> && supabase db push
 # or paste each file into the SQL editor. 0002 also creates the private
 # `proposals` storage bucket; 0003 adds prompt_templates, proposals.ppd_reviewed_at
-# / pdf_generated_at and email_drafts.recipient_source (custom recipients).
-# Reading a prompt before 0003 degrades to the code default; stamping a PPD
-# review or a custom recipient fails with the migration named in the error.
+# / pdf_generated_at and email_drafts.recipient_source (custom recipients);
+# 0004 folds job_information.job_description into leads.search, gives recipient-less
+# proposals their own version lane and adds the leads_awaiting_recipient view.
+# The app runs on 0001+0002 alone: prompt reads fall back to the code defaults and
+# the 0003/0004 columns the app writes are dropped with a `db_columns_missing` log
+# line naming this file — but saving edited prompts then returns 502.
 psql "$SUPABASE_DB_URL" -f supabase/seed.sql   # optional demo rows
 ```
 
@@ -295,11 +331,27 @@ curl -s -X POST "http://localhost:3000/api/leads" \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   --data-binary @lead.json
 # → lead + contacts stored; with AUTO_ENRICH_LEADS=true Groq also writes the PPD
+#   from job_information.job_description
+
+# 2b. a payload with the post body but no identifiers and no contacts still gets
+#     a document: it is written recipient-less (proposals.lead_contact_id = null)
+curl -s -X POST "http://localhost:3000/api/leads" \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  --data-binary @examples/lead-description-only.json
+
+# 2c. the scraper sometimes gets the post text later — supply it by hand. Any
+#     subset of { status, job_description, error } is accepted; the response
+#     tells you whether an existing document predates the new text.
+curl -s -X PATCH "http://localhost:3000/api/leads/<leadId>" \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"job_description":"30-second logo sting, After Effects, MP4 + transparent mov."}'
 
 # ── STEP 1 · the document only ────────────────────────────────────────────
 curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   -d '{"toEmail":"client@example.com"}'        # or {"contactId":"<uuid from the payload>"}
+# omit both → the lead's primary email; no email on the lead at all → a
+# recipient-less PPD is still written from job_information.job_description
 # → ppd JSON, words/tokens/cost, pdf_status: "pending", no draft, no PDF
 
 # ── STEP 2 · review it (dashboard tab "Edit PPD JSON", or PATCH here) ─────
@@ -376,6 +428,8 @@ vercel --prod        # or push to GitHub → Import Project
 | `TypeError: fetch failed` on `/api/*` | The function could not reach `NEXT_PUBLIC_SUPABASE_URL` (offline sandbox, VPN, wrong project ref, or paused project). `/api/health` shows it as `"status":"degraded"` with the reason. |
 | `upstream_error … Failed to list leads` | Migration `0002_leads_senders_proposals.sql` not applied yet (tables missing). |
 | `Cannot save prompt overrides: the prompt_templates table is missing … apply supabase/migrations/0003_prompt_templates_review_flow.sql` (502 from `PUT /api/prompts`) | Migration **0003** not applied. Until then prompt reads fall back to the code defaults, generation still works, and the review stamp / custom-recipient provenance are dropped from the write with a `db_columns_missing` log line — but you cannot save edited prompts. |
+| Two description-only payloads landed on the same lead | Pre-`computeDedupeKey` behaviour: with `job_id`, `job_url`, `job_title` and `client_name` all null the key used to be SHA-1 of the empty string. Current code hashes the post body instead — re-apply the payload after pulling, or move the rows by hand. |
+| `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |

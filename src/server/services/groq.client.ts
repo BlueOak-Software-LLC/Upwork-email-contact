@@ -171,6 +171,19 @@ export async function groqJson<T = Record<string, unknown>>({
       text = attempt.text;
     }
 
+    // A 429 on this tier means the per-minute token window is full — usually
+    // because we just generated several leads in a row. The window rolls over, so
+    // wait it out (respecting Retry-After) instead of failing the lead.
+    for (let attempt = 0; !response.ok && response.status === 429 && attempt < 3; attempt += 1) {
+      const retryAfter = Number(response.headers.get("retry-after") ?? 0);
+      const waitMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 20_000) : 5_000 * (attempt + 1);
+      logger.warn("groq_rate_limited_wait", { model, waitMs, attempt: attempt + 1 });
+      await sleep(waitMs);
+      const retry = await send(temperature, VARIANTS[0]!);
+      response = retry.response;
+      text = retry.text;
+    }
+
     // A 413 names the real allowance and the size it rejected, which is the only
     // accurate way to resize the completion budget — retry once with that math.
     if (!response.ok && response.status === 413) {

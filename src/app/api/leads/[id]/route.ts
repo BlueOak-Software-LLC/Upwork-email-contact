@@ -30,13 +30,28 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
   return ok(await leadsRepo.detail(id));
 });
 
-/** PATCH /api/leads/:id — status transitions (and a late job description). */
+/**
+ * PATCH /api/leads/:id — status transitions, and a late job_description.
+ * A payload that arrives without the post body can be topped up here; the
+ * response says whether an existing document predates the new text.
+ */
 export const PATCH = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
   const { id } = await params;
   const patch = parseOrThrow(updateLeadSchema, await readJson(request));
   await leadsRepo.updateManual(id, patch);
-  return ok(await leadsRepo.detail(id));
+  const detail = await leadsRepo.detail(id);
+
+  const hints: string[] = [];
+  if (patch.job_description !== undefined) {
+    hints.push(
+      detail.proposals.length
+        ? "job_description replaced — the stored PPD predates it; POST /api/leads/:id/generate {\"regenerate\":true} to rewrite from the new text"
+        : "job_description stored — POST /api/leads/:id/generate to write the document from it",
+    );
+  }
+
+  return ok({ ...detail, hints });
 });
 
 /** DELETE /api/leads/:id — removes the lead and cascades contacts/proposals/drafts. */

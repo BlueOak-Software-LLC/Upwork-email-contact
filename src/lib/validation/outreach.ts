@@ -18,7 +18,12 @@ export const listLeadsQuerySchema = z.object({
 /** Only the human-editable columns; the payload itself is immutable. */
 export const updateLeadSchema = z
   .object({
-    status: leadStatusSchema,
+    status: leadStatusSchema.optional(),
+    /**
+     * `job_information.job_description` supplied late (the scraper sometimes gets
+     * the post text only after the first pass). Replacing it does not rewrite any
+     * already-generated document — the response says so.
+     */
     job_description: z.string().trim().max(200_000).nullable().optional(),
     error: z.string().trim().max(900).nullable().optional(),
   })

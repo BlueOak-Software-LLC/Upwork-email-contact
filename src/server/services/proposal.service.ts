@@ -9,6 +9,7 @@ import { groqJson, type GroqUsage, type ReasoningEffort } from "@/server/service
 import {
   assertEmailShape,
   assertPpdShape,
+  DOC_WORD_TARGET,
   ppdWordCount,
   sanitizeEmail,
   sanitizePpd,
@@ -91,19 +92,20 @@ export async function generatePpdDocument({
   reasoningEffort,
 }: {
   lead: LeadRow;
-  contact: LeadContactRow;
+  /** null ⇒ write the document from the post alone (no address known yet). */
+  contact: LeadContactRow | null;
   regenerate?: boolean;
   model?: string;
   reasoningEffort?: ReasoningEffort;
 }): Promise<PpdGenerationResult> {
   const env = getServerEnv();
-  const recipient = toNormalizedContact(contact);
-  if (!recipient.isEmail) {
+  const recipient = contact ? toNormalizedContact(contact) : null;
+  if (contact && !recipient!.isEmail) {
     throw ApiError.badRequest(`${contact.contact_value} is not an email address`);
   }
 
   const existing = (await leadsRepo.proposals(lead.id)).filter(
-    (p) => p.lead_contact_id === contact.id,
+    (p) => (p.lead_contact_id ?? null) === (contact?.id ?? null),
   );
   const latest = existing[0]; // newest-first
   if (!regenerate && latest) {
@@ -118,7 +120,7 @@ export async function generatePpdDocument({
     };
   }
 
-  const version = await leadsRepo.nextVersion(contact.id);
+  const version = await leadsRepo.nextVersion(contact?.id ?? null, lead.id);
   const today = new Date().toISOString().slice(0, 10);
   const brand = brandConfig();
   const prompt = await resolvePrompt("ppd_document");
@@ -135,27 +137,63 @@ export async function generatePpdDocument({
 
   logger.info("ppd_generation_started", {
     leadId: lead.id,
-    contactId: contact.id,
+    contactId: contact?.id ?? null,
     version,
     model: modelUsed,
     maxTokens,
     reasoningEffort: reasoningEffort ?? prompt.reasoningEffort ?? groqConfig().reasoningEffort,
   });
 
-  const completion = await groqJson<unknown>({
-    messages: [
-      { role: "system", content: rendered.system },
-      { role: "user", content: rendered.user },
-    ],
-    temperature: prompt.temperature,
-    maxTokens,
-    ...(reasoningEffort ?? prompt.reasoningEffort
-      ? { reasoningEffort: reasoningEffort ?? prompt.reasoningEffort! }
-      : {}),
-    model,
-  });
+  const callModel = (effort?: ReasoningEffort) =>
+    groqJson<unknown>({
+      messages: [
+        { role: "system", content: rendered.system },
+        { role: "user", content: rendered.user },
+      ],
+      temperature: prompt.temperature,
+      maxTokens,
+      ...(effort ?? reasoningEffort ?? prompt.reasoningEffort
+        ? { reasoningEffort: effort ?? reasoningEffort ?? prompt.reasoningEffort! }
+        : {}),
+      model,
+    });
 
-  const ppd = sanitizePpd(completion.data, ppdContext(brand, lead, contact, today));
+  let completion = await callModel();
+  const ctx = ppdContext(brand, lead, contact, today);
+  let ppd = sanitizePpd(completion.data, ctx);
+
+  /**
+   * GPT-OSS bills hidden reasoning inside the same completion budget as the
+   * answer, so a run can think itself into a stub: cap hit (or nearly) and a
+   * document far below the floor. Rather than storing that, spend the thinking
+   * on the page — retry once at `low` and once with reasoning off.
+   */
+  const starved = () => {
+    const spent = completion.usage?.completion_tokens ?? 0;
+    const reasoned = completion.usage?.reasoning_tokens ?? 0;
+    return (
+      ppdWordCount(ppd) < Math.round(DOC_WORD_TARGET.min * 0.55) &&
+      (spent >= completion.completionBudget - 32 || reasoned > spent * 0.6)
+    );
+  };
+
+  if (starved()) {
+    for (const step of ["low", "none"] as ReasoningEffort[]) {
+      if (completion.reasoningEffort === step) continue;
+      logger.warn("ppd_reasoning_starved_retry", {
+        leadId: lead.id,
+        version,
+        words: ppdWordCount(ppd),
+        from: completion.reasoningEffort,
+        to: step,
+        usage: completion.usage,
+      });
+      completion = await callModel(step);
+      ppd = sanitizePpd(completion.data, ctx);
+      if (!starved()) break;
+    }
+  }
+
   const warnings = [
     ...assertPpdShape(ppd, completion.usage, maxTokens),
     ...unknownVarWarnings(rendered.unknown),
@@ -163,7 +201,7 @@ export async function generatePpdDocument({
 
   const proposal = await proposalsRepo.create({
     leadId: lead.id,
-    leadContactId: contact.id,
+    leadContactId: contact?.id ?? null,
     version,
     output: { ppd },
     model: completion.model,
@@ -225,10 +263,18 @@ export async function generateEmailDraft({
   const lead = await leadsRepo.byId(proposal.lead_id);
   const ppd = proposal.ppd as unknown as ProposalPpd;
 
-  const { contact, source } = await resolveRecipientContact(proposal.lead_id, {
+  const resolved = await resolveRecipientContact(proposal.lead_id, {
     contactId: contactId ?? null,
     toEmail,
+    requireRecipient: true,
   });
+  if (!resolved.contact) {
+    throw ApiError.badRequest(
+      "The email step needs a recipient: pass toEmail (any address) or contactId",
+    );
+  }
+  const contact: LeadContactRow = resolved.contact;
+  const source: "lead_contact" | "custom" = resolved.source === "none" ? "custom" : resolved.source;
   const contacts = await leadsRepo.contacts(proposal.lead_id);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -236,7 +282,7 @@ export async function generateEmailDraft({
   const prompt = await resolvePrompt("email_draft");
   const vars = buildPromptVars({
     lead: rehydrateNormalizedLead(lead, contacts),
-    recipient: toNormalizedContact(contact),
+    recipient: toNormalizedContact(contact!),
     brand,
     today,
     language: env.PROPOSAL_LANGUAGE,
@@ -326,8 +372,20 @@ export async function generateEmailDraft({
  */
 export async function resolveRecipientContact(
   leadId: string,
-  input: { contactId?: string | null; toEmail?: string | null },
-): Promise<{ contact: LeadContactRow; source: "lead_contact" | "custom" }> {
+  input: {
+    contactId?: string | null;
+    toEmail?: string | null;
+    /**
+     * The PPD step may run with no recipient at all (a document written from the
+     * post itself, before the scraper has an address). The email step always
+     * needs one, since a draft cannot be addressed to nobody.
+     */
+    requireRecipient?: boolean;
+  },
+): Promise<{
+  contact: LeadContactRow | null;
+  source: "lead_contact" | "custom" | "none";
+}> {
   const contacts = await leadsRepo.contacts(leadId);
   if (input.contactId) {
     const found = contacts.find((c) => c.id === input.contactId);
@@ -349,6 +407,7 @@ export async function resolveRecipientContact(
   const primary =
     contacts.find((c) => c.is_email && c.is_primary) ?? contacts.find((c) => c.is_email);
   if (!primary) {
+    if (input.requireRecipient === false) return { contact: null, source: "none" };
     throw ApiError.badRequest(
       "No recipient: this lead has no email contact and none was typed in",
     );
@@ -389,7 +448,7 @@ export function sanitizeEditedPpd(ppd: unknown, base: ProposalPpd): ProposalPpd 
 function ppdContext(
   brand: ReturnType<typeof brandConfig>,
   lead: LeadRow,
-  contact: LeadContactRow,
+  contact: LeadContactRow | null,
   today: string,
 ) {
   return {
@@ -400,8 +459,9 @@ function ppdContext(
     senderEmail: brand.senderEmail,
     jobTitle: lead.job_title,
     jobReference: lead.job_id,
-    recipientName: contact.name,
-    recipientCompany: contact.company,
+    // A recipient-less post is addressed to the hiring team in general.
+    recipientName: contact?.name ?? null,
+    recipientCompany: contact?.company ?? lead.company_mentioned ?? null,
     clientName: lead.client_name,
     today,
     // We hold no vetted case studies, so any reference the model returns is

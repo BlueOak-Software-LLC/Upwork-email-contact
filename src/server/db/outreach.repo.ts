@@ -29,7 +29,8 @@ export const proposalsRepo = {
     error,
   }: {
     leadId: string;
-    leadContactId: string;
+    /** null ⇒ a recipient-less document (written from the post, no address yet). */
+    leadContactId: string | null;
     version: number;
     output: { ppd: ProposalOutput["ppd"]; email?: ProposalOutput["email"] | null };
     model: string | null;

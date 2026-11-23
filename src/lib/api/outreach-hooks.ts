@@ -94,7 +94,9 @@ export interface PpdRun {
   usage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number } | null;
   costUsd: number | null;
   warnings: string[];
-  recipient: { contactId: string; email: string; source: "lead_contact" | "custom" };
+  recipient: { contactId: string; email: string; source: "lead_contact" | "custom" } | null;
+  /** Set when the document was written from the post text with no address. */
+  recipientNote: string | null;
   pdfStatus: string;
   prompt: PromptRunInfo;
   next: string;

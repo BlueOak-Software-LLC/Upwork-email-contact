@@ -206,7 +206,7 @@ export const leadsRepo = {
       const term = query.q.trim();
       if (term) {
         builder = builder.or(
-          `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%`,
+          `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%,job_description.ilike.%${term}%`,
         );
       }
     }
@@ -368,14 +368,21 @@ export const leadsRepo = {
     return data as LeadRow;
   },
 
-  async nextVersion(leadContactId: string): Promise<number> {
+  /**
+   * Next proposal version for a recipient. `null` means the recipient-less
+   * branch: a document written from the post before any address is known.
+   */
+  async nextVersion(leadContactId: string | null, leadId?: string): Promise<number> {
     const supabase = getAdminClient();
-    const { data } = await supabase
-      .from("proposals")
-      .select("version")
-      .eq("lead_contact_id", leadContactId)
-      .order("version", { ascending: false })
-      .limit(1);
+    let query = supabase.from("proposals").select("version").order("version", { ascending: false }).limit(1);
+    query =
+      leadContactId === null
+        ? query.is("lead_contact_id", null)
+        : query.eq("lead_contact_id", leadContactId);
+    // Versions are per lane *and* per lead: without this the recipient-less lane
+    // would read every lead's null-contact rows and start a fresh lead at v3.
+    if (leadId) query = query.eq("lead_id", leadId);
+    const { data } = await query;
     const latest = data?.[0]?.version;
     return typeof latest === "number" ? latest + 1 : 1;
   },

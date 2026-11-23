@@ -57,6 +57,9 @@ export function ProposalCard({
 
   const recipientEmail =
     recipientMode === "custom" ? customEmail.trim() : (contact?.normalized_value ?? contact?.contact_value ?? "");
+  // A payload can carry the post text but no address at all. The document is
+  // still worth writing — the address only becomes mandatory at the email step.
+  const noRecipientOnLead = contacts.length === 0;
 
   const warnings = useMemo(
     () => [...(ppdRun?.warnings ?? []), ...(emailRun?.warnings ?? [])],
@@ -101,12 +104,12 @@ export function ProposalCard({
           <Button
             size="sm"
             loading={generatePpd.isPending}
-            disabled={busy || (recipientMode === "lead" && !contact) || (recipientMode === "custom" && !recipientEmail.includes("@"))}
+            disabled={busy || (recipientMode === "custom" && !recipientEmail.includes("@"))}
             onClick={() =>
               generatePpd.mutate(
                 recipientMode === "custom"
                   ? { toEmail: recipientEmail, regenerate: true }
-                  : { contactId: contact?.id, regenerate: true },
+                  : { ...(contact ? { contactId: contact.id } : {}), regenerate: true },
                 { onError: () => undefined },
               )
             }
@@ -118,7 +121,14 @@ export function ProposalCard({
 
       {/* ── recipient (payload contact or a custom address) ────────────── */}
       <div className="grid gap-3 rounded-lg bg-canvas p-3 sm:grid-cols-2">
-        <Field label="Write for" hint="Custom addresses are stored as manual contacts on the lead.">
+        <Field
+          label="Write for"
+          hint={
+            noRecipientOnLead
+              ? "No address on this lead yet — the document is written from the post text; pick the address at the email step."
+              : "Custom addresses are stored as manual contacts on the lead."
+          }
+        >
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -141,6 +151,7 @@ export function ProposalCard({
           <Field label="Contact">
             <select
               aria-label="Recipient contact"
+              disabled={noRecipientOnLead}
               className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm focus-ring"
               value={contact?.id ?? ""}
               onChange={(e) => onContactChange(e.target.value)}
@@ -179,7 +190,13 @@ export function ProposalCard({
         </Field>
 
         <div className="flex items-end text-xs text-muted">
-          → <span className="ml-1 truncate text-ink">{recipientEmail || "no recipient chosen"}</span>
+          →{" "}
+          <span className={cn("ml-1 truncate", recipientEmail ? "text-ink" : "text-warn")}>
+            {recipientEmail ||
+              (noRecipientOnLead
+                ? "recipient-less document (post text only)"
+                : "no recipient chosen")}
+          </span>
         </div>
       </div>
 
@@ -316,7 +333,11 @@ export function ProposalCard({
         <RunReport
           title={`PPD v${ppdRun.proposal.version} ready`}
           lines={[
-            `${ppdRun.documentWords} words · ${ppdRun.recipient.email} (${ppdRun.recipient.source})`,
+            `${ppdRun.documentWords} words · ${
+              ppdRun.recipient
+                ? `${ppdRun.recipient.email} (${ppdRun.recipient.source})`
+                : "no recipient (written from the post text)"
+            }`,
             ppdRun.usage
               ? `${ppdRun.usage.prompt_tokens}+${ppdRun.usage.completion_tokens} tokens${
                   ppdRun.usage.reasoning_tokens ? ` (${ppdRun.usage.reasoning_tokens} reasoning)` : ""
