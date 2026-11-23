@@ -49,7 +49,7 @@ export const POST = withApi(async (request: NextRequest) => {
   const failed = results.filter((r) => r.status === "failed");
 
   const body = {
-    provider: getServerEnv().EMAIL_PROVIDER,
+    provider: results[0]?.provider ?? getServerEnv().EMAIL_PROVIDER,
     requested: results.length,
     delivered: sent.length,
     failed: failed.length,

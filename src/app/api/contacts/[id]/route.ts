@@ -8,7 +8,8 @@ import { updateContactSchema } from "@/lib/validation/contact";
 
 export const dynamic = "force-dynamic";
 
-type Ctx = { params: Promise<{ id: string }> };
+/** Route params: `withApi<P>` wraps P as `{ params: Promise<P> }`. */
+type Ctx = { id: string };
 
 async function readJson(request: NextRequest) {
   try {

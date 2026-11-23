@@ -4,6 +4,8 @@ import { logger } from "@/lib/logger";
 import type { SendEmailPayload } from "@/lib/validation/email";
 import { ApiError } from "@/server/http/errors";
 import { contactsRepo } from "@/server/db/contacts.repo";
+import { senderAccountsRepo } from "@/server/db/sender-accounts.repo";
+import { sendViaSmtp } from "@/server/services/smtp.service";
 import { resolveEmailProvider } from "@/server/services/email-registry";
 import { EmailDeliveryError, type EmailMessage } from "@/server/services/email-providers/types";
 import { htmlToText, textToHtml } from "@/server/services/templates";
@@ -11,13 +13,26 @@ import type { SendEmailResult } from "@/types/domain";
 
 const MAX_RECIPIENTS = 20;
 
+export interface SendEmailOptions {
+  /** Audit linkage written into `email_logs`. */
+  draftId?: string | null;
+  proposalId?: string | null;
+}
+
 /**
  * The only place that talks to an email provider.
  *
- * One provider call per recipient (so no bcc leakage and per-recipient
- * personalisation works), each attempt persisted in `public.email_logs`.
+ * Two credential sources:
+ *  - `senderAccountId` → SMTP from `public.sender_accounts` (dashboard drafts)
+ *  - otherwise          → the env provider (`resend` | `smtp` | `log`)
+ *
+ * One provider call per recipient (no bcc leakage, per-recipient personalising),
+ * every attempt persisted in `public.email_logs`.
  */
-export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResult[]> {
+export async function sendEmail(
+  input: SendEmailPayload,
+  options: SendEmailOptions = {},
+): Promise<SendEmailResult[]> {
   const env = getServerEnv();
   const recipients = Array.isArray(input.to) ? input.to : [input.to];
 
@@ -26,10 +41,13 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
     throw ApiError.badRequest(`At most ${MAX_RECIPIENTS} recipients per request`);
   }
 
+  const account = input.senderAccountId
+    ? await senderAccountsRepo.credentials(input.senderAccountId)
+    : null;
+
   const contact = input.contactId
     ? await contactsRepo.byId(input.contactId).catch(() => null)
     : null;
-
   if (input.contactId && !contact) {
     throw ApiError.notFound(`Contact ${input.contactId} not found`);
   }
@@ -39,13 +57,14 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
   if (!text && !html) throw ApiError.badRequest("Message body is empty");
 
   const provider = resolveEmailProvider();
+  const from = account?.from ?? env.EMAIL_FROM;
   const results: SendEmailResult[] = [];
 
   for (const to of recipients) {
     const message: EmailMessage = {
       to: [to],
       ...(input.cc?.length ? { cc: input.cc } : {}),
-      from: env.EMAIL_FROM,
+      from,
       ...(input.replyTo || env.EMAIL_REPLY_TO
         ? { replyTo: input.replyTo ?? env.EMAIL_REPLY_TO }
         : {}),
@@ -56,12 +75,29 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
         "X-Mailer-Source": "upwork-email-contact",
         ...(input.headers ?? {}),
         ...(contact ? { "X-Contact-Id": contact.id } : {}),
+        ...(options.draftId ? { "X-Draft-Id": options.draftId } : {}),
       },
     };
 
     let row: SendEmailResult;
     try {
-      const sent = await provider.send(message);
+      const sent = account
+        ? await sendViaSmtp({
+            account,
+            to: message.to,
+            ...(input.cc?.length ? { cc: input.cc } : {}),
+            subject: message.subject,
+            text: message.text,
+            ...(html ? { html } : {}),
+            ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+            headers: message.headers,
+            ...(input.attachments?.length ? { attachments: input.attachments } : {}),
+          }).then((r) => ({
+            provider: "smtp-account",
+            providerMessageId: r.providerMessageId,
+          }))
+        : await provider.send(message);
+
       row = {
         id: "",
         status: "sent",
@@ -74,16 +110,18 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
       };
     } catch (error) {
       const reason =
-        error instanceof EmailDeliveryError
+        error instanceof ApiError
           ? error.message
-          : error instanceof Error
+          : error instanceof EmailDeliveryError
             ? error.message
-            : "Unknown provider failure";
-      logger.error("email_send_failed", { provider: provider.name, to, reason });
+            : error instanceof Error
+              ? error.message
+              : "Unknown provider failure";
+      logger.error("email_send_failed", { provider: account ? "smtp-account" : provider.name, to, reason });
       row = {
         id: "",
         status: "failed",
-        provider: provider.name,
+        provider: account ? "smtp-account" : provider.name,
         providerMessageId: null,
         to,
         subject: input.subject,
@@ -96,19 +134,22 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
       row.id = await persistLog({
         row,
         input,
+        options,
         contactId: contact?.id ?? null,
-        from: env.EMAIL_FROM,
+        from,
         text: message.text,
       });
     } else {
       row.id = crypto.randomUUID();
     }
 
+    if (row.status === "sent" && account) {
+      await senderAccountsRepo.incrementSent(account.id);
+    }
     results.push(row);
   }
 
   const delivered = results.filter((r) => r.status === "sent");
-
   if (delivered.length === 0) {
     throw ApiError.upstream(
       "Email provider rejected every recipient",
@@ -126,12 +167,14 @@ export async function sendEmail(input: SendEmailPayload): Promise<SendEmailResul
 async function persistLog({
   row,
   input,
+  options,
   contactId,
   from,
   text,
 }: {
   row: SendEmailResult;
   input: SendEmailPayload;
+  options: SendEmailOptions;
   contactId: string | null;
   from: string;
   text: string;
@@ -141,6 +184,9 @@ async function persistLog({
     .from("email_logs")
     .insert({
       contact_id: contactId,
+      draft_id: options.draftId ?? input.draftId ?? null,
+      proposal_id: options.proposalId ?? input.proposalId ?? null,
+      sender_account_id: input.senderAccountId ?? null,
       to_email: row.to,
       from_email: stripDisplayName(from),
       subject: input.subject,

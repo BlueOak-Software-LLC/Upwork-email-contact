@@ -1,5 +1,5 @@
 import { getAdminClient } from "@/lib/supabase/admin";
-import type { EmailLogRow, Maybe, Paged } from "@/types/domain";
+import type { EmailLogRow, EmailLogStatus, Maybe, Paged } from "@/types/domain";
 import { ApiError } from "@/server/http/errors";
 
 const LOG_COLUMNS =
@@ -8,7 +8,7 @@ const LOG_COLUMNS =
 export interface ListEmailLogsQuery {
   page: number;
   pageSize: number;
-  status?: string;
+  status?: EmailLogStatus;
   to?: string;
 }
 

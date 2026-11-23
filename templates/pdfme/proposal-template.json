@@ -1,0 +1,1142 @@
+{
+  "pdfmeVersion": "6.2.8",
+  "basePdf": {
+    "width": 210,
+    "height": 297,
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "schemas": [
+    [
+      {
+        "name": "doc_title",
+        "type": "text",
+        "content": "Proposal",
+        "position": {
+          "x": 18,
+          "y": 16
+        },
+        "width": 174,
+        "height": 12,
+        "fontSize": 22,
+        "fontColor": "#0f1115",
+        "alignment": "left"
+      },
+      {
+        "name": "proposal_subtitle",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 30
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 11,
+        "fontColor": "#4b5563",
+        "alignment": "left"
+      },
+      {
+        "name": "meta_label",
+        "type": "text",
+        "content": "Prepared for",
+        "position": {
+          "x": 18,
+          "y": 48
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "prepared_for",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 48
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "company_label",
+        "type": "text",
+        "content": "Company",
+        "position": {
+          "x": 18,
+          "y": 55
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "client_company",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 55
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "contact_label",
+        "type": "text",
+        "content": "Attention",
+        "position": {
+          "x": 18,
+          "y": 62
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "contact_name",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 62
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "role_label",
+        "type": "text",
+        "content": "Role",
+        "position": {
+          "x": 18,
+          "y": 69
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "contact_role",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 69
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "from_label",
+        "type": "text",
+        "content": "Submitted by",
+        "position": {
+          "x": 18,
+          "y": 76
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "prepared_by",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 76
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "date_label",
+        "type": "text",
+        "content": "Date",
+        "position": {
+          "x": 18,
+          "y": 83
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "prepared_date",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 83
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "valid_label",
+        "type": "text",
+        "content": "Valid until",
+        "position": {
+          "x": 18,
+          "y": 90
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "valid_until",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 90
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "job_label",
+        "type": "text",
+        "content": "Regarding",
+        "position": {
+          "x": 18,
+          "y": 97
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "job_title",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 97
+        },
+        "width": 128,
+        "height": 10,
+        "fontSize": 11,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "ref_label",
+        "type": "text",
+        "content": "Job reference",
+        "position": {
+          "x": 18,
+          "y": 108
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "job_reference",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 108
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#111827"
+      },
+      {
+        "name": "url_label",
+        "type": "text",
+        "content": "Job link",
+        "position": {
+          "x": 18,
+          "y": 115
+        },
+        "width": 44,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280",
+        "readOnly": true
+      },
+      {
+        "name": "job_url",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 64,
+          "y": 115
+        },
+        "width": 128,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#2563eb"
+      },
+      {
+        "name": "summary_label",
+        "type": "text",
+        "content": "1. Engagement summary",
+        "position": {
+          "x": 18,
+          "y": 128
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "engagement_summary",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 136
+        },
+        "width": 174,
+        "height": 26,
+        "fontSize": 10,
+        "fontColor": "#1f2937",
+        "lineHeight": 1.35
+      },
+      {
+        "name": "understanding_label",
+        "type": "text",
+        "content": "2. Our understanding of the job",
+        "position": {
+          "x": 18,
+          "y": 166
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "understanding",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 174
+        },
+        "width": 174,
+        "height": 28,
+        "fontSize": 10,
+        "fontColor": "#1f2937",
+        "lineHeight": 1.35
+      },
+      {
+        "name": "scope_title",
+        "type": "text",
+        "content": "3. Scope of work",
+        "position": {
+          "x": 18,
+          "y": 206
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115"
+      },
+      {
+        "name": "deliverables_label",
+        "type": "text",
+        "content": "Deliverables",
+        "position": {
+          "x": 18,
+          "y": 214
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151",
+        "readOnly": true
+      },
+      {
+        "name": "deliverable_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 221
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "deliverable_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 228
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "deliverable_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 235
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "deliverable_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 242
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "deliverable_5",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 249
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "deliverable_6",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 256
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "page_1_footer",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 285
+        },
+        "width": 174,
+        "height": 5,
+        "fontSize": 8,
+        "fontColor": "#9ca3af",
+        "alignment": "center"
+      }
+    ],
+    [
+      {
+        "name": "approach_label",
+        "type": "text",
+        "content": "4. How we work",
+        "position": {
+          "x": 18,
+          "y": 18
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "approach_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 26
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "approach_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 35
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "approach_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 44
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "approach_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 53
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "approach_5",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 62
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "timeline_label",
+        "type": "text",
+        "content": "5. Timeline",
+        "position": {
+          "x": 18,
+          "y": 76
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "t1_label",
+        "type": "text",
+        "content": "Kick-off",
+        "position": {
+          "x": 18,
+          "y": 85
+        },
+        "width": 60,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151"
+      },
+      {
+        "name": "t1_value",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 82,
+          "y": 85
+        },
+        "width": 110,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "t2_label",
+        "type": "text",
+        "content": "Production",
+        "position": {
+          "x": 18,
+          "y": 92
+        },
+        "width": 60,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151"
+      },
+      {
+        "name": "t2_value",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 82,
+          "y": 92
+        },
+        "width": 110,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "t3_label",
+        "type": "text",
+        "content": "Delivery",
+        "position": {
+          "x": 18,
+          "y": 99
+        },
+        "width": 60,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151"
+      },
+      {
+        "name": "t3_value",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 82,
+          "y": 99
+        },
+        "width": 110,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "pricing_title",
+        "type": "text",
+        "content": "6. Indicative pricing",
+        "position": {
+          "x": 18,
+          "y": 112
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115"
+      },
+      {
+        "name": "option_1_name",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 121
+        },
+        "width": 100,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "option_1_price",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 122,
+          "y": 121
+        },
+        "width": 70,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#0f1115",
+        "alignment": "right"
+      },
+      {
+        "name": "option_1_notes",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 128
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280"
+      },
+      {
+        "name": "option_2_name",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 138
+        },
+        "width": 100,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "option_2_price",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 122,
+          "y": 138
+        },
+        "width": 70,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#0f1115",
+        "alignment": "right"
+      },
+      {
+        "name": "option_2_notes",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 145
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 9,
+        "fontColor": "#6b7280"
+      },
+      {
+        "name": "includes_label",
+        "type": "text",
+        "content": "What's included",
+        "position": {
+          "x": 18,
+          "y": 158
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151",
+        "readOnly": true
+      },
+      {
+        "name": "includes_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 165
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "includes_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 172
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "includes_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 179
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "includes_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 186
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "includes_5",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 193
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "includes_6",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 200
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "assumptions_label",
+        "type": "text",
+        "content": "Assumptions",
+        "position": {
+          "x": 18,
+          "y": 212
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151",
+        "readOnly": true
+      },
+      {
+        "name": "assumptions_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 219
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "assumptions_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 226
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "assumptions_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 233
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "assumptions_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 240
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "assumptions_5",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 247
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "next_steps_label",
+        "type": "text",
+        "content": "Next steps",
+        "position": {
+          "x": 18,
+          "y": 259
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#374151",
+        "readOnly": true
+      },
+      {
+        "name": "next_step_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 266
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "next_step_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 273
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "next_step_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 280
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "next_step_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 287
+        },
+        "width": 170,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      }
+    ],
+    [
+      {
+        "name": "why_us_label",
+        "type": "text",
+        "content": "7. Why work with us",
+        "position": {
+          "x": 18,
+          "y": 18
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "why_us_1",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 26
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "why_us_2",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 35
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "why_us_3",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 44
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "why_us_4",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 53
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "why_us_5",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 22,
+          "y": 62
+        },
+        "width": 170,
+        "height": 8,
+        "fontSize": 10,
+        "fontColor": "#1f2937"
+      },
+      {
+        "name": "contact_block_label",
+        "type": "text",
+        "content": "Contact",
+        "position": {
+          "x": 18,
+          "y": 78
+        },
+        "width": 174,
+        "height": 7,
+        "fontSize": 12,
+        "fontColor": "#0f1115",
+        "readOnly": true
+      },
+      {
+        "name": "contact_email",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 87
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 10,
+        "fontColor": "#2563eb"
+      },
+      {
+        "name": "contact_name_signature",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 94
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 11,
+        "fontColor": "#0f1115"
+      },
+      {
+        "name": "closing_note",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 103
+        },
+        "width": 174,
+        "height": 22,
+        "fontSize": 10,
+        "fontColor": "#1f2937",
+        "lineHeight": 1.35
+      },
+      {
+        "name": "footer_note",
+        "type": "text",
+        "content": "",
+        "position": {
+          "x": 18,
+          "y": 282
+        },
+        "width": 174,
+        "height": 6,
+        "fontSize": 8,
+        "fontColor": "#9ca3af",
+        "alignment": "center"
+      }
+    ]
+  ]
+}

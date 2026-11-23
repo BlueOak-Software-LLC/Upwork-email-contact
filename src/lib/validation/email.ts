@@ -22,6 +22,23 @@ export const sendEmailSchema = z
     updateContact: z.boolean().default(true),
     /** Skip writing the row to `email_logs` (used by tests/imports). */
     skipLog: z.boolean().default(false),
+    /**
+     * Send through a stored sender account (`sender_accounts`) instead of the
+     * env-based provider — this is how dashboard drafts go out.
+     */
+    senderAccountId: z.string().uuid().optional(),
+    draftId: z.string().uuid().optional(),
+    proposalId: z.string().uuid().optional(),
+    attachments: z
+      .array(
+        z.object({
+          path: z.string().min(1),
+          filename: z.string().min(1),
+          contentType: z.string().max(80).optional(),
+        }),
+      )
+      .max(5)
+      .optional(),
     headers: z.record(z.string(), z.string().max(500)).optional(),
   })
   .refine((v) => Boolean(v.text || v.html), {

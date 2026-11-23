@@ -1,6 +1,6 @@
 import { getServerEnv } from "@/lib/env";
 
-type Level = "debug" | "info" | "warn" | "error";
+type Level = "debug" | "info" | "warn" | "error" | "silent";
 const order: Level[] = ["debug", "info", "warn", "error", "silent"];
 
 /** Minimal structured logger — swap for pino/otel without touching callers. */

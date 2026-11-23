@@ -30,6 +30,20 @@ const ServerEnvSchema = z.object({
   // Optional shared secret guarding the /api routes
   API_MASTER_KEY: z.string().min(12).optional(),
 
+  // Encrypts sender-account SMTP passwords before they are stored in Postgres
+  APP_ENCRYPTION_KEY: z.string().min(16).optional(),
+
+  // Groq — proposal generation
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default("llama-3.3-70b-versatile"),
+  GROQ_TIMEOUT_MS: z.coerce.number().int().min(1000).default(45_000),
+  PROPOSAL_LANGUAGE: z.string().default("English"),
+  AUTO_ENRICH_LEADS: booleanish(true),
+
+  // Proposal PDF rendering
+  PDF_PROVIDER: z.enum(["pdfme", "none"]).default("pdfme"),
+  PDFME_TEMPLATE_PATH: z.string().default("templates/pdfme/proposal-template.json"),
+
   // Email
   EMAIL_PROVIDER: z.enum(["resend", "smtp", "log"]).default("log"),
   EMAIL_FROM: z.string().min(3).default('"Outreach" <onboarding@resend.dev>'),
@@ -55,7 +69,16 @@ let cached: ServerEnv | null = null;
 export function getServerEnv(): ServerEnv {
   if (cached) return cached;
 
-  const parsed = ServerEnvSchema.safeParse(process.env);
+  // Blank values in `.env.local` (``API_MASTER_KEY=``, ``GROQ_API_KEY=`` …) mean
+  // "not configured yet", not "a empty string" — drop them before validating,
+  // otherwise optional fields fail their own constraints and the whole app 500s.
+  const envSource = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([, value]) => value !== undefined && String(value).trim() !== "",
+    ),
+  );
+
+  const parsed = ServerEnvSchema.safeParse(envSource);
   if (!parsed.success) {
     const issues = parsed.error.issues.map(
       (i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`,
@@ -77,6 +100,13 @@ function enforceProviderContracts(env: ServerEnv): ServerEnv {
   }
   if (env.EMAIL_PROVIDER === "smtp" && !env.SMTP_HOST) {
     throw new Error("EMAIL_PROVIDER=smtp requires SMTP_HOST");
+  }
+  if (!env.APP_ENCRYPTION_KEY) {
+    // Sender-account passwords cannot be stored safely without it, but the app
+    // still runs (env-based SMTP only) — so warn instead of throwing.
+    console.warn(
+      "[env] APP_ENCRYPTION_KEY unset: sender_accounts SMTP passwords cannot be saved. Set `openssl rand -hex 32`.",
+    );
   }
   return {
     ...env,

@@ -9,10 +9,9 @@ import type {
 } from "@/types/domain";
 
 export const keys = {
-  contacts: (params: Record<string, unknown>) =>
-    ["contacts", params] as const,
+  contacts: (params: object) => ["contacts", params] as const,
   contact: (id: string) => ["contacts", "detail", id] as const,
-  emailLogs: (params: Record<string, unknown>) => ["email-logs", params] as const,
+  emailLogs: (params: object) => ["email-logs", params] as const,
 };
 
 export interface ContactFilters {
@@ -80,6 +79,8 @@ export function useSendEmail() {
       contactId?: string;
     }) =>
       apiFetch<{
+        provider: string;
+        requested: number;
         delivered: number;
         failed: number;
         results: SendEmailResult[];

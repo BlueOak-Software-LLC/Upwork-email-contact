@@ -3,23 +3,46 @@ import { MetricCard, SparkBars } from "@/components/dashboard/metric-card";
 import { StatusBadge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { getMetrics, getRecentContacts } from "@/server/queries";
+import { leadsRepo } from "@/server/db/leads.repo";
 import { formatDate } from "@/lib/utils";
 import type { Contact, DashboardMetrics } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Overview" };
 
+type LeadMetrics = NonNullable<Awaited<ReturnType<typeof leadsRepo.metrics>>>;
+
 export default async function OverviewPage() {
-  const [metrics, recent] = await Promise.all([
-    attempt<DashboardMetrics>(() => getMetrics(), null),
+  const [metrics, recent, leadMetrics] = await Promise.all([
+    attempt<DashboardMetrics | null>(() => getMetrics(), null),
     attempt<Contact[]>(() => getRecentContacts(6), []),
+    attempt<LeadMetrics | null>(() => leadsRepo.metrics(), null),
   ]);
 
   if (!metrics) return <SetupRequired />;
 
   return (
     <>
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <MetricCard
+          label="Leads ingested"
+          value={leadMetrics?.total ?? "—"}
+          hint={
+            leadMetrics
+              ? `${leadMetrics.byStatus.draft_created ?? 0} drafted · ${
+                  leadMetrics.byStatus.sent ?? 0
+                } sent`
+              : "Nothing posted to /api/leads yet"
+          }
+        >
+          {leadMetrics ? <SparkBars data={leadMetrics.last7Days} /> : null}
+          <div className="mt-3">
+            <Link href="/leads" className="text-xs text-brand hover:underline">
+              Open leads →
+            </Link>
+          </div>
+        </MetricCard>
+
         <MetricCard
           label="Total contacts"
           value={metrics.totalContacts}
@@ -27,6 +50,7 @@ export default async function OverviewPage() {
         >
           <SparkBars data={metrics.last7Days} />
         </MetricCard>
+
         <MetricCard
           label="Emails sent (7d)"
           value={metrics.emailsSent7d}
@@ -34,16 +58,31 @@ export default async function OverviewPage() {
           tone={metrics.emailsFailed7d ? "bad" : "good"}
           hint="From public.email_logs"
         />
+
         <MetricCard
           label="Replies"
           value={metrics.replied}
           hint={`${metrics.contacted} contacts in the funnel`}
         />
+
         <MetricCard
           label="Reply rate"
           value={`${Math.round(metrics.replyRate * 100)}%`}
           tone={metrics.replyRate > 0.1 ? "good" : "default"}
           hint="replied ÷ contacted"
+        />
+
+        <MetricCard
+          label="High-confidence leads"
+          value={leadMetrics?.byConfidence.HIGH ?? 0}
+          tone="good"
+          hint={
+            leadMetrics
+              ? `${leadMetrics.byConfidence.LOW ?? 0} low · ${
+                  leadMetrics.byConfidence.UNIDENTIFIED ?? 0
+                } unidentified`
+              : "No confidence data yet"
+          }
         />
       </section>
 
@@ -113,6 +152,20 @@ export default async function OverviewPage() {
               );
             })}
           </ul>
+
+          {leadMetrics ? (
+            <>
+              <h2 className="mt-6 text-sm font-medium">Lead status</h2>
+              <ul className="mt-3 space-y-2 text-xs">
+                {Object.entries(leadMetrics.byStatus).map(([status, count]) => (
+                  <li key={status} className="flex justify-between">
+                    <StatusBadge status={status} />
+                    <span className="tabular text-muted">{count}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </div>
       </section>
     </>
@@ -132,24 +185,34 @@ function SetupRequired() {
     <div className="card max-w-2xl p-6">
       <h2 className="text-base font-semibold">Almost there — connect Supabase</h2>
       <p className="mt-2 text-sm text-muted">
-        The dashboard reads <code>public.contacts</code> and <code>public.email_logs</code>{" "}
-        through <code>/api/contacts</code>. To see data:
+        The dashboard reads <code>public.contacts</code>, <code>public.email_logs</code>{" "}
+        and <code>public.leads</code> through our own <code>/api</code> routes. To see data:
       </p>
       <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted">
         <li>
-          Create a Supabase project, then run{" "}
-          <code className="rounded bg-surface-2 px-1">supabase/migrations/0001_init.sql</code>{" "}
-          in the SQL editor.
+          Run{" "}
+          <code className="rounded bg-surface-2 px-1">
+            supabase/migrations/0001_init.sql
+          </code>{" "}
+          and then{" "}
+          <code className="rounded bg-surface-2 px-1">
+            0002_leads_senders_proposals.sql
+          </code>{" "}
+          in the SQL editor (or <code>supabase db push</code>).
         </li>
         <li>
           Copy <code className="rounded bg-surface-2 px-1">.env.example</code> to{" "}
-          <code className="rounded bg-surface-2 px-1">.env.local</code> and fill the project URL,
-          anon key and service-role key.
+          <code className="rounded bg-surface-2 px-1">.env.local</code> — project URL, anon key,
+          service-role key, <code>APP_ENCRYPTION_KEY</code>, <code>GROQ_API_KEY</code>.
         </li>
-        <li>Restart <code className="rounded bg-surface-2 px-1">npm run dev</code>.</li>
+        <li>
+          Restart <code className="rounded bg-surface-2 px-1">npm run dev</code>, then{" "}
+          <code className="rounded bg-surface-2 px-1">POST /api/leads</code> with a payload.
+        </li>
       </ol>
       <p className="mt-4 text-xs text-muted/80">
-        Tip: load <code>supabase/seed.sql</code> for sample rows.
+        Tip: load <code>supabase/seed.sql</code> for sample contacts and use{" "}
+        <code>examples/lead-example.json</code> for a sample lead.
       </p>
     </div>
   );

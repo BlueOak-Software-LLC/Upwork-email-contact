@@ -1,0 +1,85 @@
+{
+  "job_information": {
+    "job_id": "022124125626153755079",
+    "job_title": "3D Hard-Surface Product Animator for Warehouse Robots (AMRs) and Industrial Robot Arms / Cobots",
+    "job_url": "https://www.upwork.com/jobs/~022124125626153755079",
+    "industry": "3D animation, CGI product films, engineering and technology marketing, industrial robotics, and manufacturing.",
+    "job_location": "Worldwide. The job seeks remote freelance animators on a per-project basis.",
+    "company_mentioned": "Uday Animation (Uday Animation Limited)"
+  },
+  "upwork_client": {
+    "client_name": "MUS",
+    "location": "Mahe, Seychelles"
+  },
+  "key_people": [
+    {
+      "confidence": "HIGH",
+      "evidence": "The LinkedIn profile identifies the person as founder of the studio named in the job post.",
+      "linkedin_url": "https://example.com/in/founder-profile",
+      "location": "Germany",
+      "name": "Founder Name",
+      "role": "Founder; mechanical engineer",
+      "source_urls": ["https://example.com/in/founder-profile", "https://example.com/"]
+    }
+  ],
+  "contact_information": {
+    "verified_contacts": [
+      {
+        "company": "Uday Animation Limited",
+        "confidence": "HIGH",
+        "contact_type": "Business email",
+        "contact_value": "studio-contact@example.com",
+        "name": "Studio contact",
+        "notes": "Published directly on the official company website.",
+        "role": "Studio contact",
+        "source_url": "https://example.com/"
+      }
+    ],
+    "potential_contacts": [
+      {
+        "company": "Uday Animation Limited",
+        "confidence": "LOW",
+        "contact_type": "Email",
+        "contact_value": "info@example.com",
+        "name": null,
+        "reason": "General business inbox published on the contact page.",
+        "role": "General business contact",
+        "source_url": "https://example.com/contact"
+      },
+      {
+        "company": "Uday Animation Limited",
+        "confidence": "LOW",
+        "contact_type": "Phone",
+        "contact_value": "+1 914-788-0000",
+        "name": null,
+        "reason": "Officially published business number.",
+        "role": "Business telephone",
+        "source_url": "https://example.com/contact"
+      }
+    ],
+    "company_contact_pages": [
+      {
+        "name": "Official website",
+        "notes": "Describes photoreal 3D product animation and explainer-video services.",
+        "type": "Official company website and business inquiry information",
+        "url": "https://example.com/"
+      },
+      {
+        "name": "Discovery call",
+        "notes": "Booking calendar link on the official site.",
+        "type": "Booking link",
+        "url": "https://calendly.com/"
+      }
+    ],
+    "linkedin_profiles": [
+      {
+        "name": "Company page",
+        "notes": "Posts about explainer videos for technology businesses.",
+        "type": "Official company LinkedIn post",
+        "url": "https://www.linkedin.com/company/example"
+      }
+    ],
+    "social_media_profiles": []
+  },
+  "overall_confidence": "HIGH"
+}

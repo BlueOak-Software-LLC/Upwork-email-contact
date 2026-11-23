@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { logger } from "@/lib/logger";
-import { ApiError, isApiError, statusForCode, zodDetails } from "@/server/http/errors";
+import { isApiError, statusForCode, zodDetails } from "@/server/http/errors";
 import { fail } from "@/server/http/responses";
 
 type RouteContext<P> = { params: Promise<P> };
@@ -68,9 +68,18 @@ function toResponse(error: unknown, requestId: string) {
   }
 
   console.error("[api] unhandled error", { requestId, error });
+  // In development, surface the real failure instead of an opaque 500 —
+  // production keeps the message generic.
+  const debug =
+    process.env.NODE_ENV !== "production" && error instanceof Error
+      ? { type: error.name, message: error.message, stack: error.stack?.split("\n").slice(0, 6).join("\n") }
+      : undefined;
   return fail(
     statusForCode("internal_error"),
     "internal_error",
-    "Unexpected server error",
+    process.env.NODE_ENV !== "production" && error instanceof Error
+      ? error.message
+      : "Unexpected server error",
+    debug,
   );
 }

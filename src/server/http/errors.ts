@@ -1,4 +1,4 @@
-import { ZodError, type z } from "zod";
+import type { ZodError, z } from "zod";
 
 export type ErrorCode =
   | "bad_request"
