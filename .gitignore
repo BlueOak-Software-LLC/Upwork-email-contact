@@ -36,3 +36,7 @@ yarn-error.log*
 # supabase local
 supabase/.branches
 supabase/.temp
+.env*
+env.local
+.tmp-*
+api-master-key.txt
