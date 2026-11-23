@@ -1,0 +1,161 @@
+{
+  "company": "Blueoak Software LLC",
+  "document_title": "PROJECT CAPABILITY & PROPOSED WORKFLOW",
+  "job_title": "Build an AI-Powered Customer Support Workflow with CRM Integration",
+  "subtitle": "A practical implementation plan for customer support routing, AI assistance, CRM synchronization, and production monitoring.",
+  "prepared_for": "Hiring team (client name not verified)",
+  "prepared_by": "Blueoak Software LLC",
+  "engagement": "Discovery and milestones to be confirmed",
+  "website": "https://blueoaksoftware.cloud",
+  "sections": [
+    {
+      "id": "understanding",
+      "title": "Project understanding",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "items": [
+            "The job calls for a customer support workflow that can classify incoming requests, make relevant knowledge available to support agents, and synchronize ticket activity with the CRM.",
+            "A reliable implementation should account for escalation rules, customer context, permissions, response quality, and measurable outcomes rather than relying on AI responses alone."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "title": "How the proposed skillset maps to your requirements",
+      "blocks": [
+        {
+          "type": "capabilityMatrix",
+          "items": [
+            {
+              "requirement": "AI-based ticket classification",
+              "approach": "Define supported ticket categories, confidence thresholds, and fallbacks to human review."
+            },
+            {
+              "requirement": "CRM and helpdesk integration",
+              "approach": "Map identifiers, authentication, event triggers, data contracts, and synchronization rules."
+            },
+            {
+              "requirement": "Production reliability",
+              "approach": "Include retries, audit logs, permissions, quality checks, and monitoring from the pilot stage."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workflow",
+      "title": "Proposed project workflow",
+      "blocks": [
+        {
+          "type": "numberedSteps",
+          "items": [
+            {
+              "title": "Discovery and data review",
+              "description": "Identify ticket channels, CRM fields, knowledge sources, priority rules, security constraints, and success metrics."
+            },
+            {
+              "title": "Solution design",
+              "description": "Define the AI classification and retrieval design, API contracts, fallback behavior, and human approval points."
+            },
+            {
+              "title": "Pilot implementation",
+              "description": "Connect one support channel to the chosen CRM and validate classification, enrichment, and handoff events."
+            },
+            {
+              "title": "Quality and failure testing",
+              "description": "Test ambiguous tickets, sensitive information, outages, duplicate events, and low-confidence AI responses."
+            },
+            {
+              "title": "Rollout and handover",
+              "description": "Deploy the approved workflow, establish monitoring, and document maintenance and escalation procedures."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deliverables",
+      "title": "Potential deliverables",
+      "blocks": [
+        {
+          "type": "bullets",
+          "items": [
+            "Documented integration workflow and CRM field mappings",
+            "Configured ticket classification and routing logic within the agreed scope",
+            "Test plan covering common failures, escalations, and data handling",
+            "Deployment notes, operational monitoring checklist, and handover guide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "quality",
+      "title": "Coordination and quality checks",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "items": [
+            "Start with representative ticket categories and review the quality of classifications and CRM updates against agreed acceptance criteria. Roll out additional queues only after stakeholders approve the pilot.",
+            "Monitor unexpected model outputs, incorrect routing, retry behavior, access-control mistakes, and failed CRM synchronization."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "terms",
+      "title": "Commercial terms",
+      "blocks": [
+        {
+          "type": "keyValueTable",
+          "rows": [
+            {
+              "label": "Working basis",
+              "value": "Milestone-based scope and acceptance criteria to be agreed."
+            },
+            {
+              "label": "Initial step",
+              "value": "Review integration access, ticket samples, and the target CRM workflow."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "questions",
+      "title": "Information needed to confirm scope",
+      "blocks": [
+        {
+          "type": "bullets",
+          "items": [
+            "Which helpdesk and CRM platforms, including versions, are in scope?",
+            "What data may be sent to the AI service, and what human review is required?",
+            "What ticket volumes and accuracy metrics should the pilot satisfy?"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "references",
+      "title": "Relevant production references",
+      "blocks": [
+        {
+          "type": "references",
+          "items": []
+        }
+      ]
+    },
+    {
+      "id": "note",
+      "title": "",
+      "blocks": [
+        {
+          "type": "note",
+          "text": "This document describes a proposed execution plan, not a claim of previously delivered work with any particular vendor."
+        }
+      ]
+    }
+  ],
+  "closing": "Thank you for considering this proposal."
+}
