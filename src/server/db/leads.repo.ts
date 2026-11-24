@@ -194,32 +194,59 @@ export const leadsRepo = {
     const from = (query.page - 1) * query.pageSize;
     const to = from + query.pageSize - 1;
 
-    let builder = supabase
-      .from("leads")
-      .select(`${LEAD_COLUMNS}, lead_contacts(count)`, { count: "exact" })
-      .order(query.sort, { ascending: query.order === "asc" })
-      .range(from, to);
+    // The embedded counts are what the list shows as pipeline dots and what the
+    // delete dialog prints before an irreversible call ("2 documents, 1 draft,
+    // 3 stored PDFs"), so they ride along instead of a second round-trip.
+    const richSelect = `${LEAD_COLUMNS}, lead_contacts(count), proposals(count), email_drafts(count)`;
+    const plainSelect = `${LEAD_COLUMNS}, lead_contacts(count)`;
 
-    if (query.status) builder = builder.eq("status", query.status);
-    if (query.confidence) builder = builder.eq("overall_confidence", query.confidence);
-    if (query.q) {
-      const term = query.q.trim();
-      if (term) {
-        builder = builder.or(
-          `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%,job_description.ilike.%${term}%`,
-        );
+    const build = (selection: string) => {
+      let builder = supabase
+        .from("leads")
+        .select(selection, { count: "exact" })
+        .order(query.sort, { ascending: query.order === "asc" })
+        .range(from, to);
+
+      if (query.status) builder = builder.eq("status", query.status);
+      if (query.confidence) builder = builder.eq("overall_confidence", query.confidence);
+      if (query.q) {
+        const term = query.q.trim();
+        if (term) {
+          builder = builder.or(
+            `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%,job_description.ilike.%${term}%`,
+          );
+        }
       }
-    }
+      return builder;
+    };
 
-    const { data, error, count } = await builder;
+    let result = await build(richSelect);
+    if (result.error) {
+      // A database older than 0002 has no proposals/email_drafts to embed: keep
+      // the list alive without those counts rather than failing the page.
+      logger.warn("lead_list_counts_embed_failed", {
+        error: result.error.message,
+        note: "falling back to contact counts only",
+      });
+      result = await build(plainSelect);
+    }
+    const { data, error, count } = result;
     if (error) throw ApiError.upstream(`Failed to list leads: ${error.message}`);
 
-    const items = (data ?? []).map(({ lead_contacts, ...rest }) => {
-      const embedded = Array.isArray(lead_contacts)
-        ? (lead_contacts[0] as { count?: number } | undefined)
-        : (lead_contacts as { count?: number } | undefined);
-      return { ...rest, contact_count: embedded?.count ?? 0 };
-    });
+    const embeddedCount = (value: unknown): number => {
+      const first = Array.isArray(value)
+        ? (value[0] as { count?: number } | undefined)
+        : (value as { count?: number } | undefined);
+      return first?.count ?? 0;
+    };
+    const items = ((data ?? []) as unknown as Array<Record<string, unknown>>).map(
+      ({ lead_contacts, proposals, email_drafts, ...rest }) => ({
+        ...rest,
+        contact_count: embeddedCount(lead_contacts),
+        proposal_count: embeddedCount(proposals),
+        draft_count: embeddedCount(email_drafts),
+      }),
+    );
 
     const total = count ?? items.length;
     return {

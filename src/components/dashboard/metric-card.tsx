@@ -43,19 +43,39 @@ export function MetricCard({
 
 /** Tiny CSS bar chart — no chart library needed for 7 columns. */
 export function SparkBars({ data }: { data: Array<{ day: string; count: number }> }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
+  const total = data.reduce((sum, day) => sum + day.count, 0);
+
+  // An all-zero week used to draw seven invisible stubs, which reads as a
+  // broken chart. Say plainly that nothing happened.
+  if (!total) {
+    return (
+      <div className="mt-4 flex h-16 flex-col justify-end gap-2">
+        <div className="border-b border-dashed border-line" />
+        <p className="text-[11px] text-faint">
+          nothing in the last {data.length || 7} days
+        </p>
+      </div>
+    );
+  }
+
+  const max = Math.max(...data.map((d) => d.count));
   return (
-    <div className="mt-4 flex h-16 items-end gap-1.5">
+    <div className="mt-4 flex h-16 items-end gap-1.5 border-b border-line/70">
       {data.map((d) => (
         <div key={d.day} className="flex flex-1 flex-col items-center gap-1">
           <div
-            className="w-full rounded-sm bg-brand/70 transition-[height] duration-500"
-            style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
+            className={
+              d.count
+                ? "w-full rounded-sm bg-brand/75 transition-[height] duration-500"
+                : "h-[3px] w-full rounded-sm bg-surface-3"
+            }
+            style={d.count ? { height: `${Math.max(10, (d.count / max) * 100)}%` } : undefined}
             title={`${d.day}: ${d.count}`}
           />
-          <span className="text-[10px] text-muted">{d.day.slice(5)}</span>
+          <span className="text-[10px] text-muted tabular">{d.day.slice(5)}</span>
         </div>
       ))}
     </div>
   );
 }
+

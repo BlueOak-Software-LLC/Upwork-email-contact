@@ -14,6 +14,8 @@ import type { SenderAccountDto } from "@/server/db/sender-accounts.repo";
 
 export interface LeadSummary extends LeadRow {
   contact_count?: number;
+  proposal_count?: number;
+  draft_count?: number;
 }
 
 export interface LeadDetailDto {
@@ -109,13 +111,23 @@ export interface IngestResponse {
 /**
  * POST /api/leads — the same contract your scraper uses, so a payload can be
  * pasted straight into the dashboard for testing or recovery.
+ *
+ * Generation mode is a QUERY option (`?auto=true|false`) — it must never be
+ * folded into the body, because the body is stored verbatim in
+ * `leads.raw_payload`.
  */
 export function useIngestLead() {
   const qc = useQueryClient();
   const toast = useToast();
   return useMutation({
-    mutationFn: (payload: Record<string, unknown>) =>
-      apiFetch<IngestResponse>("/api/leads", { method: "POST", body: payload }),
+    mutationFn: ({ payload, query }: { payload: Record<string, unknown>; query?: string }) =>
+      apiFetch<IngestResponse>("/api/leads", {
+        method: "POST",
+        body: payload,
+        query: query
+          ? Object.fromEntries(new URLSearchParams(query))
+          : undefined,
+      }),
     onSuccess: ({ data }) => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: leadKey(data.lead.id) });
@@ -132,7 +144,6 @@ export function useIngestLead() {
     onError: (error) => toast.error("Ingest failed", errorMessage(error)),
   });
 }
-
 export function useLeads(filters: Record<string, string | number | undefined> = {}) {
   return useQuery({
     queryKey: ["leads", filters],
@@ -321,22 +332,65 @@ export function useSaveProposal(leadId: string) {
     }: {
       proposalId: string;
       patch: { ppd?: unknown; emailSubject?: string; emailContent?: string; reviewed?: boolean };
+      /** The document as it was before this edit — so a no-op save is visible. */
+      previousPpd?: unknown;
     }) =>
       apiFetch<{ proposal: ProposalRow; warnings: string[]; lead: LeadDetailDto }>(
         `/api/proposals/${proposalId}`,
         { method: "PATCH", body: patch },
       ),
-    onSuccess: ({ data }) => {
+    onSuccess: ({ data }, variables) => {
       qc.setQueryData(leadKey(leadId), data.lead);
       qc.invalidateQueries({ queryKey: ["leads"] });
-      toast.success(
-        "Document saved and marked reviewed",
-        data.warnings[0] ?? "The PDF re-renders from this text on preview or send.",
-      );
+
+      const row =
+        data.lead?.proposals?.find((p) => p.id === variables.proposalId) ?? data.proposal;
+      const touchedText = variables.patch.ppd !== undefined;
+      const unchanged =
+        touchedText && JSON.stringify(variables.previousPpd ?? null) === JSON.stringify(row?.ppd ?? null);
+
+      if (unchanged) {
+        // The most confusing failure a reviewer can hit: the request succeeded,
+        // the sanitizer decided the edit was invalid, and the text snapped back.
+        toast.warn(
+          "Saved — but the stored document came back identical",
+          data.warnings[0] ??
+            "Everything you changed was rewritten by the server. Check the Edit document tab: a block may be empty or a section type unsupported.",
+        );
+      } else if (touchedText) {
+        toast.success(
+          `Document updated — ${wordCount(row?.ppd)} words`,
+          data.warnings[0] ?? "Marked reviewed. The PDF re-renders from this text on preview or send.",
+        );
+      } else {
+        toast.success(
+          "Marked reviewed",
+          data.warnings[0] ?? "The email step is unlocked; the PDF renders from this text at send time.",
+        );
+      }
       for (const warning of data.warnings.slice(1)) toast.warn("Saved with a warning", warning);
     },
     onError: (error) => toast.error("Could not save the document", errorMessage(error)),
   });
+}
+
+/** Rough visible-word count of a stored PPD, for the save confirmation. */
+function wordCount(ppd: unknown): number {
+  const sections = (ppd as { sections?: Array<{ blocks?: Array<Record<string, unknown>> }> })?.sections;
+  if (!Array.isArray(sections)) return 0;
+  const words: string[] = [];
+  for (const section of sections) {
+    for (const block of section.blocks ?? []) {
+      if (Array.isArray(block.items)) {
+        for (const item of block.items) {
+          words.push(typeof item === "string" ? item : JSON.stringify(item));
+        }
+      }
+      if (typeof block.text === "string") words.push(block.text);
+      if (Array.isArray(block.rows)) words.push(JSON.stringify(block.rows));
+    }
+  }
+  return words.join(" ").split(/\s+/).filter(Boolean).length;
 }
 
 /** A hand-written draft to any address, no Groq call. */
@@ -550,18 +604,102 @@ export function useUpdateLead(leadId: string) {
 }
 
 /** DELETE /api/leads/:id — used by the destructive action on the lead page. */
-export function useDeleteLead() {
+/** What `DELETE /api/leads` reports back for an irreversible call. */
+export interface LeadRemovalReport {
+  removed: Array<{
+    id: string;
+    job_title: string | null;
+    contacts: number;
+    proposals: number;
+    drafts: number;
+    pdfFiles: number;
+  }>;
+  missing: string[];
+  failed: Array<{ id: string; error: string }>;
+  storageErrors: string[];
+  totals: { leads: number; contacts: number; proposals: number; drafts: number; pdfFiles: number };
+}
+
+/**
+ * Take rows out of every list cache and drop their detail caches.
+ *
+ * Deleting then waiting for a refetch makes rows disappear ~400 ms later, which
+ * reads as "did it work?". Editing the cache answers immediately; the
+ * invalidation afterwards only corrects the page totals.
+ */
+function purgeLeads(qc: ReturnType<typeof useQueryClient>, ids: string[]) {
+  const gone = new Set(ids);
+  for (const [key] of qc.getQueriesData<{ data?: LeadSummary[]; meta?: { total?: number } }>({
+    queryKey: ["leads"],
+  })) {
+    qc.setQueryData(key, (old: { data?: LeadSummary[]; meta?: { total?: number } } | undefined) => {
+      if (!old || !Array.isArray(old.data)) return old;
+      const rows = old.data.filter((row) => !gone.has(row.id));
+      const delta = old.data.length - rows.length;
+      return {
+        ...old,
+        data: rows,
+        meta: old.meta
+          ? { ...old.meta, total: Math.max(0, (old.meta.total ?? old.data.length) - delta) }
+          : old.meta,
+      };
+    });
+  }
+  for (const id of ids) qc.removeQueries({ queryKey: leadKey(id) });
+  qc.invalidateQueries({ queryKey: ["leads"] });
+  qc.invalidateQueries({ queryKey: ["email-logs"] });
+  qc.invalidateQueries({ queryKey: ["overview"] });
+}
+
+function reportRemoval(toast: ReturnType<typeof useToast>, report: LeadRemovalReport) {
+  const t = report.totals;
+  if (t.leads) {
+    toast.success(
+      `${t.leads} ${t.leads === 1 ? "job" : "jobs"} removed permanently`,
+      `${t.proposals} document(s), ${t.drafts} draft(s), ${t.contacts} contact(s) and ${t.pdfFiles} stored PDF file(s) went with ` +
+        `${t.leads === 1 ? "it" : "them"}. CRM contacts and sent-message log rows stay.`,
+    );
+  }
+  if (report.missing.length) {
+    toast.warn(
+      `${report.missing.length} id(s) were already gone`,
+      report.missing.map((id) => id.slice(0, 8)).join(", "),
+    );
+  }
+  for (const failure of report.failed) {
+    toast.error(`Could not remove ${failure.id.slice(0, 8)}`, failure.error);
+  }
+  for (const error of report.storageErrors) {
+    toast.warn("Database rows are gone, but PDF storage cleanup failed", error);
+  }
+}
+
+/** Remove a batch of jobs. `ids` are exact lead uuids — never a filter. */
+export function useDeleteLeads() {
   const qc = useQueryClient();
   const toast = useToast();
   return useMutation({
-    mutationFn: (leadId: string) => apiFetch<null>(`/api/leads/${leadId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["email-logs"] });
-      toast.success("Lead deleted");
+    mutationFn: (ids: string[]) =>
+      apiFetch<LeadRemovalReport>("/api/leads", { method: "DELETE", body: { ids } }),
+    onSuccess: ({ data }, ids) => {
+      purgeLeads(qc, data.removed.map((r) => r.id));
+      if (!data.removed.length && !data.failed.length && !data.missing.length) {
+        toast.warn("Nothing was removed", `No lead matched ${ids.length} id(s)`);
+      }
+      reportRemoval(toast, data);
     },
-    onError: (error) => toast.error("Could not delete the lead", errorMessage(error)),
+    onError: (error) => toast.error("Nothing was removed", errorMessage(error)),
   });
+}
+
+export function useDeleteLead() {
+  const remove = useDeleteLeads();
+  return {
+    ...remove,
+    mutate: (leadId: string, options?: Parameters<typeof remove.mutate>[1]) =>
+      remove.mutate([leadId], options),
+    mutateAsync: (leadId: string) => remove.mutateAsync([leadId]),
+  };
 }
 
 export type { ProposalRow, EmailDraftRow };

@@ -1,88 +1,106 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useIngestLead } from "@/lib/api/outreach-hooks";
+import { useEffect, useMemo, useState } from "react";
+
 import { Button } from "@/components/ui/button";
+import { Field, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
-import { Field, Select } from "@/components/ui/input";
 import { errorMessage } from "@/lib/api/errors";
+import { useIngestLead } from "@/lib/api/outreach-hooks";
+import { useRouter } from "next/navigation";
 
 /**
  * Paste a scraper payload straight into POST /api/leads.
  *
- * Exists for testing and recovery: the body is sent exactly as pasted, so the
- * dedupe, contact extraction and (optionally) document generation behave the
- * same as they do for the real scraper.
+ * The body is sent **exactly as pasted** — it is what lands in
+ * `leads.raw_payload` — so generation mode rides on the query string
+ * (`?auto=true|false&regenerate=true`), never inside the JSON.
+ *
+ * Nothing is pre-filled with invented facts: the two starters are the shapes the
+ * API accepts, including the description-only case where every identifier is
+ * null.
  */
+
 const BLANK = `{
+  "job_id": "",
+  "job_title": "",
+  "job_url": "",
   "job_information": {
-    "job_id": null,
-    "job_title": null,
-    "job_description": "",
-    "job_url": null,
-    "industry": null,
-    "job_location": null,
-    "company_mentioned": null
+    "job_title": "",
+    "job_description": ""
   },
-  "upwork_client": { "client_name": null, "location": null },
-  "key_people": [],
   "contact_information": {
     "verified_contacts": [],
     "potential_contacts": []
-  },
-  "overall_confidence": ""
-}`;
-
-const DESCRIPTION_ONLY = `{
-  "job_information": {
-    "job_description": "We need a 30-second logo sting animation for a manufacturing conference. After Effects, vector source file, loop-friendly, MP4 plus transparent mov."
   }
 }`;
 
-export function IngestDialog({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+const DESCRIPTION_ONLY = `{
+  "job_id": null,
+  "job_title": null,
+  "job_url": null,
+  "job_information": {
+    "job_title": null,
+    "job_description": "We need a photoreal 3D animation of our autonomous mobile robot picking cases off a pallet in a warehouse aisle. 12 short clips, 1080p and 4K, delivered inside three weeks. Rig files are available; the robot's paint scheme must match our brand."
+  },
+  "contact_information": {
+    "verified_contacts": [],
+    "potential_contacts": []
+  }
+}`;
+
+export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [auto, setAuto] = useState<"" | "true" | "false">("");
+  const [regenerate, setRegenerate] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const router = useRouter();
   const ingest = useIngestLead();
-  const [text, setText] = useState(BLANK);
-  const [auto, setAuto] = useState("");
 
-  const parsed = (() => {
+  const parsed = useMemo(() => {
+    const trimmed = text.trim();
+    if (!trimmed) return { ok: false as const, message: "Paste the research JSON first." };
     try {
-      const value = JSON.parse(text) as unknown;
+      const value = JSON.parse(trimmed) as Record<string, unknown>;
       if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return { ok: false as const, message: "The body must be a JSON object" };
+        return { ok: false as const, message: "The top level must be a JSON object." };
       }
-      return { ok: true as const, value: value as Record<string, unknown> };
+      const ji = (value.job_information ?? {}) as Record<string, unknown>;
+      const description = String(ji.job_description ?? value.job_description ?? "");
+      return { ok: true as const, value, description: description.length };
     } catch (error) {
-      return { ok: false as const, message: (error as Error).message };
+      return {
+        ok: false as const,
+        message: `Not valid JSON: ${(error as Error).message}`,
+      };
     }
-  })();
+  }, [text]);
 
-  // Ingest is usually instant, but with AUTO_ENRICH_LEADS the document is
-  // written inside this same request (30-60 s), so the wait is explained rather
-  // than looking like a frozen dialog.
-  const [elapsed, setElapsed] = useState(0);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const query = [auto ? `auto=${auto}` : "", regenerate ? "regenerate=true" : ""]
+    .filter(Boolean)
+    .join("&");
+
   useEffect(() => {
-    if (ingest.isPending) {
+    if (!ingest.isPending) {
       setElapsed(0);
-      timer.current = setInterval(() => setElapsed((v) => v + 1), 1000);
+      return;
     }
-    return () => {
-      if (timer.current) clearInterval(timer.current);
-      timer.current = null;
-    };
+    const started = Date.now();
+    const id = window.setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(id);
   }, [ingest.isPending]);
+
+  useEffect(() => {
+    if (!open) ingest.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const submit = async () => {
     if (!parsed.ok) return;
-    const response = await ingest.mutateAsync(parsed.value).catch(() => null);
+    const response = await ingest.mutateAsync({
+      payload: parsed.value,
+      query,
+    });
     if (!response) return;
     onClose();
     router.push(`/leads/${response.data.lead.id}`);
@@ -93,10 +111,13 @@ export function IngestDialog({
       open={open}
       onClose={onClose}
       title="Ingest a payload"
-      description="POST /api/leads — sent exactly as pasted. Fields may be null, arrays may be empty, and job_information.job_description alone is enough to write a document."
+      description="POST /api/leads — the body is stored exactly as pasted. Fields may be null and arrays may be empty: job_information.job_description alone is enough to write a document."
       className="max-w-2xl"
       footer={
         <>
+          <span className="mr-auto font-mono text-[10px] text-faint">
+            POST /api/leads{query ? `?${query}` : ""}
+          </span>
           <Button variant="ghost" onClick={onClose} disabled={ingest.isPending}>
             Close
           </Button>
@@ -107,7 +128,7 @@ export function IngestDialog({
       }
     >
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-end gap-2">
           <span className="text-xs text-muted">start from:</span>
           <Button size="sm" variant="ghost" onClick={() => setText(BLANK)}>
             empty envelope
@@ -115,39 +136,37 @@ export function IngestDialog({
           <Button size="sm" variant="ghost" onClick={() => setText(DESCRIPTION_ONLY)}>
             description only
           </Button>
-          <Field label="">
+          <Field label="generation">
             <Select
               value={auto}
-              onChange={(e) => {
-                setAuto(e.target.value);
-                setText((current) => {
-                  if (!parsed.ok) return current;
-                  const clone = JSON.parse(text) as Record<string, unknown>;
-                  if (e.target.value) clone.auto = e.target.value;
-                  else delete clone.auto;
-                  return JSON.stringify(clone, null, 2);
-                });
-              }}
-              className="h-8 w-40 text-xs"
+              onChange={(event) => setAuto(event.target.value as "" | "true" | "false")}
+              className="h-8 w-48 text-xs"
               aria-label="Generation mode"
             >
-              <option value="">auto: server default</option>
-              <option value="true">auto=true (write the PPD)</option>
-              <option value="false">auto=false (store only)</option>
+              <option value="">server default (AUTO_ENRICH_LEADS)</option>
+              <option value="true">?auto=true — write the PPD now</option>
+              <option value="false">?auto=false — store only</option>
             </Select>
           </Field>
+          <label className="flex items-center gap-2 pb-1 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={regenerate}
+              onChange={(event) => setRegenerate(event.target.checked)}
+              className="accent-brand"
+              aria-label="Regenerate"
+            />
+            <code className="font-mono text-[11px]">?regenerate=true</code>
+          </label>
         </div>
 
-        <textarea
+        <Textarea
           aria-label="Payload JSON"
-          rows={18}
+          rows={17}
           spellCheck={false}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          className={
-            "w-full rounded-lg border bg-canvas p-3 font-mono text-[11px] leading-relaxed focus-ring " +
-            (parsed.ok ? "border-line" : "border-danger/60")
-          }
+          className="font-mono text-[11px] leading-relaxed"
         />
 
         {!parsed.ok ? (
@@ -156,24 +175,21 @@ export function IngestDialog({
           </p>
         ) : (
           <p className="text-[11px] text-muted">
-            {String(
-              (parsed.value.job_information as Record<string, unknown> | undefined)?.job_description
-                ? String(
-                    (parsed.value.job_information as Record<string, unknown>).job_description,
-                  ).length
-                : 0,
-            )}{" "}
-            characters of post text · everything else optional
+            <span className="font-mono">{parsed.description}</span> characters of post text ·
+            duplicate posts merge onto the existing lead by its dedupe key
           </p>
         )}
 
         {ingest.isPending ? (
-          <p className="flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-xs text-brand" role="status">
+          <p
+            className="flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/10 px-3 py-2 text-xs text-brand"
+            role="status"
+          >
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand border-t-transparent" />
             Storing the payload{elapsed > 8 ? ` — ${elapsed}s` : ""}.
-            {String(parsed.ok ? (parsed.value.auto ?? "") : "") !== "false"
-              ? " With AUTO_ENRICH_LEADS on, step 1 (the document) runs inside this request and takes 30–60 s; it opens as soon as it is ready."
-              : " auto=false, so nothing is generated and this returns immediately."}
+            {auto === "false"
+              ? " Nothing is generated, so this returns immediately."
+              : " With generation on, step 1 (the document) runs inside this request and takes 30–60 s; the lead page opens as soon as it is ready."}
           </p>
         ) : null}
 

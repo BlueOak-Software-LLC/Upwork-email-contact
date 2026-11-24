@@ -41,13 +41,50 @@ export function brandConfig() {
   const env = getServerEnv();
   const from = parseFrom(env.EMAIL_FROM);
   const company = env.PROPOSAL_COMPANY || from.displayName || personify(from.local) || "Our studio";
+  const preparedBy = env.PROPOSAL_PREPARED_BY || from.displayName || personify(from.local) || company;
+  const title = env.PROPOSAL_TITLE;
   return {
     company,
+    /**
+     * The raw env values, so callers can tell "configured" from "derived from
+     * EMAIL_FROM": an older document upgrades to the real identity on its next
+     * save instead of keeping the fallback it was generated with.
+     */
+    raw: {
+      company: env.PROPOSAL_COMPANY,
+      website: env.PROPOSAL_WEBSITE,
+      preparedBy: env.PROPOSAL_PREPARED_BY,
+      title,
+      rate: env.PROPOSAL_RATE,
+    },
     website: env.PROPOSAL_WEBSITE,
-    preparedBy: env.PROPOSAL_PREPARED_BY || company,
+    preparedBy,
+    title,
+    /** What the PDF and the document print: "Luan Le · Senior Software Engineer". */
+    preparedLine: [preparedBy, title].filter(Boolean).join(" · "),
     senderEmail: from.email || env.EMAIL_FROM,
     rate: env.PROPOSAL_RATE,
+    /** Canonical plain-text email sign-off. Appended server-side, never by the model. */
+    signature: signatureLines({ company, website: env.PROPOSAL_WEBSITE, preparedBy, title }),
   };
+}
+
+/**
+ * The sign-off block, so the writer's name, role, company and site are ours on
+ * every message even when the model invents something else.
+ */
+function signatureLines(brand: {
+  company: string;
+  website: string;
+  preparedBy: string;
+  title: string;
+}): string[] {
+  const lines = ["Best regards,"];
+  if (brand.preparedBy) lines.push(brand.preparedBy);
+  const role = [brand.title, brand.company].filter(Boolean).join(" · ");
+  if (role) lines.push(role);
+  if (brand.website) lines.push(brand.website);
+  return lines;
 }
 
 /** `"Your Studio" <studio.hello@x.com>` → { displayName, email, local, domain }. */

@@ -2,7 +2,9 @@ import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type T
 import { cn } from "./cn";
 
 const base =
-  "w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-muted/60 outline-none transition focus-ring disabled:opacity-60";
+  "w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink " +
+  "shadow-[inset_0_1px_2px_oklch(0%_0_0/0.35)] outline-none transition " +
+  "hover:border-line-strong focus:border-brand/70 focus-ring disabled:opacity-60";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className, ...props }, ref) {

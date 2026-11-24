@@ -5,7 +5,7 @@ export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>)
   return (
     <div className="w-full overflow-x-auto">
       <table
-        className={cn("w-full min-w-[720px] border-collapse text-sm", className)}
+        className={cn("w-full min-w-[880px] border-collapse text-sm", className)}
         {...props}
       />
     </div>
@@ -21,7 +21,7 @@ export function THead(props: HTMLAttributes<HTMLTableSectionElement>) {
     <thead
       {...props}
       className={cn(
-        "border-b border-line text-left text-[11px] uppercase tracking-wide text-muted",
+        "text-left text-[11px] font-medium uppercase tracking-[0.04em] text-faint",
         props.className,
       )}
     />
@@ -40,7 +40,7 @@ export function Tr(props: HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
       {...props}
-      className={cn("border-b border-line/60 last:border-0 hover:bg-surface-2/60", props.className)}
+      className={cn("last:border-b-0", props.className)}
     />
   );
 }

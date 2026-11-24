@@ -38,6 +38,11 @@ export async function apiFetch<T, M = Envelope<T>["meta"]>(
   const { query, body, headers, ...rest } = init;
 
   const response = await fetch(buildUrl(path, query), {
+    // The read routes answer with `Cache-Control: private, max-age=10` (good for
+    // a scraper hammering the API, bad for the dashboard: a refetch right after a
+    // mutation would replay the pre-mutation rows and the deleted row would come
+    // straight back). Every screen here shows live state, so always revalidate.
+    cache: "no-store",
     ...rest,
     headers: {
       accept: "application/json",
@@ -83,6 +88,9 @@ export async function apiFetchBlob(
   const response = await fetch(buildUrl(path, query), {
     headers: { accept: "application/pdf" },
     credentials: "same-origin",
+    // A rendered PDF changes when the reviewed PPD is edited; never serve a
+    // cached copy of the previous render.
+    cache: "no-store",
   });
 
   if (!response.ok) {

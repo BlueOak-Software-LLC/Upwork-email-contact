@@ -71,7 +71,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-[3px]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -83,7 +83,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         className={cn(
-          "animate-pop-in card w-full max-w-lg p-5 shadow-2xl outline-none",
+          "animate-pop-in card w-full max-w-lg p-5 shadow-[var(--shadow-float)] outline-none",
           className,
         )}
       >

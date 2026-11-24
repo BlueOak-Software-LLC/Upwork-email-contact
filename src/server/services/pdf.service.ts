@@ -1,5 +1,5 @@
 import { getAdminClient } from "@/lib/supabase/admin";
-import { pdfConfig } from "@/lib/env-extras";
+import { pdfConfig, brandConfig } from "@/lib/env-extras";
 import { logger } from "@/lib/logger";
 import { compileProposalPdfme, type PdfmeInputs } from "@/lib/pdfme/compiler";
 import type { PdfmeTemplate } from "@/lib/pdfme/template";
@@ -34,7 +34,16 @@ export async function renderProposalPdf({
     return { path: null, status: "skipped" };
   }
 
-  const compiled = compileProposalPdfme(proposal.ppd as never);
+  // Identity is stamped from the environment at render time, not read back out
+  // of the stored document: a proposal generated before PROPOSAL_* was filled in
+  // would otherwise print "Kinhnghiemnuoiga" forever. The prose stays reviewed.
+  const brand = brandConfig();
+  const compiled = compileProposalPdfme({
+    ...(proposal.ppd as object),
+    company: brand.raw.company || (proposal.ppd as { company?: string }).company || brand.company,
+    website: brand.raw.website || (proposal.ppd as { website?: string }).website || brand.website,
+    prepared_by: brand.preparedLine || (proposal.ppd as { prepared_by?: string }).prepared_by,
+  } as never);
   const bytes = await runPdfme(compiled.template, compiled.inputs);
   const path = `${proposal.lead_id}/${proposal.id}-v${proposal.version}.pdf`;
 
@@ -118,4 +127,35 @@ export async function createProposalPdfUrl(
     return null;
   }
   return data?.signedUrl ?? null;
+}
+
+/**
+ * Remove every stored PDF for a lead (`proposals/{leadId}/…`).
+ *
+ * Called before the row is deleted: the path is derived from the lead id, so an
+ * object left behind would be unreferenced and unrecoverable from the UI.
+ * A missing prefix is not an error — nothing was ever rendered for that lead.
+ */
+export async function deleteLeadPdfFiles(
+  leadId: string,
+): Promise<{ deleted: number; errors: string[] }> {
+  const { provider } = pdfConfig();
+  if (provider === "none") return { deleted: 0, errors: [] };
+
+  const supabase = getAdminClient();
+  const listed = await supabase.storage.from(PDF_BUCKET).list(leadId, { limit: 200 });
+  if (listed.error || !listed.data?.length) return { deleted: 0, errors: [] };
+
+  const paths = listed.data
+    .filter((entry) => entry.id)
+    .map((entry) => `${leadId}/${entry.name}`);
+  if (!paths.length) return { deleted: 0, errors: [] };
+
+  const removed = await supabase.storage.from(PDF_BUCKET).remove(paths);
+  if (removed.error) {
+    logger.warn("pdf_storage_delete_failed", { leadId, error: removed.error.message });
+    return { deleted: 0, errors: [removed.error.message] };
+  }
+  logger.info("pdf_storage_deleted", { leadId, files: removed.data?.length ?? paths.length });
+  return { deleted: removed.data?.length ?? paths.length, errors: [] };
 }

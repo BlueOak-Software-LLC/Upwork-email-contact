@@ -170,6 +170,18 @@ export const savePromptSchema = z.object({
   note: z.string().trim().max(500).nullish(),
 });
 
+/**
+ * DELETE /api/leads — permanent, irreversible removal of jobs.
+ * `ids` (not a filter) on purpose: a typo in a query must never bulk-delete.
+ */
+export const deleteLeadsSchema = z.object({
+  ids: z
+    .array(z.string().uuid("every id must be a full lead uuid"))
+    .min(1, "pick at least one lead")
+    .max(100, "remove at most 100 leads per call")
+    .transform((ids) => [...new Set(ids)]),
+});
+
 export type ListLeadsQuery = z.infer<typeof listLeadsQuerySchema>;
 export type CreateSenderAccountInput = z.infer<typeof createSenderAccountSchema>;
 export type UpdateSenderAccountInput = z.infer<typeof updateSenderAccountSchema>;
@@ -179,3 +191,4 @@ export type GenerateEmailInput = z.infer<typeof generateEmailSchema>;
 export type EditProposalInput = z.infer<typeof editProposalSchema>;
 export type ManualDraftInput = z.infer<typeof manualDraftSchema>;
 export type SavePromptInput = z.infer<typeof savePromptSchema>;
+export type DeleteLeadsInput = z.infer<typeof deleteLeadsSchema>;

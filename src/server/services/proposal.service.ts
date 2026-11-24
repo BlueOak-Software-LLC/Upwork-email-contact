@@ -9,7 +9,9 @@ import { groqJson, type GroqUsage, type ReasoningEffort } from "@/server/service
 import {
   assertEmailShape,
   assertPpdShape,
+  bracketWarnings,
   DOC_WORD_TARGET,
+  findBracketTokens,
   ppdWordCount,
   sanitizeEmail,
   sanitizePpd,
@@ -194,8 +196,10 @@ export async function generatePpdDocument({
     }
   }
 
+  const brackets = findBracketTokens(completion.data);
   const warnings = [
     ...assertPpdShape(ppd, completion.usage, maxTokens),
+    ...bracketWarnings(brackets),
     ...unknownVarWarnings(rendered.unknown),
   ];
 
@@ -315,9 +319,11 @@ export async function generateEmailDraft({
   const email = sanitizeEmail(completion.data, {
     jobTitle: lead.job_title ?? ppd.job_title,
     ppd,
+    signature: brand.signature,
   });
   const warnings = [
     ...assertEmailShape(email, completion.usage, maxTokens),
+    ...bracketWarnings(findBracketTokens(completion.data)),
     ...unknownVarWarnings(rendered.unknown),
   ];
 
@@ -415,17 +421,26 @@ export async function resolveRecipientContact(
   return { contact: primary, source: "lead_contact" };
 }
 
-/** Re-validate a human-edited PPD before storing it. Structure is normalised and
- * clipped, but our own identity stays exactly as the reviewed document has it —
- * editing prose must not silently rewrite the branding.
+/**
+ * Re-validate a human-edited PPD before storing it.
+ *
+ * Prose is normalised and clipped, and our identity comes from the **current**
+ * environment: a document generated before `PROPOSAL_*` was configured upgrades
+ * to the real company, byline and site on its next save, and a rate the model
+ * left as a bracket stops being one. Lead facts (job title/reference) stay as
+ * reviewed, because those belong to the post, not to us.
  */
 export function sanitizeEditedPpd(ppd: unknown, base: ProposalPpd): ProposalPpd {
+  const brand = brandConfig();
+  const company = brand.raw.company || base.company;
+  const website = brand.raw.website || base.website;
+  const preparedBy = brand.preparedLine || base.prepared_by;
   const sanitized = sanitizePpd({ ppd }, {
-    company: base.company,
-    website: base.website,
-    preparedBy: base.prepared_by,
-    rate: base.rate === "[TO CONFIRM]" ? "" : base.rate,
-    senderEmail: base.company,
+    company,
+    website,
+    preparedBy,
+    rate: brand.raw.rate || "",
+    senderEmail: brand.senderEmail || base.company,
     jobTitle: base.job_title || null,
     jobReference: base.job_reference || null,
     recipientName: base.prepared_for,
@@ -437,9 +452,9 @@ export function sanitizeEditedPpd(ppd: unknown, base: ProposalPpd): ProposalPpd 
 
   return {
     ...sanitized,
-    company: base.company,
-    website: base.website,
-    prepared_by: base.prepared_by,
+    company,
+    website,
+    prepared_by: preparedBy,
     job_title: base.job_title,
     job_reference: base.job_reference,
   };
@@ -454,7 +469,9 @@ function ppdContext(
   return {
     company: brand.company,
     website: brand.website,
-    preparedBy: brand.preparedBy,
+    // The byline carries the role, so the PDF and the document sign as a person
+    // with a title rather than a bare name.
+    preparedBy: brand.preparedLine || brand.preparedBy,
     rate: brand.rate,
     senderEmail: brand.senderEmail,
     jobTitle: lead.job_title,

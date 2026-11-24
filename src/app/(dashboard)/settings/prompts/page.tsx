@@ -42,6 +42,13 @@ export default async function PromptsPage() {
             medium ≈ 16 s / ~880 words / $0.002; leaving it at the model default ≈ 19 s and
             most of the budget spent on reasoning.
           </li>
+         <li>
+            <b className="text-ink">Your identity is not a prompt slot.</b> Company, site, byline
+            and the email sign-off come from <code className="rounded bg-canvas px-1">PROPOSAL_*</code>{" "}
+            and <code className="rounded bg-canvas px-1">EMAIL_FROM</code>, and the server stamps them
+            after the model answers — an edited prompt can never change who signs, and any bracketed
+            placeholder the model still writes is rewritten into prose instead of reaching a client.
+          </li>
           <li>
             Slots that have no value (a typo) stay literally in the prompt and are reported by{" "}
             <code className="rounded bg-canvas px-1">GET /api/prompts</code> rather than silently

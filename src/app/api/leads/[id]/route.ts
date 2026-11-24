@@ -5,6 +5,7 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { updateLeadSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
+import { removeLeads } from "@/server/services/lead-delete.service";
 import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
@@ -55,13 +56,17 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
   return ok({ ...detail, hints });
 });
 
-/** DELETE /api/leads/:id — removes the lead and cascades contacts/proposals/drafts. */
+/**
+ * DELETE /api/leads/:id — the same permanent removal as the bulk route, for one
+ * id (scripts and curl keep the 204 contract). Storage objects go too, so no PDF
+ * is orphaned; see `removeLeads` for what survives.
+ */
 export const DELETE = withApi<Ctx>(async (request, { params }) => {
   await requireApiKey(request);
   const id = requireParamId((await params).id, "lead id");
-  const supabase = (await import("@/lib/supabase/admin")).getAdminClient();
-  const { error, count } = await supabase.from("leads").delete({ count: "exact" }).eq("id", id);
-  if (error) throw ApiError.upstream(`Failed to delete lead: ${error.message}`);
-  if (!count) throw ApiError.notFound(`Lead ${id} not found`);
+  const report = await removeLeads([id]);
+  const failure = report.failed[0];
+  if (failure) throw ApiError.upstream(`Failed to delete lead: ${failure.error}`);
+  if (report.missing.length) throw ApiError.notFound(`Lead ${id} not found`);
   return noContent();
 });

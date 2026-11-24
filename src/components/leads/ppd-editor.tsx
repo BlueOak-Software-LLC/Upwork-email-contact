@@ -251,7 +251,7 @@ export function PpdEditor({
         <MetaField
           label="Proposed rate"
           value={ppd.rate}
-          placeholder="[TO CONFIRM]"
+          placeholder="indicative — confirmed after a short scoping call"
           onChange={(value) => patch({ rate: value })}
         />
         <MetaField

@@ -133,7 +133,9 @@ export async function groqJson<T = Record<string, unknown>>({
             : status === 413
               ? ` — the request exceeds your ${tokensPerMinute} tokens-per-minute allowance (GROQ_TOKENS_PER_MINUTE); lower GROQ_MAX_TOKENS or upgrade the tier`
               : status === 429
-                ? " — rate limited, retry shortly"
+                ? dailyLimit(text)
+                  ? " — the DAILY token limit (TPD) for this model is spent; it resets at midnight UTC, so upgrade the Groq tier or generate fewer documents today. Retrying now cannot help."
+                  : " — Groq's per-minute window is full; retry in a moment or generate fewer leads at once"
                 : ""
       }${text ? ` :: ${text.slice(0, 220)}` : ""}`;
 
@@ -173,8 +175,14 @@ export async function groqJson<T = Record<string, unknown>>({
 
     // A 429 on this tier means the per-minute token window is full — usually
     // because we just generated several leads in a row. The window rolls over, so
-    // wait it out (respecting Retry-After) instead of failing the lead.
-    for (let attempt = 0; !response.ok && response.status === 429 && attempt < 3; attempt += 1) {
+    // wait it out (respecting Retry-After) instead of failing the lead. A DAILY
+    // limit (TPD) is different: it only resets at midnight UTC, so waiting 15 s
+    // three times burns the same tokens again and still fails.
+    for (
+      let attempt = 0;
+      !response.ok && response.status === 429 && attempt < 3 && !dailyLimit(text);
+      attempt += 1
+    ) {
       const retryAfter = Number(response.headers.get("retry-after") ?? 0);
       const waitMs = retryAfter > 0 ? Math.min(retryAfter * 1000, 20_000) : 5_000 * (attempt + 1);
       logger.warn("groq_rate_limited_wait", { model, waitMs, attempt: attempt + 1 });
@@ -216,7 +224,7 @@ export async function groqJson<T = Record<string, unknown>>({
       { temp: 0.1, effort: "none", waitMs: 3000 },
     ];
     for (const recovery of recoveries) {
-      if (response.ok || response.status !== 400 || !jsonModeProblem.test(text)) break;
+      if (response.ok || response.status !== 400 || rateLimited(text) || !jsonModeProblem.test(text)) break;
       logger.warn("groq_json_mode_retry", { model, effort: recovery.effort ?? "env", temp: recovery.temp });
       await sleep(recovery.waitMs);
       const retry = await send(recovery.temp, VARIANTS[0]!, recovery.effort);
@@ -302,3 +310,16 @@ function stripFences(text: string) {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Groq answers `rate_limit_exceeded` for both the rolling per-minute window and
+ * the daily ceiling. Only the per-minute one is worth waiting for, so the body
+ * text decides: TPD means the day is done, RPM/TPM means seconds.
+ */
+function dailyLimit(body: string) {
+  return /tokens per day|\(TPD\)/i.test(body);
+}
+
+function rateLimited(body: string) {
+  return /rate_limit_exceeded|limit reached|tokens per (day|minute|hour)/i.test(body);
+}

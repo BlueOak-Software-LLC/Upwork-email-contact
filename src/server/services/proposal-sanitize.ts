@@ -52,22 +52,146 @@ const MAX = {
  */
 export const DOC_WORD_TARGET = { min: 700, ideal: 950, max: 2600 } as const;
 
-const PLACEHOLDER = "[TO CONFIRM]";
+/**
+ * Nothing in a client-facing document is a hole for a human to fill. When a
+ * detail genuinely is not in the post, we print a plain sentence saying how it
+ * gets settled instead of a bracketed token.
+ */
+const UNCONFIRMED_PHRASE = "to be confirmed on the kickoff call";
+const RATE_FALLBACK = "indicative — confirmed after a short scoping call";
+const BRACKET_TOKEN = /\[([^\]\n]{0,90})\]/g;
+
+/** Curated meanings for the placeholder tokens models reach for most. */
+const BRACKET_MEANINGS: Array<[RegExp, string]> = [
+  [/^(to( be)? (confirmed|decided|determined|filled|added|provided|shared)|tbc|tbd|tba|\?+|\.\.\.|…|x+|uodate|unknown)$/i, UNCONFIRMED_PHRASE],
+  [/^(your |our |the )?(full )?(name|signature|sign-?off)$/i, "__NAME__"],
+  [/^(your |our )?(pricing|price|rate|rate card|budget|hourly rate)$/i, RATE_FALLBACK],
+  [/^(your |the )?(start|end|delivery|launch)[\s-]*(date|time|day)$/i, "__NAME__"],
+  [/^(case stud(y|ies)|portfolio|references?|sample(s)?|link|url|demo(s)?)$/i, "available on request"],
+  [/^(insert|add|fill|fill in|todo|fixme|placeholder|edit|replace|update)\b.*$/i, UNCONFIRMED_PHRASE],
+  [/^(website|url|site)$/i, "__WEBSITE__"],
+  [/^(email|e-mail|contact|reply address)$/i, "__EMAIL__"],
+  [/^(company|studio|agency|our company)$/i, "__COMPANY__"],
+];
+
+/**
+ * Our sign-off block doubles as the identity used to rewrite stray brackets,
+ * so the email step needs no extra plumbing: "Best regards," / name /
+ * "role · company" / site.
+ */
+function identityFromSignature(signature: string[]) {
+  const [name = "", role = "", maybeSite = ""] = signature.slice(1);
+  const [title, company] = role.includes("·")
+    ? role.split("·").map((part) => part.trim())
+    : ["", role.trim()];
+  return {
+    name: name || title,
+    company: company || title,
+    website: /^https?:\/\//i.test(maybeSite) ? maybeSite : "",
+    email: maybeSite.includes("@") ? maybeSite : "",
+    title,
+  };
+}
+
+/** Said out loud to the reviewer whenever we had to rewrite a hole into prose. */
+export function bracketWarnings(report: { count: number; samples: string[] }): string[] {
+  if (!report.count) return [];
+  const samples = report.samples.length ? ` (${report.samples.join(", ")})` : "";
+  return [
+    `the model left ${report.count} bracketed placeholder${report.count === 1 ? "" : "s"}${samples} — ` +
+      "rewritten into plain sentences from our own details; check those lines",
+  ];
+}
+
+/**
+ * Bracketed tokens still present in a raw model response, before rewriting.
+ * Reported as a warning so a prompt edit that loosens the rules is visible in
+ * the dashboard instead of silently shipping to a client.
+ */
+export function findBracketTokens(value: unknown, limit = 4): { count: number; samples: string[] } {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const matches = text.match(BRACKET_TOKEN) ?? [];
+  const seen = new Set<string>();
+  for (const match of matches) {
+    if (!/^(to be|tbc|tbd|tba|your|our|the|insert|add|fill|todo|case|start|end|delivery|pricing|price|rate|budget|name|link|url|website|email|company|portfolio|reference|\?|\.)/i.test(match.slice(1, -1).trim())) {
+      continue;
+    }
+    if (seen.size < limit) seen.add(match);
+  }
+  return { count: matches.length, samples: [...seen] };
+}
+
+/** Identity used while rewriting stray brackets — set once per sanitize pass. */
+let bracketIdentity = {
+  name: "",
+  company: "",
+  website: "",
+  email: "",
+  title: "",
+};
+
+export function setBracketIdentity(identity: Partial<typeof bracketIdentity>) {
+  bracketIdentity = { ...bracketIdentity, ...identity };
+}
+
+/**
+ * Remove `[something]` tokens from model output.
+ *
+ * A proposal that ships with `[TO CONFIRM]` in it tells the client nobody read
+ * the brief. So instead of trusting the prompt, the sanitizer rewrites every
+ * bracket: known placeholders become real prose, unknown ones lose their
+ * brackets and read as the noun phrase the model meant. Brackets that survive
+ * are a bug, so `findBracketTokens` is used to report them.
+ */
+function deBracket(value: string): string {
+  if (!value.includes("[")) return value;
+  const out = value.replace(BRACKET_TOKEN, (token, inner: string) => {
+    const phrase = String(inner).replace(/\s+/g, " ").trim();
+    // Never insert a phrase the sentence already says, or "…[YOUR PRICING]
+    // indicative — confirmed after a short scoping call" would double up.
+    const substitute = (candidate: string) =>
+      candidate && value.toLowerCase().includes(candidate.toLowerCase()) ? "" : candidate;
+    if (!phrase) return UNCONFIRMED_PHRASE;
+    for (const [pattern, replacement] of BRACKET_MEANINGS) {
+      if (!pattern.test(phrase)) continue;
+      if (replacement === "__NAME__") {
+        const name = bracketIdentity.name || bracketIdentity.company || "the team";
+        return substitute(name);
+      }
+      if (replacement === "__COMPANY__") return substitute(bracketIdentity.company || "our studio");
+      if (replacement === "__WEBSITE__") {
+        return bracketIdentity.website ? substitute(bracketIdentity.website) : UNCONFIRMED_PHRASE;
+      }
+      if (replacement === "__EMAIL__") {
+        return bracketIdentity.email ? substitute(bracketIdentity.email) : UNCONFIRMED_PHRASE;
+      }
+      return substitute(replacement);
+    }
+    // An all-caps token ("[START DATE]", "[QTY]") is a form field, not prose.
+    if (!/[a-z]/.test(phrase) && phrase.length > 2) return UNCONFIRMED_PHRASE;
+    // Otherwise keep the words the model meant and drop the brackets.
+    const lowered = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+    const phraseOut = /^(a|an|the|this|that|our|your|their|some|any)\b/i.test(lowered) ? lowered : `the ${lowered}`;
+    return substitute(phraseOut);
+  });
+  return out.replace(/\s{2,}/g, " ").replace(/\s+([,.;:])/g, "$1").trim();
+}
 
 const flat = (value: unknown, max: number): string => {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (typeof value !== "string") return "";
-  return value.replace(/\s+/g, " ").trim().slice(0, max);
+  return deBracket(value.replace(/\s+/g, " ").trim()).slice(0, max);
 };
 
 const soft = (value: unknown, max: number): string => {
   if (typeof value !== "string") return flat(value, max);
-  return value
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, max);
+  return deBracket(
+    value
+      .replace(/\r\n/g, "\n")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  ).slice(0, max);
 };
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -117,6 +241,12 @@ export interface ProposalContext {
  * `ctx` (env + lead), never from the model.
  */
 export function sanitizePpd(raw: unknown, ctx: ProposalContext): ProposalPpd {
+  setBracketIdentity({
+    name: ctx.preparedBy,
+    company: ctx.company,
+    website: ctx.website,
+    email: ctx.senderEmail,
+  });
   const obj = record(raw);
   const ppdRaw = record(
     pick(obj, ["ppd", "proposal", "document", "professional_proposal"]) ?? obj,
@@ -134,7 +264,7 @@ export function sanitizePpd(raw: unknown, ctx: ProposalContext): ProposalPpd {
     website: ctx.website,
     job_title: ctx.jobTitle || flat(ppdRaw.job_title, MAX.heading),
     job_reference: ctx.jobReference || flat(ppdRaw.job_reference, 80),
-    rate: ctx.rate?.trim() || flat(ppdRaw.rate, MAX.rate) || PLACEHOLDER,
+    rate: ctx.rate?.trim() || flat(ppdRaw.rate, MAX.rate) || RATE_FALLBACK,
     // ↓ model-authored with fallbacks
     document_title:
       flat(ppdRaw.document_title, MAX.title) || "PROJECT CAPABILITY & PROPOSED WORKFLOW",
@@ -162,10 +292,47 @@ export interface EmailContext {
   jobTitle: string;
   /** The reviewed document: used for fallback copy only. */
   ppd?: ProposalPpd | null;
+  /**
+   * Our own sign-off, appended after the model stops writing. The name, role,
+   * company and site in a client email are never the model's to invent.
+   */
+  signature?: string[];
+}
+
+/** Closing lines a model likes to author, which we replace with the real ones. */
+const SALUTATION = /^(best regards|kind regards|warm regards|regards|thanks( you)?( for (your|the)[^\n]*)?|thank you|sincerely|cheers|best|talk soon)\b[,!:]?\s*$/i;
+
+/**
+ * Cut any sign-off the model wrote and append ours.
+ *
+ * Only the last few lines are considered, and only short ones, so "Thanks for
+ * the detailed post." in the first paragraph survives. Trailing blank lines are
+ * removed so the block always sits one line below the ask.
+ */
+function withSignature(content: string, signature: string[]): string {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const from = Math.max(0, lines.length - 7);
+  let cut = lines.length;
+  for (let i = lines.length - 1; i >= from; i -= 1) {
+    const line = (lines[i] ?? "").trim();
+    if (line.length <= 45 && SALUTATION.test(line)) {
+      cut = i;
+      break;
+    }
+  }
+  const body = lines
+    .slice(0, cut)
+    .join("\n")
+    .replace(/\s+$/, "")
+    .trim();
+  if (!signature.length) return body;
+  return `${body}\n\n${signature.map((line) => line.trim()).filter(Boolean).join("\n")}`;
 }
 
 /** Model output → the outreach email (plain text, short subject). */
 export function sanitizeEmail(raw: unknown, ctx: EmailContext): { subject: string; content: string } {
+  const signature = ctx.signature?.filter(Boolean) ?? [];
+  setBracketIdentity(identityFromSignature(signature));
   const obj = record(raw);
   const emailRaw = record(pick(obj, ["email", "outreach_email", "email_draft"]) ?? obj);
   const ppd = ctx.ppd ?? null;
@@ -184,9 +351,12 @@ export function sanitizeEmail(raw: unknown, ctx: EmailContext): { subject: strin
         .join("\n\n")}\n\nFull proposal attached as a PDF. Are you open to a quick 15-minute call this week?`
     : `We would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
 
-  const content =
-    stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, MAX.emailContent)) ||
-    fallbackBody;
+  const budget = Math.max(400, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
+  const content = withSignature(
+    stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, budget)) ||
+      fallbackBody,
+    signature,
+  );
 
   const parsed = z
     .object({ subject: z.string().min(1), content: z.string().min(1) })
@@ -461,7 +631,7 @@ function fallbackSections(): PpdSection[] {
         {
           type: "paragraph",
           items: [
-            `${PLACEHOLDER} — the model did not return usable sections; regenerate this proposal before sending.`,
+            `${UNCONFIRMED_PHRASE} — the model did not return usable sections; regenerate this proposal before sending.`,
           ],
         },
       ],
@@ -585,8 +755,15 @@ export function assertPpdShape(
   if (words > DOC_WORD_TARGET.max) {
     problems.push(`document is ~${words} words, above the ${DOC_WORD_TARGET.max}-word cap`);
   }
-  const placeholders = (ppdPlainText(ppd).match(/\[(TO CONFIRM|YOUR [^\]]+)\]/g) ?? []).length;
-  if (placeholders > 6) problems.push(`${placeholders} placeholders left — fill them before sending`);
+  // `deBracket()` runs before this, so anything still bracketed is a hole in the
+  // sanitizer rather than a model mistake — say so instead of telling a human to
+  // fill in a form field.
+  const stray = ppdPlainText(ppd).match(/\[[^\]\n]{0,60}\]/g) ?? [];
+  if (stray.length) {
+    problems.push(
+      `${stray.length} bracketed token(s) survived sanitising (${stray.slice(0, 3).join(", ")}) — report this, do not fill them by hand`,
+    );
+  }
 
   const all = [...problems, ...usageWarnings(usage, maxTokensOverride)];
   if (all.length) logger.warn("proposal_low_quality", { problems: all });

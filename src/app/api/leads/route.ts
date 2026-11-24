@@ -1,15 +1,17 @@
 import type { NextRequest } from "next/server";
 import { withApi } from "@/server/http/handler";
-import { created, paged, withRevalidation } from "@/server/http/responses";
+import { created, ok, paged, withRevalidation } from "@/server/http/responses";
 import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import {
+  deleteLeadsSchema,
   ingestOptionsSchema,
   listLeadsQuerySchema,
 } from "@/lib/validation/outreach";
 import { parseLeadPayloads } from "@/lib/validation/lead";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { ingestLeadPayload, ingestMany } from "@/server/services/lead-ingest.service";
+import { removeLeads } from "@/server/services/lead-delete.service";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
@@ -107,5 +109,37 @@ export const POST = withApi(async (request: NextRequest) => {
       drafts: r.drafts.length,
       generation: r.generation,
     })),
+  });
+});
+
+/**
+ * API #3 — DELETE /api/leads
+ * Permanently remove jobs: the lead rows plus everything that hangs off them
+ * (lead_contacts, proposals + their email copy, email_drafts) and the rendered
+ * PDFs in the private `proposals` storage bucket.
+ *
+ * Body: { "ids": ["<lead uuid>", …] }  — 1 to 100 ids, exact ids only.
+ *
+ * Kept on purpose: `public.contacts` rows you promoted to the CRM, and
+ * `public.email_logs` — the delivery audit trail loses its lead/draft/proposal
+ * pointers but the send record stays provable.
+ *
+ * Response is a report, because "it deleted" is not enough for an irreversible
+ * call: which ids went, which were already gone, which failed, and how many
+ * documents, drafts and PDF files each one took with it.
+ */
+export const DELETE = withApi(async (request: NextRequest) => {
+  await requireApiKey(request);
+  const { ids } = parseOrThrow(deleteLeadsSchema, await readBody(request));
+
+  logger.warn("lead_delete_requested", { count: ids.length });
+  const report = await removeLeads(ids);
+
+  return ok({
+    ...report,
+    kept: {
+      crm_contacts: "public.contacts rows are not touched",
+      email_logs: "sent-message audit rows survive with their lead pointers nulled",
+    },
   });
 });

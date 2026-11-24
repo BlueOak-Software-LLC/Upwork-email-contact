@@ -72,6 +72,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   ├── pdfme/                         compiler.ts (PPD → template+inputs) + template.ts (types)
 │   │   ├── validation/                    lead.ts (payload normaliser), outreach.ts, email.ts, contact.ts
 │   │   ├── api/                           client.ts + hooks.ts + outreach-hooks.ts
+│   │   ├── services/lead-delete.service.ts  permanent removal + PDF storage cleanup
 │   │   └── supabase/                      client / server / admin / middleware
 │   ├── server/
 │   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo
@@ -129,9 +130,10 @@ strings and empty arrays welcome, unknown keys preserved verbatim in
 stored as-is in `leads.job_description` (migration `0004` also folds it into the
 `search` tsvector, and `/api/leads?q=` matches it), clipped to 3,600 characters
 when embedded, and injected into **both** prompts — `ppd_document` (labelled
-"THE POST TEXT", the rule being that anything not traceable to it, the title or
-the research notes must be written as `[TO CONFIRM]`) and `email_draft` (which
-must open by naming one concrete detail from it). It is also accepted at the top
+"THE POST TEXT", the rule being that every claim about the client traces to it, the
+title or the research notes, while the plan itself — timeline, milestones, formats,
+indicative range — is the writer's to decide, with no bracketed placeholders) and
+`email_draft` (which must open by naming one concrete detail from it). It is also accepted at the top
 level (`job_description`), as `job_information.description`, and as an array of
 paragraph strings or `{ "text": … }` blocks. A payload with no description is not
 an error: the prompt then says so explicitly and writes from title + industry +
@@ -224,6 +226,49 @@ documents, not pages).
   Saving an edited PPD flips a ready PDF back to `pending` so the stale file is
   never sent. `PDF_PROVIDER=none` skips PDFs; the PPD JSON and dashboard work.
 
+### Identity, placeholders and the sign-off
+
+Everything that says **who is writing** comes from the environment — never from
+the model, and never from a bracket a human has to fill in:
+
+| Place | What it prints |
+| --- | --- |
+| PDF header | `PROPOSAL_COMPANY / PROFESSIONAL PROPOSAL` |
+| PDF "Prepared by" | `PROPOSAL_PREPARED_BY · PROPOSAL_TITLE` |
+| PDF closing block | the same byline, then `PROPOSAL_WEBSITE` |
+| `ppd.prepared_by` / `company` / `website` | stamped by `sanitizePpd` / `sanitizeEditedPpd` from env |
+| Every email | `Best regards,` / name / `role · company` / site — appended by `sanitizeEmail()` **after** the model stops writing, and any sign-off the model invented is cut (only the last few short lines are considered, so "Thanks for the detailed post." in the body survives) |
+
+The prompt tells the writer to **decide** rather than hedge: timeline, milestone
+split, revision rounds, file formats, tooling and an indicative USD range are
+written as recommendations, and a detail that genuinely cannot come from the post
+turns into a plain sentence ("we would confirm the pallet dimensions at kickoff")
+or a line in Questions. Square brackets, `TBD` and `N/A` are forbidden outright.
+
+Nothing depends on the model obeying. `deBracket()` in
+`src/server/services/proposal-sanitize.ts` runs on every string the model or an
+editor produces:
+
+| Token | Becomes |
+| --- | --- |
+| `[TO CONFIRM]`, `TBC`, `TBD`, `[...]`, `[?]`, `[TODO: …]` | "to be confirmed on the kickoff call" |
+| `[YOUR NAME]`, `[YOUR COMPANY]`, `[WEBSITE]`, `[EMAIL]` | the real identity from env |
+| `[YOUR PRICING]`, `[RATE]`, `[BUDGET]` | "indicative — confirmed after a short scoping call" |
+| `[START DATE]`, any all-caps token | the kickoff wording |
+| `[client logo files]` | "the client logo files" — the meaning stays, the brackets go |
+
+A phrase the sentence already contains is **dropped instead of inserted**, so
+`"[YOUR PRICING] indicative — confirmed after a scoping call"` collapses to one
+copy. If a bracket somehow survives, `assertPpdShape` reports it as a sanitizer
+bug ("report this, do not fill them by hand") rather than telling you to complete
+a form field, and `findBracketTokens()` counts what the model left so the
+rewritten lines get re-read.
+
+Older documents upgrade themselves: saving a PPD re-applies the **current** env
+identity, and `renderProposalPdf()` stamps it again at render time — so a proposal
+generated before `PROPOSAL_*` existed stops printing whatever `EMAIL_FROM` it had
+inherited, without touching a word of the reviewed prose.
+
 ### Groq tokens, length and cost (measured on this pipeline)
 
 Groq writes the *content*; the PDF is rendered locally and costs **zero** extra
@@ -310,6 +355,16 @@ cannot lose a review pass, and ⌘/Ctrl-S saves.
 listed *before* saving (`ppdEditIssues`) and again as `warnings[]` on the PATCH
 response (`describePpdEditDrops`) — which the toast layer shows.
 
+**Removal.** Each `/leads` row has a `✕` (revealed on hover/focus) and a checkbox;
+selecting any number opens `delete-leads-dialog.tsx`, which prints what is about
+to be deleted (rows, documents, drafts, channels, stored PDFs — from the embedded
+counts in `GET /api/leads`) next to what survives (promoted CRM contacts, the
+`email_logs` delivery trail, sender accounts, prompts). More than five ids asks
+for the word `delete`. The list rows disappear from the cache on the response, so
+there is no half-second of a dead row — which required `apiFetch` to send
+`cache: "no-store"`: the read routes answer `Cache-Control: private, max-age=10`
+for scrapers, and the post-mutation refetch happily replayed the pre-delete rows.
+
 **Other screens.** `/leads` rows are clickable with a four-dot pipeline chip and
 an *Ingest payload* dialog (paste the scraper JSON, `auto` override, live char
 count, honest 30–60 s progress note when generation runs inline). `/settings/senders`
@@ -359,7 +414,11 @@ Required env (see `.env.example`):
 | `GROQ_API_KEY` | from <https://console.groq.com/keys>. **Rotate any key that was ever pasted into a chat/ticket/ticket-tracker** — this repo never stores it in code |
 | `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning |
 | `GROQ_MAX_TOKENS` / `GROQ_TOKENS_PER_MINUTE` / `GROQ_REASONING_EFFORT` | completion budget; effort is auto-tuned down on a tight TPM allowance |
-| `PROPOSAL_COMPANY` / `PROPOSAL_WEBSITE` / `PROPOSAL_PREPARED_BY` / `PROPOSAL_RATE` | branding the model cannot override (falls back to `EMAIL_FROM` parsing) |
+| `PROPOSAL_COMPANY` | who signs the document; the model cannot override it |  
+| `PROPOSAL_WEBSITE` | printed in the PDF header, the signature block and the email sign-off |  
+| `PROPOSAL_PREPARED_BY` | the writer's name (falls back to the `EMAIL_FROM` display name) |  
+| `PROPOSAL_TITLE` | the writer's role, printed under the name (`Luan Le · Senior Software Engineer`) |  
+| `PROPOSAL_RATE` | optional; empty means the writer proposes an indicative USD range for the scope |
 | `PDF_PROVIDER` / `PDFME_TEMPLATE_PATH` | `pdfme` \| `none` |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` / `EMAIL_REPLY_TO` + `RESEND_API_KEY` or `SMTP_*` | fallback env-based sending; per-account SMTP wins when `senderAccountId` is given |
 
@@ -404,6 +463,15 @@ curl -s -X POST "http://localhost:3000/api/leads" \
 curl -s -X PATCH "http://localhost:3000/api/leads/<leadId>" \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   -d '{"job_description":"30-second logo sting, After Effects, MP4 + transparent mov."}'
+
+# 2d. remove jobs for good — rows, generated documents, drafts, channels and
+#     the stored PDFs. Exact ids only (1-100 per call); there is no undo.
+curl -s -X DELETE http://localhost:3000/api/leads \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"ids":["<leadId>"]}'
+# → { removed: [{ contacts, proposals, drafts, pdfFiles }], missing, failed, totals }
+# kept on purpose: public.contacts you promoted, email_logs delivery proof,
+# sender accounts, prompt overrides. One id? DELETE /api/leads/<leadId> → 204.
 
 # ── STEP 1 · the document only ────────────────────────────────────────────
 curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate \
@@ -491,7 +559,9 @@ vercel --prod        # or push to GitHub → Import Project
 | `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
+| `Groq returned 429 … tokens per day (TPD): Limit 200000, Used 199672, Requested …` | The free tier's **daily** budget is spent (≈200k tokens ≈ 35–40 documents a day, one PPD running 4–5k). It resets at midnight UTC, so the client **stops retrying** on a TPD answer and says so — waiting would burn the same tokens. Upgrade the Groq tier, lower `GROQ_MAX_TOKENS`, or leave `AUTO_ENRICH_LEADS` off and generate in batches. A per-minute 429 is different: that one is retried up to three times, honouring `Retry-After`. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |
+| A deleted row reappears in the list a second later | `GET /api/leads` sends `Cache-Control: private, max-age=10`, so a refetch after a mutation replayed the old page. `apiFetch`/`apiFetchBlob` now pass `cache: "no-store"` — keep it if you add another client-side cache. |
 | Crash at import: *“'@pdfme/common' does not provide an export named 'createDynamicLayoutSplitRange'”* | pdfme version skew. Keep `@pdfme/common`, `@pdfme/generator`, `@pdfme/schemas` on the **same exact version** (pinned `6.2.8`, no caret). |
 | 500 responses hide the real reason | Outside production, `withApi` now echoes the message + top of the stack in `error.details` so you can debug without attaching a logger. |
 
@@ -499,6 +569,14 @@ In dev, `/api/*` is open when `API_MASTER_KEY` is empty (logged as `api_open_dev
 the same config in production answers `403` until you set a key.
 
 ## 11. Security notes
+
+* **Removal is id-scoped and reported.** `DELETE /api/leads` takes 1–100 exact
+  uuids — never a filter, never a wildcard — and answers with what left and what
+  was already gone. `lead_contacts`, `proposals`, `email_drafts` go by cascade;
+  the storage objects under `proposals/{leadId}/` are deleted first, because an
+  orphaned PDF is unrecoverable from the UI. Promoted CRM contacts and
+  `email_logs` rows survive on purpose: the delivery record is evidence, not the
+  lead's property.
 
 * The Groq key you pasted into chat should be **rotated** — treat it as public.
 * SMTP passwords are `v1:iv:tag:ciphertext` AES-256-GCM; without

@@ -1,20 +1,54 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens.
+ *
+ * Three deliberate decisions behind the palette:
+ *
+ * 1. Elevation is legible. `canvas` (page) → `surface` (card) → `surface-2`
+ *    (inset rows, chips) → `surface-3` (hover) step by ~4 lightness points, so
+ *    you can tell a card from the page without reading a border.
+ * 2. Borders have weights. `line-soft` is a divider inside a card, `line` is a
+ *    card edge, `line-strong` is an input or a thing you can act on. One border
+ *    colour for everything is why the old UI read flat.
+ * 3. Hue carries meaning. Mint `brand` = ours/success, sky `info` = neutral
+ *    facts, amber `warn` = needs attention, rose `danger` = irreversible. Text
+ *    is never pure white: `ink` at 97% keeps large headings from halating on
+ *    dark backgrounds.
+ */
 @theme {
-  --color-canvas: oklch(16% 0.014 265);
-  --color-surface: oklch(21% 0.016 265);
-  --color-surface-2: oklch(25% 0.018 265);
-  --color-line: oklch(31% 0.02 265);
-  --color-ink: oklch(96% 0.005 265);
-  --color-muted: oklch(70% 0.02 265);
-  --color-brand: oklch(70% 0.16 165);
-  --color-brand-ink: oklch(23% 0.05 165);
-  --color-warn: oklch(78% 0.14 85);
-  --color-danger: oklch(65% 0.2 20);
+  /* surfaces */
+  --color-canvas: oklch(16.5% 0.019 265);
+  --color-canvas-2: oklch(19% 0.02 265);
+  --color-surface: oklch(22.5% 0.021 265);
+  --color-surface-2: oklch(25% 0.022 265);
+  --color-surface-3: oklch(29% 0.024 265);
+
+  /* borders, by weight */
+  --color-line-soft: oklch(26.5% 0.02 265);
+  --color-line: oklch(33% 0.026 265);
+  --color-line-strong: oklch(42% 0.03 265);
+
+  /* text */
+  --color-ink: oklch(97% 0.004 265);
+  --color-muted: oklch(75% 0.018 265);
+  --color-faint: oklch(62% 0.022 265);
+
+  /* meaning */
+  --color-brand: oklch(76% 0.155 168);
+  --color-brand-ink: oklch(21% 0.05 168);
+  --color-brand-soft: oklch(34% 0.07 168);
+  --color-info: oklch(77% 0.12 236);
+  --color-warn: oklch(82% 0.15 82);
+  --color-danger: oklch(68% 0.19 22);
 
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --radius-card: 14px;
+
+  --shadow-card:
+    0 1px 0 0 oklch(100% 0 0 / 0.04) inset, 0 14px 34px -22px oklch(0% 0 0 / 0.75);
+  --shadow-float: 0 24px 60px -28px oklch(0% 0 0 / 0.85);
 }
 
 @layer base {
@@ -27,27 +61,163 @@
     height: 100%;
   }
 
+  html {
+    /* Native selects, scrollbars, date pickers and form checkboxes render in
+       dark chrome instead of the OS default white pop-up. */
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
   body {
-    background: var(--color-canvas);
+    background-color: var(--color-canvas);
+    /* Two low-opacity washes so the page has a light source; without them every
+       card floats on a uniform slab and the layout reads as one flat plane. */
+    background-image:
+      radial-gradient(
+        1100px 540px at 6% -14%,
+        color-mix(in oklab, var(--color-brand) 11%, transparent),
+        transparent 62%
+      ),
+      radial-gradient(
+        900px 480px at 96% -10%,
+        color-mix(in oklab, var(--color-info) 10%, transparent),
+        transparent 64%
+      ),
+      linear-gradient(180deg, oklch(20% 0.022 265), var(--color-canvas) 520px);
+    background-attachment: fixed;
     color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   ::selection {
-    background: color-mix(in oklch, var(--color-brand) 35%, transparent);
+    background: color-mix(in oklab, var(--color-brand) 38%, transparent);
+    color: var(--color-ink);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+    letter-spacing: -0.011em;
+  }
+
+  /* One motion/border language for every interactive element, so buttons, rows,
+     inputs and links respond identically instead of each declaring its own. */
+  a,
+  button,
+  input,
+  textarea,
+  select,
+  tr,
+  .card {
+    transition-property: background-color, border-color, color, box-shadow, opacity,
+      transform, outline-color;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  input,
+  textarea,
+  select {
+    caret-color: var(--color-brand);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-faint);
+    opacity: 1;
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-brand);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-brand) 75%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* Buttons and links must not keep a ring after a mouse click. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* Tables: header reads as a caption band, rows as one surface. */
+  thead th {
+    background: color-mix(in oklab, var(--color-surface-2) 70%, transparent);
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+  }
+
+  thead th:first-child {
+    border-top-left-radius: var(--radius-card);
+  }
+
+  thead th:last-child {
+    border-top-right-radius: var(--radius-card);
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+
+  tbody tr:hover {
+    background: color-mix(in oklab, var(--color-surface-2) 62%, transparent);
+  }
+
+  code,
+  pre,
+  kbd {
+    font-feature-settings: "calt" 0;
+  }
+
+  hr {
+    border-color: var(--color-line-soft);
   }
 }
 
 @layer components {
   .card {
-    background: var(--color-surface);
+    background-image: linear-gradient(
+      180deg,
+      oklch(24% 0.022 265),
+      oklch(21% 0.02 265)
+    );
+    background-color: var(--color-surface);
     border: 1px solid var(--color-line);
     border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
   }
 
-  .focus-ring {
-    outline: 2px solid color-mix(in oklch, var(--color-brand) 70%, transparent);
+  /* Clickable cards/rows lift a hair; used where an element navigates. */
+  .card-interactive {
+    cursor: pointer;
+  }
+
+  .card-interactive:hover {
+    border-color: color-mix(in oklab, var(--color-brand) 45%, var(--color-line));
+    box-shadow: var(--shadow-card),
+      0 0 0 1px color-mix(in oklab, var(--color-brand) 18%, transparent);
+  }
+
+  /*
+   * A ring class that paints all the time turns every link in the app green.
+   * It is a *focus* affordance, so it draws only when the element has focus from
+   * the keyboard (or is focused at all, for the inputs that use it as their
+   * outline replacement).
+   */
+  .focus-ring:focus-visible,
+  .focus-ring:focus-within {
+    outline: 2px solid color-mix(in oklab, var(--color-brand) 72%, transparent);
+    outline-offset: 2px;
+  }
+
+  .focus-ring:focus:not(:focus-visible) {
+    outline: 2px solid color-mix(in oklab, var(--color-brand) 45%, transparent);
     outline-offset: 2px;
   }
 
@@ -61,6 +231,10 @@
 
   .animate-pop-in {
     animation: pop-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .animate-row-out {
+    animation: row-out 220ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
   }
 }
 
@@ -86,6 +260,13 @@
   }
 }
 
+@keyframes row-out {
+  to {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -108,14 +289,22 @@
   height: 10px;
 }
 
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--color-muted) 30%, transparent);
+  background: color-mix(in oklab, var(--color-muted) 28%, transparent);
   border-radius: 9999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in oklch, var(--color-muted) 55%, transparent);
+  background: color-mix(in oklab, var(--color-muted) 55%, transparent);
   background-clip: content-box;
 }

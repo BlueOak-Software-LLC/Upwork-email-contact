@@ -127,11 +127,12 @@ export function ProposalCard({
     await savePpd.mutateAsync({
       proposalId: proposal.id,
       patch: dirty ? { ppd: effective } : { reviewed: true },
+      previousPpd: serverPpd,
     });
     clearLocal(leadId, proposal.id);
     setRestoredFrom(null);
     setTab("read");
-  }, [proposal, effective, parsedJson, dirty, savePpd, leadId, toast]);
+  }, [proposal, effective, parsedJson, dirty, savePpd, leadId, toast, serverPpd]);
 
   // ⌘/Ctrl+S saves the review without leaving the keyboard.
   useEffect(() => {
@@ -663,8 +664,10 @@ function TabButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "rounded px-2 py-1 transition focus-ring",
-        active ? "bg-surface-2 text-ink" : "text-muted hover:text-ink",
+        "rounded-md border px-2.5 py-1 text-sm transition focus-ring",
+        active
+          ? "border-line bg-surface-2 font-medium text-ink shadow-[inset_0_-2px_0_var(--color-brand)]"
+          : "border-transparent text-muted hover:bg-surface-2/60 hover:text-ink",
       )}
     >
       {label}

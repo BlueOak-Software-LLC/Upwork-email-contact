@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { useLead, useUpdateLead, useDeleteLead, type LeadDetailDto } from "@/lib/api/outreach-hooks";
+import { useLead, useUpdateLead, type LeadDetailDto } from "@/lib/api/outreach-hooks";
 import { LeadWorkspace } from "./lead-workspace";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ConfirmAction } from "@/components/ui/confirm-action";
+import { DeleteLeadsDialog } from "./delete-leads-dialog";
+import type { LeadSummary } from "@/lib/api/outreach-hooks";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TimeAgo } from "@/components/ui/time-ago";
-import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
 import { formatDate } from "@/lib/utils";
 import { LEAD_STATUSES } from "@/types/lead";
@@ -92,7 +92,16 @@ export function LeadConsole({ leadId, initial }: { leadId: string; initial: Lead
                 Open Upwork job ↗
               </a>
             ) : null}
-            <DeleteLeadButton leadId={lead.id} title={lead.job_title ?? lead.dedupe_key} />
+            <DeleteLeadButton
+              leadId={lead.id}
+              title={lead.job_title ?? lead.dedupe_key}
+              jobId={lead.job_id}
+              counts={{
+                contacts: detail.contacts.length,
+                proposals: detail.proposals.length,
+                drafts: detail.drafts.length,
+              }}
+            />
           </div>
         </div>
 
@@ -285,28 +294,51 @@ function StatusPicker({ leadId, status }: { leadId: string; status: string }) {
   );
 }
 
-function DeleteLeadButton({ leadId, title }: { leadId: string; title: string }) {
-  const remove = useDeleteLead();
+/**
+ * Removal lives in the shared dialog so the list and this page state the same
+ * blast radius — and so the button is honest about PDFs, which a bare row delete
+ * would leave behind in storage.
+ */
+function DeleteLeadButton({
+  leadId,
+  title,
+  jobId,
+  counts,
+}: {
+  leadId: string;
+  title: string;
+  jobId: string | null;
+  counts: { contacts: number; proposals: number; drafts: number };
+}) {
+  const [open, setOpen] = useState(false);
   const router = useRouter();
-  const toast = useToast();
 
   return (
-    <ConfirmAction
-      label="Delete"
-      confirmLabel="Delete this lead"
-      title={`Delete “${truncateTitle(title)}”?`}
-      description="Removes the lead, its contacts, proposals and drafts. The raw payload goes with it, so this is the end of that research."
-      busy={remove.isPending}
-      onConfirm={() =>
-        remove.mutate(leadId, {
-          onSuccess: () => router.push("/leads"),
-          onError: () => toast.error("Lead is still here", "Delete failed."),
-        })
-      }
-    />
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setOpen(true)}
+        className="text-muted hover:bg-danger/10 hover:text-danger"
+        title="Remove this job, its documents, drafts and stored PDFs"
+      >
+        Remove
+      </Button>
+      <DeleteLeadsDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        leads={[
+          {
+            id: leadId,
+            job_title: title,
+            job_id: jobId,
+            contact_count: counts.contacts,
+            proposal_count: counts.proposals,
+            draft_count: counts.drafts,
+          } as unknown as LeadSummary,
+        ]}
+        onRemoved={() => router.push("/leads")}
+      />
+    </>
   );
-}
-
-function truncateTitle(value: string) {
-  return value.length > 48 ? `${value.slice(0, 47)}…` : value;
 }

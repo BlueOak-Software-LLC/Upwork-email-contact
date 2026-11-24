@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { LiveRefresh } from "@/components/layout/live-refresh";
+import { brandConfig } from "@/lib/env-extras";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -9,6 +10,22 @@ import { createClient } from "@/lib/supabase/server";
  * Server Component: reads the session directly, then renders the client islands.
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
+  const brand = brandConfig();
+  // Whose name is stamped on the documents, shown in the shell so the sidebar
+  // tells you which identity a proposal will carry before you generate one.
+  const identity = {
+    company: brand.company,
+    byline: [brand.preparedBy, brand.title].filter(Boolean).join(" · "),
+    initials:
+      brand.company
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((word) => word[0] ?? "")
+        .join("")
+        .toUpperCase()
+        .slice(0, 2) || "U",
+  };
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -16,7 +33,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
   return (
     <div className="flex min-h-dvh">
-      <Sidebar />
+      <Sidebar brand={identity} />
       <div className="flex min-w-0 flex-1 flex-col">
         <LiveRefresh />
         <a
@@ -26,6 +43,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           Skip to content
         </a>
         <Topbar
+          brand={identity}
           title="Upwork Email Contact"
           subtitle="Contacts, funnel and delivery log"
           user={user ? { email: user.email ?? undefined } : null}

@@ -77,6 +77,8 @@ const ServerEnvSchema = z.object({
   PROPOSAL_COMPANY: z.string().max(120).default(""),
   PROPOSAL_WEBSITE: z.string().max(200).default(""),
   PROPOSAL_PREPARED_BY: z.string().max(120).default(""),
+  /** Writer's role, printed under the name in the PDF and the email sign-off. */
+  PROPOSAL_TITLE: z.string().max(120).default(""),
   /** e.g. "USD 45–65/hour — indicative, confirmed after a scoping call". */
   PROPOSAL_RATE: z.string().max(160).default(""),
   AUTO_ENRICH_LEADS: booleanish(true),

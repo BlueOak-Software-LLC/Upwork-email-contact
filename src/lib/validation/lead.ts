@@ -235,13 +235,37 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
   const primary = pickPrimaryEmail(deduped);
   if (primary) primary.isPrimary = true;
 
-  const jobId = str(job.job_id);
-  const jobUrl = str(job.job_url);
-  const jobTitle = str(job.job_title);
-  const clientName = str(client.client_name);
-  const jobDescription = str(raw.job_description) ?? str(job.job_description);
-  const companyMentioned = str(job.company_mentioned);
-  const industry = str(job.industry);
+  // Two payload shapes exist in the wild: the documented one with everything
+  // inside `job_information` / `upwork_client`, and flat ones that carry the same
+  // keys at the top level. Nested wins (that is what the scraper writes), the top
+  // level is the fallback — reading only one side silently dropped a title, and
+  // the title feeds both the prompt and the dedupe key.
+  const jobId = str(job.job_id) ?? str(raw.job_id);
+  const jobUrl = str(job.job_url) ?? str(raw.job_url) ?? str(job.url) ?? str(raw.url);
+  const jobTitle =
+    str(job.job_title) ?? str(raw.job_title) ?? str(job.title) ?? str(raw.title);
+  const clientName =
+    str(client.client_name) ??
+    str(client.name) ??
+    str(job.client_name) ??
+    str(raw.client_name) ??
+    str(raw.upwork_client_name);
+  const jobDescription =
+    textBlock(job.job_description) ??
+    textBlock(job.description) ??
+    textBlock(raw.job_description) ??
+    textBlock(raw.description);
+  const companyMentioned =
+    str(job.company_mentioned) ??
+    str(raw.company_mentioned) ??
+    str(job.company) ??
+    str(client.company_name);
+  const industry = str(job.industry) ?? str(raw.industry) ?? str(job.category);
+  const jobLocation =
+    str(job.job_location) ??
+    str(raw.job_location) ??
+    str(client.location) ??
+    str(client.client_location);
 
   return {
     dedupeKey: computeDedupeKey({
@@ -256,7 +280,7 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
     jobId,
     jobTitle,
     jobUrl,
-    jobLocation: str(job.job_location),
+    jobLocation,
     industry,
     companyMentioned,
     clientName,

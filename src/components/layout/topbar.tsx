@@ -17,10 +17,12 @@ export function Topbar({
   title,
   subtitle,
   user,
+  brand,
 }: {
   title: string;
   subtitle?: string;
   user?: { email?: string } | null;
+  brand?: { company: string; byline: string; initials: string };
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -81,9 +83,19 @@ export function Topbar({
             onClick={() => setOpen(false)}
             aria-hidden
           />
-          <nav className="animate-pop-in absolute inset-y-0 left-0 w-64 border-r border-line bg-surface p-4">
+          <nav className="animate-pop-in absolute inset-y-0 left-0 w-64 border-r border-line bg-surface p-4 shadow-[var(--shadow-float)]">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold">Email Contact</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand text-[10px] font-bold text-brand-ink">
+                  {brand?.initials ?? "U"}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">Email Contact</span>
+                  {brand?.company ? (
+                    <span className="block truncate text-[11px] text-muted">{brand.company}</span>
+                  ) : null}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -101,10 +113,10 @@ export function Topbar({
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition focus-ring",
+                      "flex items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm transition focus-ring",
                       active
-                        ? "bg-brand/12 font-medium text-brand"
-                        : "text-muted hover:bg-surface-2 hover:text-ink",
+                        ? "border-brand/25 bg-brand/12 font-medium text-brand shadow-[inset_2px_0_0_var(--color-brand)]"
+                        : "text-muted hover:border-line-soft hover:bg-surface-2 hover:text-ink",
                     )}
                     aria-current={active ? "page" : undefined}
                   >
@@ -116,6 +128,11 @@ export function Topbar({
                 );
               })}
             </div>
+            {brand?.byline ? (
+              <div className="absolute inset-x-0 bottom-0 border-t border-line-soft px-4 py-3 text-[11px] text-faint">
+                {brand.byline}
+              </div>
+            ) : null}
           </nav>
         </div>
       ) : null}
