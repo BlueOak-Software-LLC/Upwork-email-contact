@@ -206,6 +206,7 @@ export async function generatePpdDocument({
     ...assertPpdShape(ppd, completion.usage, maxTokens),
     ...bracketWarnings(brackets),
     ...unknownVarWarnings(rendered.unknown),
+    ...providerFallbackWarnings(completion),
   ];
 
   const proposal = await proposalsRepo.create({
@@ -335,6 +336,7 @@ export async function generateEmailDraft({
     signature: brand.signature,
   });
   const warnings = [
+    ...providerFallbackWarnings(completion),
     ...assertEmailShape(email, completion.usage, maxTokens),
     ...bracketWarnings(findBracketTokens(completion.data)),
     ...unknownVarWarnings(rendered.unknown),
@@ -507,6 +509,28 @@ function unknownVarWarnings(unknown: string[]): string[] {
 }
 
 /** What actually went on the wire — the client may clamp the budget or effort. */
+/**
+ * Say out loud when the preferred provider did not answer.
+ *
+ * The document is still good — a different model wrote it — but the reviewer
+ * should know the cheaper-or-configured route was unavailable, because the next
+ * ten leads will cost money in a different account.
+ */
+function providerFallbackWarnings(completion: AiResultLike): string[] {
+  if (!completion.attempts?.length) return [];
+  const tried = completion.attempts
+    .map((a) => `${a.provider} (${a.model}) failed after ${a.ms}ms: ${a.error}`)
+    .join(" · ");
+  return [
+    `Answered by ${completion.provider} after a fallback: ${tried}. Check PUTER_AUTH_TOKEN / the Puter allowance if this repeats.`,
+  ];
+}
+
+interface AiResultLike {
+  provider?: "puter" | "groq";
+  attempts?: Array<{ provider: string; model: string; ms: number; error: string }>;
+}
+
 function promptInfo(
   prompt: ResolvedPrompt,
   completion: {

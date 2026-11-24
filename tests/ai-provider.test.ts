@@ -79,13 +79,23 @@ describe("provider resolution", () => {
     expect(ai.aiStatus().model).toBe("openai/gpt-oss-120b");
   });
 
-  it("refuses to pretend when an explicit provider has no credential", async () => {
+  it("lets the fallback answer when the preferred provider has no credential", async () => {
     const { ai } = await load({ AI_PROVIDER: "puter", GROQ_API_KEY: "gq-key-long-enough" });
     const status = ai.aiStatus();
-    // Silently using Groq here would spend a quota the operator did not choose.
-    expect(status.provider).toBe("none");
+    // A dead or missing Puter token must not lose the lead — but the panel has
+    // to say that Groq is being used, because it is a different account's money.
+    expect(status.provider).toBe("groq");
+    expect(status.chain.map((leg) => leg.provider)).toEqual(["groq"]);
     expect(status.reason).toMatch(/PUTER_AUTH_TOKEN is not set/);
+  });
 
+  it("stays strict when AI_FALLBACK_PROVIDER=none", async () => {
+    const { ai } = await load({
+      AI_PROVIDER: "puter",
+      AI_FALLBACK_PROVIDER: "none",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    expect(ai.aiStatus().provider).toBe("none");
     await expect(
       ai.aiJson({ messages: [{ role: "user", content: "hi" }] }),
     ).rejects.toThrow(/No AI provider configured/);
@@ -293,9 +303,13 @@ describe("failure reporting", () => {
           init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
         }),
     );
-    await expect(ai.aiJson({ messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(
-      /timed out after 20000ms/,
-    );
+    // The client's own abort timer is what turns a hung call into a sentence,
+    // so the test advances that clock instead of waiting twenty seconds.
+    vi.useFakeTimers();
+    const pending = ai.aiJson({ messages: [{ role: "user", content: "hi" }] });
+    await vi.advanceTimersByTimeAsync(20_000);
+    vi.useRealTimers();
+    await expect(pending).rejects.toThrow(/timed out after 20000ms/);
   });
 });
 
@@ -406,5 +420,215 @@ describe("Groq request body", () => {
     await ai.aiJson({ messages: [{ role: "user", content: "hi" }], reasoningEffort: "low" });
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.reasoning_effort).toBe("low");
+  });
+});
+
+describe("provider fallback chain", () => {
+  /**
+   * The point of the chain: Puter is preferred because it costs us nothing and
+   * has no per-minute wall, but every way it can fail — spent allowance, revoked
+   * token, refused prompt, dead gateway — must end with the document written by
+   * Groq and the reviewer told that it happened.
+   */
+  const groqAnswer = () =>
+    jsonResponse({
+      choices: [{ message: { content: '{"ok":true,"by":"groq"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 20, completion_tokens: 10 },
+      model: "openai/gpt-oss-120b",
+    });
+
+  it("answers with Groq when Puter is out of credit", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+      )
+      .mockImplementationOnce(() => Promise.resolve(groqAnswer()));
+
+    const result = await ai.aiJson<{ by: string }>({
+      messages: [{ role: "user", content: "write it" }],
+    });
+
+    expect(result.provider).toBe("groq");
+    expect(result.data.by).toBe("groq");
+    expect(result.fellBackFrom).toBe("puter");
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts?.[0]?.error).toMatch(/allowance/);
+    // Puter first, then Groq — and only two calls, not a retry storm.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers with Groq when the Puter token was revoked", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "token_auth_failed" }), { status: 401 }),
+      )
+      .mockImplementationOnce(() => Promise.resolve(groqAnswer()));
+
+    const result = await ai.aiJson({ messages: [{ role: "user", content: "write it" }] });
+    expect(result.provider).toBe("groq");
+    expect(result.attempts?.[0]?.error).toMatch(/puter login/);
+  });
+
+  it("answers with Groq when the whole Puter gateway is down", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockImplementationOnce(() => Promise.resolve(groqAnswer()));
+
+    const result = await ai.aiJson({ messages: [{ role: "user", content: "write it" }] });
+    expect(result.provider).toBe("groq");
+    expect(result.attempts?.[0]?.error).toMatch(/Puter request failed/);
+  });
+
+  it("names every provider when both fail, because the fixes differ", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "daily limit reached" } }), { status: 429 }),
+      );
+
+    const message = await ai
+      .aiJson({ messages: [{ role: "user", content: "write it" }] })
+      .catch((error: Error) => error.message);
+
+    expect(message).toMatch(/Neither provider could write this document/);
+    expect(message).toMatch(/puter:.*allowance/);
+    expect(message).toMatch(/groq:/);
+  });
+
+  it("skips the fallback when the time budget is already gone", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+      // The whole call has 20 s and a leg needs at least 60 s to be worth
+      // starting, so after Puter fails there is no room for Groq.
+      AI_MAX_TOTAL_MS: "20000",
+      AI_MIN_ATTEMPT_MS: "60000",
+    });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+    );
+
+    const message = await ai
+      .aiJson({ messages: [{ role: "user", content: "write it" }] })
+      .catch((error: Error) => error.message);
+
+    // Groq was never called: half a generation is worse than none, because the
+    // function would have been killed mid-JSON.
+    expect(message).toMatch(/Neither provider/);
+    expect(message).toMatch(/budget was already spent/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back to a provider that is not configured", async () => {
+    const { ai } = await load({ PUTER_AUTH_TOKEN: "secret-puter-token" });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+    );
+    const message = await ai
+      .aiJson({ messages: [{ role: "user", content: "write it" }] })
+      .catch((error: Error) => error.message);
+    expect(message).toMatch(/puter:/);
+    expect(message).not.toMatch(/groq:/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the chain in the probe so a failure is explainable", async () => {
+    const { probe } = await import("@/server/services/ai/probe").then((m) => ({ probe: m.probeAi }));
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    void ai;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+      )
+      .mockImplementationOnce(() => Promise.resolve(groqAnswer()));
+
+    const result = await probe({ prompt: "hi" });
+    expect(result.ok).toBe(true);
+    expect(result.chain).toEqual(["puter", "groq"]);
+    expect(result.attempts[0]?.provider).toBe("puter");
+  });
+});
+
+describe("model overrides across the chain", () => {
+  /**
+   * A model id names a model *inside one provider*. `anthropic/claude-sonnet-5-5`
+   * is not a Groq model, and Groq answers it with a 404 — so carrying a
+   * Puter-shaped override into the Groq leg turned every fallback into a second
+   * failure. Found by probing a live deployment with a revoked Puter token.
+   */
+  it("applies an explicit model only to the leg it was written for", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "token_auth_failed" }), { status: 401 }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve(
+          jsonResponse({
+            choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 5, completion_tokens: 5 },
+          }),
+        ),
+      );
+
+    await ai.aiJson({
+      messages: [{ role: "user", content: "write it" }],
+      model: "anthropic/claude-opus-5-5",
+    });
+
+    const bodies = fetchMock.mock.calls.map(
+      (call) => JSON.parse(String((call[1] as RequestInit).body)) as Record<string, unknown>,
+    );
+    // First leg: the override rides, in Puter's args envelope.
+    expect((bodies[0].args as Record<string, unknown>).model).toBe("anthropic/claude-opus-5-5");
+    // Second leg: Groq's own configured model, never the Puter id.
+    expect(bodies[1].model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("keeps the chain's own models when no override is given", async () => {
+    const { ai } = await load({
+      PUTER_AUTH_TOKEN: "secret-puter-token",
+      GROQ_API_KEY: "gq-key-long-enough",
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "insufficient_funds" }), { status: 402 }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve(
+          jsonResponse({
+            choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 5, completion_tokens: 5 },
+          }),
+        ),
+      );
+
+    const result = await ai.aiJson({ messages: [{ role: "user", content: "write it" }] });
+    expect(result.model).toBe("openai/gpt-oss-120b");
+    expect(result.fellBackFrom).toBe("puter");
   });
 });

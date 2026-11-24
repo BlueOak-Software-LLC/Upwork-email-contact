@@ -24,6 +24,8 @@ interface ProbeResult {
   costBasis: string;
   reply: string;
   error: string | null;
+  chain?: string[];
+  attempts?: Array<{ provider: string; model: string; ms: number; error: string }>;
   usage: { prompt_tokens?: number; completion_tokens?: number } | null;
 }
 
@@ -33,6 +35,7 @@ export function AiPanel({ status }: { status: AiStatus }) {
   const [failure, setFailure] = useState<string | null>(null);
 
   const live = status.provider !== "none";
+  const last = status.chain.length > 1 ? status.chain[status.chain.length - 1] : null;
 
   async function probe() {
     setProbing(true);
@@ -56,12 +59,35 @@ export function AiPanel({ status }: { status: AiStatus }) {
           <Badge tone={live ? (status.provider === "puter" ? "info" : "brand") : "danger"}>
             {status.provider === "none" ? "not configured" : status.provider}
           </Badge>
+          {last ? <Badge tone="neutral">falls back to {last.provider}</Badge> : null}
           {status.requested === "auto" ? (
             <span className="text-xs text-muted">
               AI_PROVIDER=auto, resolved by which credential exists
             </span>
           ) : null}
         </div>
+
+        <ol className="mt-3 space-y-1 text-xs text-muted">
+          {status.chain.length ? (
+            status.chain.map((leg, index) => (
+              <li key={leg.provider} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-[11px] text-faint">{index + 1}</span>
+                <code className="text-ink">{leg.provider}</code>
+                <code>{leg.model}</code>
+                {index === 0 ? (
+                  <span className="text-muted/70">answers first</span>
+                ) : (
+                  <span className="text-muted/70">
+                    tried only if the first fails (AI_FALLBACK_PROVIDER=
+                    {status.fallbackProvider})
+                  </span>
+                )}
+              </li>
+            ))
+          ) : (
+            <li className="text-danger">Nothing is configured to answer.</li>
+          )}
+        </ol>
 
         {status.reason ? (
           <p className="mt-3 rounded-lg border border-danger/35 bg-danger/8 p-3 text-[11px] text-danger">
@@ -82,7 +108,7 @@ export function AiPanel({ status }: { status: AiStatus }) {
           <Row
             label="Fallback model"
             value={status.provider === "puter" ? status.fallbackModel : "— (Groq has none)"}
-            hint="Tried once when the first model refuses or is unavailable"
+            hint="Within one provider: tried once when the first model refuses. A provider that fails moves the whole call down the chain above."
           />
           <Row
             label="Completion budget"
@@ -120,6 +146,21 @@ export function AiPanel({ status }: { status: AiStatus }) {
           </Button>
           {!live ? <span className="text-xs text-muted">Nothing to call yet.</span> : null}
         </div>
+
+        {result?.attempts?.length ? (
+          <ul className="mt-3 space-y-1 rounded-lg border border-warn/35 bg-warn/8 p-3 text-[11px] text-warn">
+            {result.attempts.map((attempt) => (
+              <li key={`${attempt.provider}-${attempt.model}`}>
+                <code>{attempt.provider}</code> ({attempt.model}) did not answer
+                {attempt.ms ? ` after ${attempt.ms}ms` : ""}: {attempt.error}
+              </li>
+            ))}
+            <li className="text-muted">
+              Fell through to the next provider in the chain — that is why the
+              cost below is charged somewhere you may not have expected.
+            </li>
+          </ul>
+        ) : null}
 
         {result ? (
           <p className="mt-3 text-xs text-muted">

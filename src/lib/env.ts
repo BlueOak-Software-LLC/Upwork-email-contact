@@ -43,6 +43,20 @@ const ServerEnvSchema = z.object({
   // Groq-style tokens-per-minute wall, which is what blocked generation here.
   AI_PROVIDER: z.enum(["auto", "puter", "groq", "none"]).default("auto"),
   /**
+   * What answers when the preferred provider fails — a spent allowance, a
+   * revoked token, a 429, a gateway outage, a refusal. `auto` means the other
+   * one; `none` makes a failure stay a failure.
+   */
+  AI_FALLBACK_PROVIDER: z.enum(["auto", "puter", "groq", "none"]).default("auto"),
+  /**
+   * Wall clock for the whole generation, including a fallback attempt. Two
+   * frontier calls in a row must still fit inside the route's `maxDuration`,
+   * so the chain gets a shared deadline rather than each leg its own.
+   */
+  AI_MAX_TOTAL_MS: z.coerce.number().int().min(20_000).max(300_000).default(110_000),
+  /** A leg with less time left than this is skipped rather than half-tried. */
+  AI_MIN_ATTEMPT_MS: z.coerce.number().int().min(5_000).max(60_000).default(20_000),
+  /**
    * A Puter auth token (`puter login` prints it; the CLI also reads
    * PUTER_AUTH_TOKEN). It belongs to a Puter account, and that account is
    * billed for the usage — the User-Pays model, so this app holds no AI key of

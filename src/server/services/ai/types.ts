@@ -17,6 +17,14 @@ export interface AiUsage {
   cost_usd?: number;
 }
 
+/** One provider that was tried, whether or not it answered. */
+export interface AiAttempt {
+  provider: AiProviderName;
+  model: string;
+  ms: number;
+  error: string;
+}
+
 export interface AiResult<T> {
   data: T;
   raw: string;
@@ -29,6 +37,14 @@ export interface AiResult<T> {
   finishReason?: string | null;
   /** Groq reports the effort it used after budget-driven tuning. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Providers tried before this one answered, oldest first. Empty when the
+   * preferred provider did the work; non-empty means the cheaper-or-configured
+   * route was unavailable and something else paid for it.
+   */
+  attempts?: AiAttempt[];
+  /** Which provider failed first, when there was a fallback. */
+  fellBackFrom?: AiProviderName;
 }
 
 export interface AiJsonInput {
