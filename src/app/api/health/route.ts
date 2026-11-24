@@ -28,7 +28,7 @@ export const GET = withApi(async () => {
     emailProvider: resolveEmailProvider().name,
     // Which model writes proposals, and whether it can be reached: the two
     // things that explain a failed "Generate PPD" click.
-    ai: aiStatus(),
+    ai: await aiStatus(),
     checks: {
       supabase: error ? { ok: false, error: error.message } : { ok: true },
       // Distinguishes "database is empty" from "we are not allowed to see it".

@@ -14,6 +14,16 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   status: z.enum(["queued", "sent", "failed", "bounced"]).optional(),
   to: z.string().trim().email().optional(),
+  /** Recipient domain, e.g. `acme.com` — the same rollup the tracking page shows. */
+  domain: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(253)
+    .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/, {
+      message: "domain must look like example.com",
+    })
+    .optional(),
   /**
    * Engagement, derived from the tracking counters. `untracked` is honest about
    * the rows that were sent before 0005_email_tracking.sql existed.

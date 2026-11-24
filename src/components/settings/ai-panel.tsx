@@ -10,9 +10,9 @@ import type { AiStatus } from "@/lib/api/ai-hooks";
  * /settings/ai — which model writes proposals, and proof that it answers.
  *
  * The panel states the *effective* configuration rather than the env file:
- * `AI_PROVIDER=auto` resolves to Puter or Groq depending on which credential
- * exists, and a revoked token is invisible until something calls it. The probe
- * button is the shortest path to that answer.
+ * `AI_PROVIDER=auto` resolves to the first configured provider on the
+ * Puter → Groq → Gemini ladder, and a revoked token is invisible until
+ * something calls it. The probe button is the shortest path to that answer.
  */
 
 interface ProbeResult {
@@ -35,7 +35,7 @@ export function AiPanel({ status }: { status: AiStatus }) {
   const [failure, setFailure] = useState<string | null>(null);
 
   const live = status.provider !== "none";
-  const last = status.chain.length > 1 ? status.chain[status.chain.length - 1] : null;
+  const active = status.providers.find((provider) => provider.provider === status.provider);
 
   async function probe() {
     setProbing(true);
@@ -56,13 +56,23 @@ export function AiPanel({ status }: { status: AiStatus }) {
       <section className="card p-5">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-sm font-medium">Generation provider</h2>
-          <Badge tone={live ? (status.provider === "puter" ? "info" : "brand") : "danger"}>
+          <Badge
+            tone={
+              live
+                ? status.provider === "puter"
+                  ? "info"
+                  : status.provider === "groq"
+                    ? "brand"
+                    : "neutral"
+                : "danger"
+            }
+          >
             {status.provider === "none" ? "not configured" : status.provider}
           </Badge>
-          {last ? <Badge tone="neutral">falls back to {last.provider}</Badge> : null}
+          <Badge tone="neutral">{status.chain.length} in the chain</Badge>
           {status.requested === "auto" ? (
             <span className="text-xs text-muted">
-              AI_PROVIDER=auto, resolved by which credential exists
+              AI_PROVIDER=auto · order {status.providerOrder}
             </span>
           ) : null}
         </div>
@@ -90,8 +100,15 @@ export function AiPanel({ status }: { status: AiStatus }) {
         </ol>
 
         {status.reason ? (
-          <p className="mt-3 rounded-lg border border-danger/35 bg-danger/8 p-3 text-[11px] text-danger">
-            {status.reason}. Generation will fail until this is fixed.
+          <p
+            className={
+              live
+                ? "mt-3 rounded-lg border border-warn/35 bg-warn/8 p-3 text-[11px] text-warn"
+                : "mt-3 rounded-lg border border-danger/35 bg-danger/8 p-3 text-[11px] text-danger"
+            }
+          >
+            {status.reason}
+            {live ? " The chain below is what answers." : " Generation will fail until this is fixed."}
           </p>
         ) : null}
 
@@ -100,15 +117,17 @@ export function AiPanel({ status }: { status: AiStatus }) {
             label="Model"
             value={status.model || "—"}
             hint={
-              status.provider === "puter"
-                ? "PUTER_MODEL — a Puter model id, e.g. anthropic/claude-sonnet-5-5"
-                : "GROQ_MODEL"
+              active?.modelSource === "database"
+                ? "saved on /settings/models (wins over the env file)"
+                : active?.modelSource === "environment"
+                  ? "from the environment"
+                  : "built-in free default"
             }
           />
           <Row
-            label="Fallback model"
-            value={status.provider === "puter" ? status.fallbackModel : "— (Groq has none)"}
-            hint="Within one provider: tried once when the first model refuses. A provider that fails moves the whole call down the chain above."
+            label="Puter fallback model"
+            value={status.puterConfigured ? status.fallbackModel || "—" : "Puter not configured"}
+            hint="Within Puter: tried once when its first model refuses. A provider that fails moves the whole call down the chain above."
           />
           <Row
             label="Completion budget"
@@ -126,14 +145,19 @@ export function AiPanel({ status }: { status: AiStatus }) {
             hint="Off means a payload is stored and nothing is spent until you ask"
           />
           <Row
-            label="Groq credential"
-            value={status.groqConfigured ? `set (${status.groqModel})` : "not set"}
-            hint="Kept as the fallback route"
+            label="Puter credential"
+            value={status.puterConfigured ? `set (${status.puterModel})` : "not set — skipped"}
+            hint="PUTER_AUTH_TOKEN or a key saved on /settings/models"
           />
           <Row
-            label="Puter credential"
-            value={status.puterConfigured ? "set" : "not set"}
-            hint="PUTER_AUTH_TOKEN — billed to that Puter account, no per-minute ceiling"
+            label="Groq credential"
+            value={status.groqConfigured ? `set (${status.groqModel})` : "not set — skipped"}
+            hint="GROQ_API_KEY or a key saved on /settings/models"
+          />
+          <Row
+            label="Gemini credential"
+            value={status.geminiConfigured ? `set (${status.geminiModel})` : "not set — skipped"}
+            hint="GEMINI_API_KEY or a key saved on /settings/models"
           />
         </dl>
       </section>
@@ -183,9 +207,9 @@ export function AiPanel({ status }: { status: AiStatus }) {
         {failure ? <p className="mt-3 text-xs text-danger">{failure}</p> : null}
 
         <p className="mt-3 text-[11px] text-muted/80">
-          The probe spends a little of the account&rsquo;s own allowance — a few hundredths of a
-          cent on a Sonnet-class model. It tests reachability and credentials, not proposal
-          quality; run a real lead for that.
+          The probe spends a little of the account&rsquo;s own allowance — nothing on the free
+          models, fractions of a cent on a paid one. It tests reachability and credentials, not
+          proposal quality; run a real lead for that.
         </p>
       </section>
     </div>

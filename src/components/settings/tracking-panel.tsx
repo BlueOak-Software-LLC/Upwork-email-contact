@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { useRunCleanup, useTrackingStats } from "@/lib/api/tracking-hooks";
 
 /**
@@ -129,6 +130,45 @@ export function TrackingPanel({
           </p>
         ) : null}
       </section>
+
+      {data && data.domains.length > 0 ? (
+        <section className="card overflow-hidden">
+          <div className="p-5 pb-3">
+            <h3 className="text-sm font-medium">Recipient domains</h3>
+            <p className="mt-1 text-xs text-muted">
+              Delivered mail grouped by the domain after <code>@</code>. Open rates differ by mailbox
+              provider — a low number on one domain is a deliverability signal, not necessarily a
+              weak subject line.
+            </p>
+          </div>
+          <Table>
+            <THead>
+              <Tr>
+                <Th>Domain</Th>
+                <Th className="text-right">Delivered</Th>
+                <Th className="text-right">Opened</Th>
+                <Th className="text-right">Open rate</Th>
+                <Th className="text-right">Clicked</Th>
+              </Tr>
+            </THead>
+            <TBody>
+              {data.domains.map((row) => (
+                <Tr key={row.domain}>
+                  <Td>
+                    <code className="text-[11px] text-ink">{row.domain}</code>
+                  </Td>
+                  <Td className="text-right">{row.delivered}</Td>
+                  <Td className="text-right">{row.opened}</Td>
+                  <Td className="text-right">
+                    {row.openRate === null ? "—" : `${Math.round(row.openRate * 100)}%`}
+                  </Td>
+                  <Td className="text-right">{row.clicks}</Td>
+                </Tr>
+              ))}
+            </TBody>
+          </Table>
+        </section>
+      ) : null}
 
       <section className="card p-5">
         <h3 className="text-sm font-medium">Verify it yourself</h3>

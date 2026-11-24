@@ -38,6 +38,7 @@ export async function groqJson<T = Record<string, unknown>>({
   reasoningEffort: reasoningEffortOverride,
   schemaHint,
   model: modelOverride,
+  apiKey: apiKeyOverride,
 }: {
   messages: GroqMessage[];
   temperature?: number;
@@ -52,9 +53,15 @@ export async function groqJson<T = Record<string, unknown>>({
   schemaHint?: string;
   /** Overrides `GROQ_MODEL` for this call. */
   model?: string;
+  /**
+   * Overrides `GROQ_API_KEY`. The settings page stores keys in Postgres, so
+   * the chain passes the resolved credential explicitly instead of re-reading
+   * the environment here.
+   */
+  apiKey?: string;
 }): Promise<GroqResult<T>> {
   const {
-    apiKey,
+    apiKey: configuredApiKey,
     model: configuredModel,
     baseUrl,
     timeoutMs,
@@ -62,6 +69,7 @@ export async function groqJson<T = Record<string, unknown>>({
     tokensPerMinute,
     reasoningEffort: configuredEffort,
   } = groqConfig();
+  const apiKey = apiKeyOverride ?? configuredApiKey;
   const model = modelOverride ?? configuredModel;
   const reasoningEffort = reasoningEffortOverride ?? configuredEffort;
   // A request whose prompt + completion budget passes the tier's TPM allowance

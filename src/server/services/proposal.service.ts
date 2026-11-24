@@ -522,12 +522,12 @@ function providerFallbackWarnings(completion: AiResultLike): string[] {
     .map((a) => `${a.provider} (${a.model}) failed after ${a.ms}ms: ${a.error}`)
     .join(" · ");
   return [
-    `Answered by ${completion.provider} after a fallback: ${tried}. Check PUTER_AUTH_TOKEN / the Puter allowance if this repeats.`,
+    `Answered by ${completion.provider} after a fallback: ${tried}. Check the provider keys on /settings/models (and the Puter allowance) if this repeats.`,
   ];
 }
 
 interface AiResultLike {
-  provider?: "puter" | "groq";
+  provider?: "puter" | "groq" | "gemini";
   attempts?: Array<{ provider: string; model: string; ms: number; error: string }>;
 }
 

@@ -22,11 +22,11 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 | Data | Supabase Postgres (RLS on, service-role access from the server), Supabase Storage (`proposals` bucket), Supabase Auth (magic link) |
 | Client data | TanStack Query v5 hitting our own `/api` routes |
 | Validation | Zod v4 for env, inbound payloads, and LLM output coercion |
-| LLM | **Puter.js** (default: `anthropic/claude-sonnet-5-5`, fallback `openai/gpt-6.2-sol`) — keyless, billed to the Puter account, no per-minute ceiling. **Groq** (`openai/gpt-oss-120b`, JSON mode) stays configured as the alternative. `AI_PROVIDER=auto\|puter\|groq\|none` picks one; the prompt, the PPD contract and the review flow are identical either way |
+| LLM | **Puter → Groq → Gemini**, each on a free tier and each skipped when it has no key. Puter defaults to `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` (550B, 1M context), Groq to `openai/gpt-oss-120b`, Gemini to `gemini-3.8-flash`. Keys and models are saved (encrypted) on `/settings/models`; DB → env → built-in default. The prompt, PPD contract and review flow are identical on every provider |
 | PDF | pdfme (`@pdfme/generator`) with a repo-owned template |
 | Email out | SMTP per sender account (nodemailer) or `resend` / `log` via env |
 | Email tracking | 1×1 pixel per recipient + `/c/` link redirects, recorded by Postgres RPCs (§7) |
-| Secrets | `API_MASTER_KEY` guards `/api`; SMTP passwords AES-256-GCM encrypted with `APP_ENCRYPTION_KEY` |
+| Secrets | `API_MASTER_KEY` guards `/api`; SMTP passwords and AI provider keys are AES-256-GCM encrypted with `APP_ENCRYPTION_KEY` |
 
 ## 2. Structure
 
@@ -40,10 +40,12 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   ├── 0004_job_description_ingestion.sql job_description in the search tsvector,
 │   │                                      recipient-less proposal version lane,
 │   │                                      leads_awaiting_recipient view
-│   └── 0005_email_tracking.sql            email_logs engagement columns,
-│                                          tracked_links, tracking_events,
-│                                          record_tracking_event / record_log_outcome /
-│                                          purge_tracking_events (service role only)
+│   ├── 0005_email_tracking.sql            email_logs engagement columns,
+│   │                                      tracked_links, tracking_events,
+│   │                                      record_tracking_event / record_log_outcome /
+│   │                                      purge_tracking_events (service role only)
+│   └── 0006_ai_settings.sql               per-provider model + encrypted API key,
+│                                          service role only (an absent row = env/default)
 ├── templates/pdfme/proposal-template.json # ← reference copy of one compiled doc (Designer import)
 ├── src/
 │   ├── app/
@@ -52,7 +54,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   │   ├── leads/page.tsx             ingested payloads, filters, search
 │   │   │   ├── leads/[id]/page.tsx        job description + contacts + proposal + draft
 │   │   │   ├── contacts/ emails/ emails/[id]/ settings/senders/ settings/prompts/
-│   │   │   │   settings/tracking/ settings/ai/ api-docs/
+│   │   │   │   settings/models/ settings/tracking/ settings/ai/ api-docs/
 │   │   │   └── actions.ts                 sign-out server action
 │   │   ├── o/[token]/route.ts             GET pixel (public, no session, always a gif)
 │   │   ├── c/[token]/route.ts             GET tracked link → record click → 302 (public)
@@ -71,6 +73,8 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   │   ├── tracking/stats/route.ts    GET overview numbers + effective config
 │   │   │   ├── tracking/events/route.ts   GET raw open/click stream
 │   │   │   ├── tracking/outcome/route.ts  POST reply / meeting / not_interested
+│   │   │   ├── ai/settings/route.ts        GET effective config · PUT save key/model · DELETE reset
+│   │   │   ├── ai/test/route.ts            POST one 64-token probe through the live chain
 │   │   │   ├── maintenance/purge/route.ts POST retention sweep (CRON_SECRET)
 │   │   │   ├── contacts/…                 manual contact list
 │   │   │   └── health/route.ts            GET probe
@@ -78,7 +82,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   └── layout.tsx · globals.css
 │   ├── components/
 │   │   ├── leads/     leads-view, lead-workspace, proposal-card, draft-card, contacts-list
-│   │   ├── contacts/ settings/ (senders · prompts · tracking · ai) dashboard/ layout/ providers/ ui/
+│   │   ├── contacts/ settings/ (senders · prompts · tracking · models · ai) dashboard/ layout/ providers/ ui/
 │   ├── lib/
 │   │   ├── job-ref.ts                     canonical job_id / job_url: the dedupe identity
 │   │   ├── crypto.ts                      AES-256-GCM for stored secrets
@@ -89,13 +93,13 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   ├── services/lead-delete.service.ts  permanent removal + PDF storage cleanup
 │   │   └── supabase/                      client / server / admin / middleware
 │   ├── server/
-│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo · tracking.repo
-│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · templates · prompts/ · tracking/ (token · urls · links · build · headers) · ai/ (index · puter · groq · probe · types) · groq.client
+│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo · tracking.repo · ai-settings.repo
+│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · templates · prompts/ · tracking/ (token · urls · links · build · headers) · ai/ (index · config · puter · gemini.client · probe · types) · groq.client
 │   │   ├── http/          withApi · errors · responses · auth · rate-limit · id
 │   │   └── queries.ts     Server-Component reads
 │   ├── types/             database.ts (generated-style) · lead.ts · domain.ts
 │   └── tests/             tracking-sql (real Postgres via PGlite) · tracking-body ·
-│                          tracking-routes · tracking-api · email-tracking
+│                          tracking-routes · tracking-api · email-tracking · ai-provider
 ├── scripts/check-tracking.mjs  # npm run check:tracking — is 0005 applied and reachable?
 ```
 
@@ -114,6 +118,7 @@ Layering: `app/api/*` (transport) → `server/services` (orchestration) →
 | `email_logs` | Delivery audit (now linked to `draft_id`, `proposal_id`, `sender_account_id`) + engagement: `tracking_token`, `open_count`, `click_count`, `unique_click_count`, `first/last_open_at`, `first/last_click_at`, `last_event_at`. `status` stays delivery-only — `sent` and `opened` are different axes |
 | `tracked_links` | One row per clickable URL per message: `log_id`, `token`, `destination_url`, `label`, `position`, `click_count`, `last_clicked_at`. `on delete cascade` with the message |
 | `tracking_events` | Append-only timeline (`open`, `click`, `sent`, `reply`, `meeting`, `not_interested`): `log_id`, `link_id`, `occurred_at`, `user_agent`, `meta`. No IP column, ever |
+| `ai_settings` | One row per provider (`puter`, `groq`, `gemini`): `api_key_cipher` (AES-256-GCM `v1:`), `model`, `fallback_model`, `enabled`. **Absent row = env/default**, so an untouched deployment needs no seed. Service role only; keys are never returned by the API |
 | RPCs | `record_tracking_event(kind, token, agent, at)`, `record_log_outcome(log_id, kind, at)`, `purge_tracking_events(before)` — `security definer`, `grant revoke from public/anon/authenticated`, service role only |
 
 Statuses on a lead: `received → enriched → proposal_ready → draft_created → sent`
@@ -161,6 +166,18 @@ Unique openers are counted as distinct messages opened (`email_logs.first_open_a
 unique clickers are messages with at least one click. `click_count` counts every click, while
 `unique_click_count` counts distinct links — that difference is the "opened twice, clicked once"
 signal.
+
+### Recipient domains
+
+`GET /api/tracking/stats` also rolls the window up by the domain after `@` in `to_email`:
+`delivered`, `opened`, `clicks`, `openRate`, `clickRate`, busiest first (top 15). `/settings/tracking`
+renders it as **Recipient domains**, because a low open rate on `outlook.com` or one corporate
+domain is a deliverability signal, not a weak subject line. The same grouping filters the delivery
+log: `/emails?domain=acme.com`, or `GET /api/email?domain=acme.com` (validated server-side,
+matched against the end of `to_email` so `acme.com` does not also match `notacme.com`).
+
+This adds no new data collection: the domain is derived from the recipient address already stored on
+the row. `NULL`/`log`-only sends simply do not appear in the rollup.
 
 ### Where tracking is deliberately off
 
@@ -411,32 +428,62 @@ inherited, without touching a word of the reviewed prose.
 
 ### Tokens, length and cost (measured on this pipeline)
 
-**Puter (default).** One call, one document, no per-minute ceiling to clamp
-against. `anthropic/claude-sonnet-5-5` (Sep 2026): 1M-token context, 128K max
-output, $2 per M input / $10 per M output — chosen because Anthropic positions it
-for producing documents, which is exactly what `ppd_document` asks for, and it
-costs half Opus 5.5 for the same job. `openai/gpt-6.2-sol` is the fallback
-(same price band, 1.05M context, "clear and natural writing").
+**Puter (first).** `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` is the
+largest free text model in Puter's catalogue: 550B, 1M-token context, 64K output —
+enough headroom for a 12k-token PPD. `openrouter:nvidia/nemotron-3.5-lightning:free`
+is the within-Puter fallback. The `:free` suffix is what makes them unmetered per
+token; Puter still enforces the account's daily/monthly allowance, and a 402
+`insufficient_funds` moves the chain to the next provider instead of failing the lead.
+There is no tokens-per-minute wall.
 
-| | Groq `gpt-oss-120b` | Puter `claude-sonnet-5-5` |
-| --- | --- | --- |
-| Who pays | your Groq key | the **Puter account** behind `PUTER_AUTH_TOKEN` |
-| Hard stop | ~8k tokens/minute, ~200k/day (≈35 documents) | the account's monthly allowance; no TPM wall |
-| Cost per document | ~$0.002 (estimated from tokens) | ~$0.01 (Puter reports the real charge) |
-| Latency | 6–19 s | slower: budget `AI_TIMEOUT_MS` (105 s) under the route's 120 s |
-| Cost basis in the log | `estimated` (list price × tokens) | `billed` (`usage.cost` in microcents) |
+**Groq (second).** `openai/gpt-oss-120b`: 131,072 context / 65,536 max completion
+tokens, $0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*` when pricing
+moves). The developer tier is free but capped, and it is the fastest leg.
 
-The two are not interchangeable in the numbers they return, so `aiCostOf()`
-labels each run `billed` or `estimated` rather than mixing them into one column.
+**Gemini (last).** `gemini-3.8-flash`: the current free-tier Flash (1M input /
+64K output), fast and good at JSON, with a per-model daily quota. It is reached only when Puter and Groq are
+both unconfigured or both fail; with no `GEMINI_API_KEY` it is not in the chain at
+all. Gemini also refuses some regions with `User location is not supported`; the
+error now says so instead of blaming the key, and Puter/Groq remain the answer
+there.
 
-**Getting the token.** Puter's Node entry point takes an auth token, and that
-account is billed (their User-Pays model) — which is how this app gets AI with no
-API key of its own:
+| | Puter `:free` | Groq `gpt-oss-120b` | Gemini `3.8-flash` |
+| --- | --- | --- | --- |
+| Who pays | the **Puter account** behind `PUTER_AUTH_TOKEN` | your Groq key | your Google AI Studio key |
+| Hard stop | the account's allowance (no TPM wall) | ~8k tokens/minute, ~200k/day (≈35 documents) | free-tier daily quota per model |
+| Cost per document | $0 on `:free`; billed if a paid model is chosen | ~$0.002 (estimated from tokens) | $0 on the free tier |
+| Latency | tens of seconds; 70 s when all three are configured (105 s hard cap) | 6–19 s | a few seconds |
+| Cost basis in the log | `billed` when Puter reports `usage.cost`, otherwise `none` | `estimated` (list price × tokens) | `none` (no price in the response) |
+
+The providers are not interchangeable in the numbers they return, so `aiCostOf()`
+labels each run `billed`, `estimated` or `none` rather than mixing them into one
+column.
+
+### Choosing models and keys (`/settings/models`)
+
+Every provider card takes a model id (with the free presets suggested), an optional
+within-provider fallback (Puter only), an **enabled** switch, and an API key. A save
+writes one row to `public.ai_settings`; the key is AES-256-GCM encrypted with
+`APP_ENCRYPTION_KEY` and is never returned by the API. Resolution is:
+
+1. the saved row (model, key, enabled flag);
+2. the environment variable;
+3. the built-in free default in `src/lib/ai-models.ts`.
+
+The order is **Puter → Groq → Gemini**, overridable with `AI_PROVIDER_ORDER`;
+`AI_PROVIDER` pins a preferred provider to the front, and
+`AI_FALLBACK_PROVIDER=none` makes it a single leg (a failure stays a failure).
+A provider with **no key from either source is skipped** — not attempted, not logged
+as a failure. **Reset provider** deletes the row and restores env/default.
+
+**Getting the Puter token.** Puter's Node entry point takes an auth token, and that
+account is billed (their User-Pays model) — which is how this app gets AI without
+buying a per-token key:
 
 ```bash
 npm i -g @heyputer/puter-cli && puter login     # browser flow
 puter whoami                                     # which account will be billed
-# paste the token into PUTER_AUTH_TOKEN in .env.local
+# paste the token on /settings/models, or as PUTER_AUTH_TOKEN in .env.local
 npm run dev                                       # /settings/ai → "Probe it"
 ```
 
@@ -446,12 +493,11 @@ trace does not always carry. `src/server/services/ai/puter.ts` speaks the same
 wire the SDK uses — `POST {origin}/drivers/call`, `content-type:
 text/plain;actually=json`, token in the body — with `normalize: true` so the
 primary and the fallback model answer in one shape. `tests/ai-provider.test.ts`
-pins that body.
+pins that body. Gemini uses `POST /v1beta/models/<id>:generateContent` with the key
+in an `x-goog-api-key` header, never in the URL.
 
-**Groq (alternative).** `openai/gpt-oss-120b`: 131,072 context / 65,536 max
-completion tokens, $0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*`
-when pricing moves). Groq writes the *content*; the PDF is rendered locally and
-costs **zero** extra tokens.
+Groq writes the *content*; the PDF is rendered locally and costs **zero** extra
+tokens.
 
 | `GROQ_REASONING_EFFORT` | wall clock | completion tokens (of which reasoning) | document | est. cost |
 | --- | --- | --- | --- | --- |
@@ -507,7 +553,8 @@ record any of it.
 document shows **1 · Generate PPD** in the workspace (and its pipeline dot reads
 "no document yet" in the list), which runs step 1 against the configured model
 and stops at the document — no email copy, no PDF until you have reviewed it.
-`/settings/ai` says which model that click will call and probes it once, in 64
+`/settings/models` is where that click's provider ladder and keys are chosen;
+`/settings/ai` shows which model will actually answer and probes it once, in 64
 tokens, without touching the database.
 
 **Data freshness.** `/leads/[id]` is server-rendered for the first paint, then
@@ -584,12 +631,12 @@ Then verify the toolchain you just installed:
 
 ```bash
 npm run check          # tsc --noEmit + eslint
-npm test               # 109 tests: tracking SQL on a real Postgres, the send path, routes, API
+npm test               # 181 tests: tracking SQL on a real Postgres, the send path, routes, API, AI chain
 npm run build          # production build — 27 route handlers + 11 dashboard pages
 node -e "console.log(require('@pdfme/generator') ? 'pdfme ok' : '')"  # no export-mismatch crash
 ```
 
-Supabase (apply migrations in order — `0001`, `0002`, `0003`, `0004`, then `0005`):
+Supabase (apply migrations in order — `0001`, `0002`, `0003`, `0004`, `0005`, then `0006`):
 
 ```bash
 supabase link --project-ref <ref> && supabase db push
@@ -600,7 +647,10 @@ supabase link --project-ref <ref> && supabase db push
 # proposals their own version lane and adds the leads_awaiting_recipient view;
 # 0005 adds the engagement columns on email_logs plus tracked_links, tracking_events
 # and the record/purge RPCs (see §7 — without it the dashboard shows activity as
-# unavailable, not as zeros).
+# unavailable, not as zeros);
+# 0006 adds ai_settings, the per-provider model + encrypted key store behind
+# /settings/models. It is optional: without it the app still uses env/defaults, and
+# a save returns a message naming the migration instead of failing silently.
 # The app runs on 0001+0002 alone: prompt reads fall back to the code defaults and
 # the 0003/0004 columns the app writes are dropped with a `db_columns_missing` log
 # line naming this file — but saving edited prompts then returns 502.
@@ -613,12 +663,15 @@ Required env (see `.env.example`):
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | service role is server-only |
 | `API_MASTER_KEY` | `openssl rand -hex 32`; **required in production** — with it unset, `/api` is open in dev and answers `403` in prod |
-| `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords at rest |
-| `AI_PROVIDER` | `auto` (default) · `puter` · `groq` · `none`. `auto` prefers Puter, then Groq, by which credential exists |
-| `PUTER_AUTH_TOKEN` | the login token of a Puter account (`npm i -g @heyputer/puter-cli && puter login`). That account is billed; there is no API key of ours to rotate. Treat it as a password — it can read that account's cloud |
-| `PUTER_MODEL` / `PUTER_FALLBACK_MODEL` | default `anthropic/claude-sonnet-5-5` → `openai/gpt-6.2-sol`; any id from <https://developer.puter.com/ai/models/> |
-| `AI_MAX_TOKENS` / `AI_TIMEOUT_MS` | shared completion budget (defaults to `GROQ_MAX_TOKENS`) and wall clock; the timeout must stay under the route's 120 s |
-| `GROQ_API_KEY` | from <https://console.groq.com/keys>. **Rotate any key that was ever pasted into a chat/ticket/ticket-tracker** — this repo never stores it in code |
+| `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords **and AI API keys** at rest. Required to save a key on `/settings/models` |
+| `AI_PROVIDER` | `auto` (default) · `puter` · `groq` · `gemini` · `none`. `auto` follows `AI_PROVIDER_ORDER`; a preferred provider with no key is skipped |
+| `AI_PROVIDER_ORDER` | default `puter,groq,gemini` — the ladder itself. Saved keys/models on `/settings/models` override the env values, not the order |
+| `AI_FALLBACK_PROVIDER` | `auto` (default) keeps the rest of the order; `none` makes one leg and lets a failure stay a failure |
+| `PUTER_AUTH_TOKEN` | the login token of a Puter account (`npm i -g @heyputer/puter-cli && puter login`). That account is billed; there is no API key of ours to rotate. Treat it as a password — it can read that account's cloud. Or save it on `/settings/models` |
+| `PUTER_MODEL` / `PUTER_FALLBACK_MODEL` | default `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` → `openrouter:nvidia/nemotron-3.5-lightning:free`; any id from <https://developer.puter.com/ai/models/> |
+| `AI_MAX_TOKENS` / `AI_TIMEOUT_MS` | shared completion budget (defaults to `GROQ_MAX_TOKENS`) and per-call wall clock; the chain may shorten a leg to reserve `AI_MIN_ATTEMPT_MS` for each fallback, and the total must stay under the route's 120 s |
+| `GROQ_API_KEY` | from <https://console.groq.com/keys>, or save it on `/settings/models`. **Rotate any key that was ever pasted into a chat/ticket-tracker** — this repo never stores it in code |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` / `GEMINI_TIMEOUT_MS` | last-resort Gemini key (<https://aistudio.google.com/apikey>), model (default `gemini-3.8-flash`) and timeout (default 90 s). No key = skipped; a retired id gets the API's replacement in the error |
 | `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning. `AUTO_ENRICH_LEADS` defaults **off**: ingest stores, a person clicks Generate |
 | `GROQ_MAX_TOKENS` / `GROQ_TOKENS_PER_MINUTE` / `GROQ_REASONING_EFFORT` | completion budget; effort is auto-tuned down on a tight TPM allowance |
 | `PROPOSAL_COMPANY` | who signs the document; the model cannot override it |  
@@ -783,11 +836,14 @@ vercel --prod        # or push to GitHub → Import Project
 | `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
-| "I can't generate" — every click fails on quota | That is Groq's free tier, not the prompt. Switch the route: `puter login`, paste the token as `PUTER_AUTH_TOKEN`, and `AI_PROVIDER=auto` resolves to Puter (billed to that account, no tokens-per-minute wall). `/settings/ai` → **Probe it** proves the credential works before you generate a batch, and `GET /api/health` reports which provider is live. Nothing about the prompt, the PPD contract or the review flow changes between providers. |
-| `Puter: PUTER_AUTH_TOKEN is wrong or revoked` | The token is a login token, not an API key: it expires when you revoke it in the Puter dashboard. Run `puter login` again and re-paste it. (`token_auth_failed` on the wire.) |
-| `Puter: the account has spent its monthly allowance` | Real, and on that account, not yours: top up at puter.com/dashboard#billing, or set `AI_PROVIDER=groq` to spend the Groq key instead. The client does **not** silently switch providers — a fallback model is tried only when the *model* refused, never when the account is out. |
+| "I can't generate" — every click fails on quota | Each provider has its own ceiling: Puter's account allowance, Groq's ~8k TPM / ~200k TPD, Gemini's daily free quota. `/settings/ai` shows the *effective* chain and `GET /api/health` reports it; **Probe it** spends one 64-token call to prove the first credential works. If all configured legs fail, the error names every attempt, so the fix is visible without server logs. Nothing about the prompt, PPD contract or review flow changes between providers. |
+| `Puter: PUTER_AUTH_TOKEN is wrong or revoked` | The token is a login token, not an API key: it expires when you revoke it in the Puter dashboard. Run `puter login` again and paste it on `/settings/models` (or into `PUTER_AUTH_TOKEN`). (`token_auth_failed` on the wire.) |
+| `Puter: the account has spent its monthly allowance` | Real, and on that account, not yours. The chain now **falls through automatically** to Groq, then Gemini, recording each failure in `attempts`; top up at puter.com/dashboard#billing if Puter should stay first. If every leg fails, the 502 names each provider's reason. |
+| `No AI provider configured — … Set PUTER_AUTH_TOKEN, GROQ_API_KEY or GEMINI_API_KEY` | None of the three has a key from either source. Save one on `/settings/models`, or set the env var and restart. `AI_PROVIDER=none` also disables generation on purpose. |
+| `AI settings need supabase/migrations/0006_ai_settings.sql` | `/settings/models` saved a value but the table is absent. Apply 0006 (it is additive and safe to re-run). Until then the env/default chain still generates; only saving is blocked. |
+| `Gemini model "…" was not found` / `Gemini free-tier quota is exhausted` | The model id belongs to another provider or is retired, or the per-model daily free quota is spent. Pick a suggested model on `/settings/models`; a 429 on the last leg is a real end-of-chain failure, not something to retry in a loop. |
 | The same Upwork job appears twice in `/leads` | Pre-`src/lib/job-ref.ts` behaviour: dedupe compared `job_id` and the raw URL string, so one scrape with `~02…` in a link and another with `job_id` alone produced two rows. Now both are matched in canonical form, in either direction. Merge by hand: open the newer lead, note the older id, `DELETE /api/leads {"ids":[<newer>]}`. |
-| `Groq returned 429 … tokens per day (TPD): Limit 200000, Used 199672, Requested …` | The free tier's **daily** budget is spent (≈200k tokens ≈ 35–40 documents a day, one PPD running 4–5k). It resets at midnight UTC, so the client **stops retrying** on a TPD answer and says so — waiting would burn the same tokens. Upgrade the Groq tier, lower `GROQ_MAX_TOKENS`, or leave `AUTO_ENRICH_LEADS` off and generate in batches. A per-minute 429 is different: that one is retried up to three times, honouring `Retry-After`. |
+| `Groq returned 429 … tokens per day (TPD): Limit 200000, Used 199672, Requested …` | The free tier's **daily** budget is spent (≈200k tokens ≈ 35–40 documents a day, one PPD running 4–5k). It resets at midnight UTC, so the client **stops retrying** on a TPD answer and says so — waiting would burn the same tokens. Keep Puter first so a Groq TPD day falls through, upgrade the Groq tier, lower `GROQ_MAX_TOKENS`, or leave `AUTO_ENRICH_LEADS` off and generate in batches. A per-minute 429 is different: that one is retried up to three times, honouring `Retry-After`. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |
 | A deleted row reappears in the list a second later | `GET /api/leads` sends `Cache-Control: private, max-age=10`, so a refetch after a mutation replayed the old page. `apiFetch`/`apiFetchBlob` now pass `cache: "no-store"` — keep it if you add another client-side cache. |
 | Crash at import: *“'@pdfme/common' does not provide an export named 'createDynamicLayoutSplitRange'”* | pdfme version skew. Keep `@pdfme/common`, `@pdfme/generator`, `@pdfme/schemas` on the **same exact version** (pinned `6.2.8`, no caret). |
@@ -812,21 +868,29 @@ the same config in production answers `403` until you set a key.
   lead's property.
 
 * The Groq key you pasted into chat should be **rotated** — treat it as public.
-* SMTP passwords are `v1:iv:tag:ciphertext` AES-256-GCM; without
-  `APP_ENCRYPTION_KEY` they cannot be saved or decrypted (changing the key
-  invalidates stored passwords — re-save the accounts).
+* SMTP passwords and provider API keys are `v1:iv:tag:ciphertext` AES-256-GCM;
+  without `APP_ENCRYPTION_KEY` they cannot be saved or decrypted (changing the key
+  invalidates stored secrets — re-save the sender accounts and the keys on
+  `/settings/models`). The `ai_settings` table is service-role-only, and
+  `GET /api/ai/settings` returns `configured` / `keySource`, never the key.
+* A stored AI key is decrypted only inside `ai-settings.repo.ts`, lives in memory
+  for the duration of one generation call, and is never serialised into a
+  response, a log line or a client component.
 * `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS and is only read from `src/server/**`;
   RLS stays enabled on every table with no public policies.
 * `PUTER_AUTH_TOKEN` is a **login token, not a scoped API key**: it can read the
   Puter account's cloud, so it belongs in the server environment only (never a
   `NEXT_PUBLIC_*` name, never a client bundle) and is revoked in the Puter
-  dashboard rather than rotated in code. It is read in `src/lib/env.ts` and sent
-  only from `src/server/services/ai/puter.ts`, in the body of one POST to
+  dashboard rather than rotated in code. It is read through the effective config
+  and sent only from `src/server/services/ai/puter.ts`, in the body of one POST to
   `PUTER_API_ORIGIN` — which defaults to `https://api.puter.com` and should stay
-  that way: an attacker-controlled origin would receive the token.
-* Generation cost lands on whoever owns that Puter account, not on this app.
-  That is the point of the User-Pays model, and also why `AI_PROVIDER=groq`
-  exists as an explicit, separately-billed escape hatch.
+  that way: an attacker-controlled origin would receive the token. A token saved
+  on `/settings/models` is encrypted at rest like the other provider keys.
+* Generation cost lands on whichever provider answered, which is why the chain is
+  ordered explicitly and why the result carries `attempts` / `fellBackFrom`. A
+  Puter fallback spends the Puter account; a Groq fallback spends the Groq key; a
+  Gemini fallback spends the Google quota. `AI_FALLBACK_PROVIDER=none` disables
+  the ladder when that accounting must be strict.
 * Email bodies, PPDs and raw payloads contain personal data — keep the bucket
   private, and add retention if your jurisdiction needs it.
 * Generation is untrusted input → LLM → stored text: the prompt forbids inventing

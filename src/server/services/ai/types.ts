@@ -1,8 +1,39 @@
+import type { AiProviderId } from "@/lib/ai-models";
 import type { ReasoningEffort } from "@/server/services/groq.client";
 
 export type AiMessage = { role: "system" | "user" | "assistant"; content: string };
 
-export type AiProviderName = "puter" | "groq";
+export type AiProviderName = AiProviderId;
+
+/** Where the credential for one provider came from. */
+export type AiKeySource = "database" | "environment" | "none";
+
+/** Where the model id came from, so the settings page can say "default". */
+export type AiModelSource = "database" | "environment" | "default";
+
+/** One configured provider after DB-over-env resolution. */
+export interface EffectiveAiProvider {
+  provider: AiProviderName;
+  label: string;
+  apiKey: string | null;
+  keySource: AiKeySource;
+  model: string;
+  modelSource: AiModelSource;
+  fallbackModel: string | null;
+  fallbackModelSource: AiModelSource;
+  /** A DB row can switch a provider off without deleting its key. */
+  enabled: boolean;
+}
+
+export type EffectiveAiConfig = Record<AiProviderName, EffectiveAiProvider>;
+
+/** One rung of the generation ladder. */
+export interface AiLeg {
+  provider: AiProviderName;
+  model: string;
+  fallbackModel?: string | null;
+  timeoutMs: number;
+}
 
 export interface AiUsage {
   prompt_tokens: number;

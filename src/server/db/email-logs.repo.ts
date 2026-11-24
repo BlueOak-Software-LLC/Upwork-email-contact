@@ -45,6 +45,8 @@ export interface ListEmailLogsQuery {
   pageSize: number;
   status?: EmailLogStatus;
   to?: string;
+  /** Matches the domain after `@`; the route validates the shape. */
+  domain?: string;
   /** Engagement filter, derived from the counters. */
   tracking?: TrackingState;
   draftId?: string;
@@ -82,6 +84,8 @@ export const emailLogsRepo = {
       let out = builder;
       if (query.status) out = out.eq("status", query.status);
       if (query.to) out = out.ilike("to_email", `%${query.to}%`);
+      // Anchored at the end so `acme.com` does not also match `notacme.com`.
+      if (query.domain) out = out.ilike("to_email", `%@${query.domain}`);
       if (query.draftId) out = out.eq("draft_id", query.draftId);
       return out;
     };

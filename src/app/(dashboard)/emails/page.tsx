@@ -31,6 +31,17 @@ export default async function EmailsPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const activityFilter = pick(params.tracking);
   const status = pick(params.status);
+  const domain = pick(params.domain)?.toLowerCase();
+
+  // Keep the two filters composable: a tracking link must not silently drop the
+  // domain, and the domain form must not silently drop the activity filter.
+  const filteredHref = (next: { tracking?: string; domain?: string }) => {
+    const query = new URLSearchParams();
+    if (next.tracking) query.set("tracking", next.tracking);
+    if (next.domain) query.set("domain", next.domain);
+    const value = query.toString();
+    return value ? `/emails?${value}` : "/emails";
+  };
 
   const [logs, stats] = await Promise.all([
     emailLogsRepo
@@ -39,6 +50,7 @@ export default async function EmailsPage({ searchParams }: PageProps) {
         pageSize: 100,
         ...(status ? { status: status as EmailLogRow["status"] } : {}),
         ...(activityFilter ? { tracking: activityFilter as TrackingState } : {}),
+        ...(domain ? { domain } : {}),
       })
       .catch(() => null),
     getTrackingOverview(7),
@@ -118,7 +130,7 @@ export default async function EmailsPage({ searchParams }: PageProps) {
         {TRACKING_FILTERS.map((filter) => (
           <Link
             key={filter.value}
-            href={filter.value ? `/emails?tracking=${filter.value}` : "/emails"}
+            href={filteredHref({ ...(filter.value ? { tracking: filter.value } : {}), ...(domain ? { domain } : {}) })}
             className={
               filter.value === (activityFilter ?? "")
                 ? "rounded-full border border-brand/40 bg-brand/12 px-2.5 py-0.5 text-[11px] text-brand"
@@ -129,6 +141,35 @@ export default async function EmailsPage({ searchParams }: PageProps) {
           </Link>
         ))}
       </div>
+
+      <form action="/emails" method="get" className="flex flex-wrap items-end gap-2">
+        {activityFilter ? <input type="hidden" name="tracking" value={activityFilter} /> : null}
+        <label className="space-y-1">
+          <span className="block text-[11px] uppercase tracking-wide text-faint">Recipient domain</span>
+          <input
+            type="text"
+            name="domain"
+            defaultValue={domain ?? ""}
+            placeholder="acme.com"
+            spellCheck={false}
+            className="h-8 w-56 rounded-lg border border-line bg-canvas px-2.5 text-xs text-ink outline-none transition hover:border-line-strong focus:border-brand/70 focus-ring"
+          />
+        </label>
+        <button
+          type="submit"
+          className="h-8 rounded-lg border border-line bg-surface-2 px-3 text-xs text-ink transition hover:border-brand/60"
+        >
+          Filter
+        </button>
+        {domain ? (
+          <Link
+            href={filteredHref({ ...(activityFilter ? { tracking: activityFilter } : {}) })}
+            className="pb-1.5 text-xs text-muted hover:text-ink"
+          >
+            clear domain
+          </Link>
+        ) : null}
+      </form>
 
       <div className="card overflow-hidden">
         {items.length === 0 ? (

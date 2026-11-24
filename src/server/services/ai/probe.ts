@@ -30,7 +30,7 @@ export async function probeAi(input: {
   const env = getServerEnv();
   const startedAt = Date.now();
 
-  const chain = providerChain(env);
+  const chain = await providerChain(env);
   // The probe answers with whichever provider ends up writing it, so it must
   // not name a model the fallback provider does not have: only an explicit
   // caller override is passed down, and `aiJson` applies it to the first leg.
@@ -52,7 +52,7 @@ export async function probeAi(input: {
       costBasis: "none",
       reply: "",
       attempts: [],
-      error: aiChainReason(env) ?? "No AI provider configured",
+      error: (await aiChainReason(env)) ?? "No AI provider configured",
     };
   }
 
@@ -65,7 +65,7 @@ export async function probeAi(input: {
       temperature: 0,
       reasoningEffort: "none",
     });
-    const cost = aiCostOf(completion.usage);
+    const cost = aiCostOf(completion.usage, completion.provider);
     return {
       ...base,
       // Report who actually answered, not who was configured first.
@@ -96,6 +96,6 @@ export async function probeAi(input: {
 }
 
 /** The status the settings panel renders, with the probe's own summary. */
-export function aiPanelStatus() {
+export async function aiPanelStatus() {
   return aiStatus();
 }

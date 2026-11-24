@@ -709,6 +709,38 @@ export interface Database {
         };
         Relationships: [];
       };
+      /**
+       * public.ai_settings (0006). One row per provider, only for values the
+       * operator changed in the UI — absence means "use env or the built-in
+       * free default". The API key is stored encrypted (AES-256-GCM).
+       */
+      ai_settings: {
+        Row: {
+          provider: string;
+          api_key_cipher: string | null;
+          model: string | null;
+          fallback_model: string | null;
+          enabled: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          provider: string;
+          api_key_cipher?: string | null;
+          model?: string | null;
+          fallback_model?: string | null;
+          enabled?: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          provider?: string;
+          api_key_cipher?: string | null;
+          model?: string | null;
+          fallback_model?: string | null;
+          enabled?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       /** public.contact_funnel (0001) */

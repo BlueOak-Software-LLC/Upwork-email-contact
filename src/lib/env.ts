@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  DEFAULT_PROVIDER_ORDER,
+  parseProviderOrder,
+  type AiProviderId,
+} from "@/lib/ai-models";
 
 /**
  * Server-only environment access.
@@ -38,16 +43,22 @@ const ServerEnvSchema = z.object({
   APP_ENCRYPTION_KEY: z.string().min(16).optional(),
 
   // ── Proposal generation: which AI answers the prompt ──────────────────────
-  // `auto` prefers Puter when PUTER_AUTH_TOKEN is present, then Groq when
-  // GROQ_API_KEY is. Puter is the keyless, per-user-billed route: it has no
-  // Groq-style tokens-per-minute wall, which is what blocked generation here.
-  AI_PROVIDER: z.enum(["auto", "puter", "groq", "none"]).default("auto"),
+  // `auto` walks AI_PROVIDER_ORDER and answers with the first provider that has
+  // a credential: Puter, then Groq, then Gemini. A provider with no key is
+  // skipped entirely, so a deployment can configure one, two or all three.
+  AI_PROVIDER: z.enum(["auto", "puter", "groq", "gemini", "none"]).default("auto"),
   /**
    * What answers when the preferred provider fails — a spent allowance, a
-   * revoked token, a 429, a gateway outage, a refusal. `auto` means the other
-   * one; `none` makes a failure stay a failure.
+   * revoked token, a 429, a gateway outage, a refusal. `auto` keeps walking the
+   * ladder; `none` makes a failure stay a failure.
    */
-  AI_FALLBACK_PROVIDER: z.enum(["auto", "puter", "groq", "none"]).default("auto"),
+  AI_FALLBACK_PROVIDER: z.enum(["auto", "puter", "groq", "gemini", "none"]).default("auto"),
+  /**
+   * The fallback ladder, in order. The requested default is Puter → Groq →
+   * Gemini, and any provider without a credential is skipped rather than
+   * attempted. Editable without a code change.
+   */
+  AI_PROVIDER_ORDER: z.string().default("puter,groq,gemini"),
   /**
    * Wall clock for the whole generation, including a fallback attempt. Two
    * frontier calls in a row must still fit inside the route's `maxDuration`,
@@ -66,14 +77,14 @@ const ServerEnvSchema = z.object({
   PUTER_AUTH_TOKEN: z.string().min(8).optional(),
   PUTER_API_ORIGIN: z.string().url().default("https://api.puter.com"),
   /**
-   * Claude Sonnet 5.5 (Anthropic, Sep 2026): 1M-token context, 128K max output,
-   * positioned by Anthropic for producing documents, and $2/$10 per million —
-   * half Opus 5.5. Proposal writing is a long-form document task with a strict
-   * JSON shape, which is exactly what it is sold for.
+   * Free Puter model: Nemotron 3 Ultra 550B on OpenRouter's `:free` tier. 1M
+   * context and 64K output fit a full PPD, and the model is large enough to be
+   * upper-middle quality — no per-token charge on the Puter account. The
+   * settings page can override this without a redeploy.
    */
-  PUTER_MODEL: z.string().default("anthropic/claude-sonnet-5-5"),
-  /** Second model tried when the first refuses or is unavailable. */
-  PUTER_FALLBACK_MODEL: z.string().default("openai/gpt-6.2-sol"),
+  PUTER_MODEL: z.string().default("openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"),
+  /** Second free model tried when the first refuses or is unavailable. */
+  PUTER_FALLBACK_MODEL: z.string().default("openrouter:nvidia/nemotron-3.5-lightning:free"),
   /** Completion budget for either provider (was GROQ_MAX_TOKENS). */
   AI_MAX_TOKENS: z.coerce.number().int().min(512).max(65_536).optional(),
   /**
@@ -116,6 +127,12 @@ const ServerEnvSchema = z.object({
   /** List price per million tokens (GPT-OSS 120B): used for cost logging only. */
   GROQ_PRICE_INPUT_PER_M: z.coerce.number().min(0).default(0.15),
   GROQ_PRICE_OUTPUT_PER_M: z.coerce.number().min(0).default(0.6),
+
+  // Gemini — the last fallback. Free-tier `gemini-3.8-flash`; nothing is called
+  // when GEMINI_API_KEY is absent, so this is safe to leave unset.
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-3.8-flash"),
+  GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).default(90_000),
   PROPOSAL_LANGUAGE: z.string().default("English"),
   /**
    * Branding stamped onto every PPD. These win over whatever the model wrote,
@@ -284,9 +301,9 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
     envWarnings.push(msg);
     console.warn("[env]", msg);
   }
-  if (env.AUTO_ENRICH_LEADS && !env.GROQ_API_KEY) {
+  if (env.AUTO_ENRICH_LEADS && !env.PUTER_AUTH_TOKEN && !env.GROQ_API_KEY && !env.GEMINI_API_KEY) {
     envWarnings.push(
-      "AUTO_ENRICH_LEADS is on but GROQ_API_KEY is unset: ingested leads are stored without proposals — generate them from the lead page once the key is set.",
+      "AUTO_ENRICH_LEADS is on but no AI credential is set in the environment: if none is saved on /settings/models either, ingested leads are stored without proposals — generate them from the lead page once a key exists.",
     );
   }
   if (env.AUTO_ENRICH_LEADS) {
@@ -307,7 +324,7 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
   const ai = aiResolution(env);
   if (ai.provider === "none" && ai.requested !== "none") {
     envWarnings.push(
-      `No AI provider available (${ai.reason}): leads are stored, and clicking "Generate PPD" will fail until PUTER_AUTH_TOKEN or GROQ_API_KEY is set.`,
+      `No AI credential in the environment (${ai.reason}): leads are still stored, and "Generate PPD" needs a key in .env.local or saved on /settings/models (stored keys are read at request time).`,
     );
   } else if (ai.provider === "puter" && env.PUTER_FALLBACK_MODEL === env.PUTER_MODEL) {
     envWarnings.push("PUTER_FALLBACK_MODEL equals PUTER_MODEL: a refusal has nowhere to go.");
@@ -371,53 +388,87 @@ export const publicEnv = {
 } as const;
 
 /** Which provider will actually answer the next generation call, and why. */
-export type AiProviderName = "puter" | "groq" | "none";
+export type AiProviderName = AiProviderId | "none";
 
 export interface AiResolution {
   provider: AiProviderName;
   /** What `AI_PROVIDER` asked for (`auto` resolved to the provider below). */
-  requested: "auto" | "puter" | "groq" | "none";
+  requested: "auto" | AiProviderId | "none";
   model: string;
   /** Set when the request could not be honoured, for the settings UI to show. */
   reason: string | null;
-  /** Completion budget shared by both providers. */
+  /** Completion budget shared by the whole chain. */
   maxTokens: number;
 }
 
+/** Env-only credential check. The DB-backed resolver in `services/ai/config` supersedes it. */
+function envHasCredential(env: ServerEnv, provider: AiProviderId): boolean {
+  if (provider === "puter") return Boolean(env.PUTER_AUTH_TOKEN);
+  if (provider === "groq") return Boolean(env.GROQ_API_KEY);
+  return Boolean(env.GEMINI_API_KEY);
+}
+
+function envModelOf(env: ServerEnv, provider: AiProviderId): string {
+  if (provider === "puter") return env.PUTER_MODEL;
+  if (provider === "groq") return env.GROQ_MODEL;
+  return env.GEMINI_MODEL;
+}
+
 /**
- * The single place that answers "what writes proposals here".
+ * The single env-level answer to "what writes proposals here".
  *
- * `auto` prefers Puter because it is the route without a per-minute token
- * ceiling; Groq stays configured as the fallback so a missing Puter token is an
- * inconvenience rather than a dead pipeline. A wrong choice is reported, never
- * silently swapped: if `AI_PROVIDER=puter` and there is no token, generation
- * fails with the reason instead of quietly spending Groq quota.
+ * `auto` walks `AI_PROVIDER_ORDER` (default Puter → Groq → Gemini) and picks the
+ * first provider with a credential. This function can only see environment
+ * variables; keys saved on /settings/models live in Postgres, so the async
+ * `aiStatus()` in `services/ai` is the authoritative runtime view. Keeping this
+ * one env-only means startup diagnostics stay synchronous.
  */
 export function aiResolution(env = getServerEnv()): AiResolution {
-  const hasPuter = Boolean(env.PUTER_AUTH_TOKEN);
-  const hasGroq = Boolean(env.GROQ_API_KEY);
   const maxTokens = env.AI_MAX_TOKENS ?? env.GROQ_MAX_TOKENS;
+  const order = parseProviderOrder(env.AI_PROVIDER_ORDER || DEFAULT_PROVIDER_ORDER);
 
   const pick = (provider: AiProviderName, reason: string | null): AiResolution => ({
     provider,
     requested: env.AI_PROVIDER,
-    model: provider === "puter" ? env.PUTER_MODEL : provider === "groq" ? env.GROQ_MODEL : "",
+    model: provider === "none" ? "" : envModelOf(env, provider),
     reason,
     maxTokens,
   });
 
-  switch (env.AI_PROVIDER) {
-    case "puter":
-      return pick(hasPuter ? "puter" : "none", hasPuter ? null : "PUTER_AUTH_TOKEN is not set");
-    case "groq":
-      return pick(hasGroq ? "groq" : "none", hasGroq ? null : "GROQ_API_KEY is not set");
-    case "none":
-      return pick("none", "AI_PROVIDER=none — generation is disabled");
-    default:
-      if (hasPuter) return pick("puter", null);
-      if (hasGroq) return pick("groq", null);
-      return pick("none", "Neither PUTER_AUTH_TOKEN nor GROQ_API_KEY is set");
+  if (env.AI_PROVIDER === "none") {
+    return pick("none", "AI_PROVIDER=none — generation is disabled");
   }
+
+  let candidates: AiProviderId[] =
+    env.AI_PROVIDER === "auto"
+      ? order
+      : [env.AI_PROVIDER, ...order.filter((provider) => provider !== env.AI_PROVIDER)];
+
+  if (env.AI_FALLBACK_PROVIDER === "none") {
+    candidates = candidates.slice(0, 1);
+  } else if (env.AI_FALLBACK_PROVIDER !== "auto") {
+    const fallback = env.AI_FALLBACK_PROVIDER;
+    candidates = [candidates[0]!, ...(candidates[0] === fallback ? [] : [fallback])];
+  }
+
+  const requested = candidates[0];
+  const provider = candidates.find((candidate) => envHasCredential(env, candidate));
+
+  if (!provider) {
+    const envVar = requested === "puter" ? "PUTER_AUTH_TOKEN" : requested === "groq" ? "GROQ_API_KEY" : "GEMINI_API_KEY";
+    return pick(
+      "none",
+      requested && candidates.length === 1 && env.AI_PROVIDER !== "auto"
+        ? `${envVar} is not set`
+        : "No AI provider has a credential — set PUTER_AUTH_TOKEN, GROQ_API_KEY or GEMINI_API_KEY",
+    );
+  }
+
+  if (provider === requested) return pick(provider, null);
+
+  const missing =
+    requested === "puter" ? "PUTER_AUTH_TOKEN" : requested === "groq" ? "GROQ_API_KEY" : "GEMINI_API_KEY";
+  return pick(provider, `${missing} is not set — ${provider} answers instead`);
 }
 
 /** True when some provider can answer a generation call right now. */

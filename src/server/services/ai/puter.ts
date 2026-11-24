@@ -283,9 +283,9 @@ function describeFailure(response: Response, text: string, request: PuterRequest
 
   const guidance: Record<string, string> = {
     token_auth_failed:
-      "PUTER_AUTH_TOKEN is wrong or revoked — run `puter login` again and copy the new token into .env.local",
+      "PUTER_AUTH_TOKEN is wrong or revoked — run `puter login` again and copy the new token into .env.local or /settings/models",
     insufficient_funds:
-      "the Puter account has spent its monthly allowance — top it up at puter.com/dashboard#billing, or set AI_PROVIDER=groq to fall back to GROQ_API_KEY",
+      "the Puter account has spent its monthly allowance — top it up at puter.com/dashboard#billing, or keep GROQ_API_KEY / GEMINI_API_KEY configured so the chain falls through to them",
     email_must_be_confirmed:
       "the Puter account's email is not confirmed, so the API refuses it — confirm it in the Puter dashboard",
     model_not_found: `PUTER_MODEL="${request.model}" is not available on this account`,

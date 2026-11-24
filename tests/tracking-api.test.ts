@@ -248,6 +248,9 @@ describe("GET /api/tracking/stats", () => {
       clickRate: 0.5,
       clickThroughRate: 0.25,
       series: [],
+      domains: [
+        { domain: "acme.com", delivered: 3, opened: 2, clicks: 1, openRate: 2 / 3, clickRate: 1 / 3 },
+      ],
       schemaMissing: false,
     });
     const GET = await statsRoute();
@@ -255,6 +258,10 @@ describe("GET /api/tracking/stats", () => {
     const json = await response.json();
 
     expect(json.data.openRate).toBe(0.5);
+    // Domain rollup travels untouched; the page decides how to present it.
+    expect(json.data.domains).toEqual([
+      { domain: "acme.com", delivered: 3, opened: 2, clicks: 1, openRate: 2 / 3, clickRate: 1 / 3 },
+    ]);
     // The flag travels with the numbers so a zero dashboard stays explainable.
     expect(json.data.configured).toEqual({
       enabled: true,
@@ -295,6 +302,30 @@ describe("GET /api/email", () => {
     // Counters win over delivery status: clicked beats opened beats sent.
     expect(json.data[0].tracking_state).toBe("clicked");
     expect(json.meta).toMatchObject({ total: 1 });
+  });
+
+  it("normalises a recipient-domain filter before querying", async () => {
+    list.mockResolvedValue({
+      items: [sampleLog as never],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    });
+    const GET = await emailListRoute();
+    const response = await GET(request("/api/email?domain=ACME.com"), ctx);
+
+    expect(response.status).toBe(200);
+    expect(list.mock.calls[0]![0]).toMatchObject({ domain: "acme.com" });
+  });
+
+  it("rejects a domain that is not a hostname", async () => {
+    const GET = await emailListRoute();
+    for (const bad of ["acme", "acme..com", "-acme.com", "acme.com/path"]) {
+      const response = await GET(request(`/api/email?domain=${encodeURIComponent(bad)}`), ctx);
+      expect(response.status).toBe(422);
+    }
+    expect(list).not.toHaveBeenCalled();
   });
 
   it("labels a pre-migration row as untracked rather than unopened", async () => {

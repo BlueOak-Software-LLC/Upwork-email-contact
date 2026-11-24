@@ -23,6 +23,15 @@ export interface TrackingStats {
   clickRate: number | null;
   clickThroughRate: number | null;
   series: Array<{ date: string; opens: number; clicks: number; sent: number }>;
+  /** Recipient-domain rollup, busiest first — where mail lands and what it does. */
+  domains: Array<{
+    domain: string;
+    delivered: number;
+    opened: number;
+    clicks: number;
+    openRate: number | null;
+    clickRate: number | null;
+  }>;
   /** True when 0005_email_tracking.sql has not been applied to this project. */
   schemaMissing?: boolean;
   configured: {

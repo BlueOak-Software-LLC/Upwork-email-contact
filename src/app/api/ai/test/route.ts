@@ -34,5 +34,5 @@ export const POST = withApi(async (request: NextRequest) => {
   await requireApiKey(request);
   const input = parseOrThrow(schema, await request.json().catch(() => ({})));
   const result = await probeAi(input);
-  return ok({ configured: aiStatus(), ...result });
+  return ok({ configured: await aiStatus(), ...result });
 });

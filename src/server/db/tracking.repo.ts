@@ -311,7 +311,7 @@ export const trackingRepo = {
     const { data, error } = await supabase
       .from("email_logs")
       .select(
-        "id,status,created_at,sent_at,tracking_token,open_count,click_count,first_open_at,first_click_at",
+        "id,status,created_at,sent_at,tracking_token,open_count,click_count,first_open_at,first_click_at,to_email",
       )
       .gte("created_at", since.toISOString());
     if (error) {
@@ -334,6 +334,26 @@ export const trackingRepo = {
     const opens = opened.reduce((sum, row) => sum + Number(row.open_count), 0);
     const clicks = clicked.reduce((sum, row) => sum + Number(row.click_count), 0);
     const delivered = rows.filter((row) => row.status === "sent");
+
+    // Recipient-domain rollup. Deliverability and engagement differ sharply by
+    // mailbox provider (Gmail vs Outlook vs a corporate domain), and the only
+    // reliable way to see that is to group the sends that already happened.
+    // Open counts stay "unique-ish": the pixel de-duplicates per client per
+    // minute in the database, so this is directional rather than exact.
+    const byDomain = new Map<
+      string,
+      { delivered: number; opened: number; clicks: number }
+    >();
+    for (const row of rows) {
+      if (row.status !== "sent") continue;
+      const domain = recipientDomain(row.to_email);
+      if (!domain) continue;
+      const bucket = byDomain.get(domain) ?? { delivered: 0, opened: 0, clicks: 0 };
+      bucket.delivered += 1;
+      if (Number(row.open_count ?? 0) > 0) bucket.opened += 1;
+      if (Number(row.click_count ?? 0) > 0) bucket.clicks += 1;
+      byDomain.set(domain, bucket);
+    }
 
     const perDay = new Map<string, { opens: number; clicks: number; sent: number }>();
     for (let index = days - 1; index >= 0; index -= 1) {
@@ -367,6 +387,15 @@ export const trackingRepo = {
       clickRate: opened.length ? clicked.length / opened.length : null,
       clickThroughRate: delivered.length ? clicked.length / delivered.length : null,
       series: [...perDay.entries()].map(([date, counts]) => ({ date, ...counts })),
+      domains: [...byDomain.entries()]
+        .map(([domain, counts]) => ({
+          domain,
+          ...counts,
+          openRate: counts.delivered ? counts.opened / counts.delivered : null,
+          clickRate: counts.delivered ? counts.clicks / counts.delivered : null,
+        }))
+        .sort((left, right) => right.delivered - left.delivered || left.domain.localeCompare(right.domain))
+        .slice(0, 15),
       schemaMissing: false,
     };
   },
@@ -456,7 +485,21 @@ function emptyStats(days: number) {
     clickRate: null as number | null,
     clickThroughRate: null as number | null,
     series: perDay,
+    domains: [] as Array<{
+      domain: string;
+      delivered: number;
+      opened: number;
+      clicks: number;
+      openRate: number | null;
+      clickRate: number | null;
+    }>,
   };
+}
+
+/** `Name <a@b.com>` and `a@b.com` both yield `b.com`; anything else is dropped. */
+function recipientDomain(value: string | null): string | null {
+  const match = /@([^@>\s,;]+)/.exec(value ?? "");
+  return match?.[1]?.toLowerCase() ?? null;
 }
 
 function isoDay(value: string | Date | null): string | null {
