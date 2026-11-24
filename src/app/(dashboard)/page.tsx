@@ -2,10 +2,14 @@ import Link from "next/link";
 import { MetricCard, SparkBars } from "@/components/dashboard/metric-card";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
-import { getMetrics, getRecentContacts } from "@/server/queries";
+import { getMetrics, getRecentContacts, getStaleSends, getTrackingOverview } from "@/server/queries";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { formatDate, relative, truncate } from "@/lib/utils";
+import { describeOpens, rate } from "@/lib/tracking";
 import type { Contact, DashboardMetrics } from "@/types/domain";
+
+type Tracking = Awaited<ReturnType<typeof getTrackingOverview>>;
+type Stale = Awaited<ReturnType<typeof getStaleSends>>;
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Overview" };
@@ -13,11 +17,13 @@ export const metadata = { title: "Overview" };
 type LeadMetrics = NonNullable<Awaited<ReturnType<typeof leadsRepo.metrics>>>;
 
 export default async function OverviewPage() {
-  const [metrics, recent, leadMetrics, queue] = await Promise.all([
+  const [metrics, recent, leadMetrics, queue, tracking, stale] = await Promise.all([
     attempt<DashboardMetrics | null>(() => getMetrics(), null),
     attempt<Contact[]>(() => getRecentContacts(6), []),
     attempt<LeadMetrics | null>(() => leadsRepo.metrics(), null),
     attempt<Awaited<ReturnType<typeof leadsRepo.queue>> | null>(() => leadsRepo.queue(), null),
+    attempt<Tracking>(() => getTrackingOverview(7), null),
+    attempt<Stale>(() => getStaleSends(7, 6), []),
   ]);
 
   if (!metrics) return <SetupRequired />;
@@ -25,6 +31,8 @@ export default async function OverviewPage() {
   return (
     <>
       {queue ? <AttentionQueue queue={queue} /> : null}
+      {tracking ? <TrackingNotice tracking={tracking} /> : null}
+      {stale.length ? <StaleSends rows={stale} /> : null}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <MetricCard
@@ -60,6 +68,34 @@ export default async function OverviewPage() {
           delta={metrics.emailsFailed7d ? `${metrics.emailsFailed7d} failed` : "no failures"}
           tone={metrics.emailsFailed7d ? "bad" : "good"}
           hint="From public.email_logs"
+        />
+
+        <MetricCard
+          label="Opened (7d)"
+          value={tracking ? tracking.uniqueOpeners : "—"}
+          delta={tracking ? `${rate(tracking.uniqueOpeners, tracking.delivered)} of delivered` : undefined}
+          tone={tracking && tracking.uniqueOpeners > 0 ? "good" : "default"}
+          hint={
+            tracking
+              ? `${tracking.opens} pixel requests · an open is a client fetching the image, not proof of reading`
+              : "tracking columns are not readable — apply 0005_email_tracking.sql"
+          }
+        >
+          {tracking && tracking.series.length ? (
+            <SparkBars data={tracking.series.map((day) => ({ day: day.date, count: day.opens }))} />
+          ) : null}
+        </MetricCard>
+
+        <MetricCard
+          label="Clicked (7d)"
+          value={tracking ? tracking.uniqueClickers : "—"}
+          delta={
+            tracking && tracking.clickThroughRate !== null
+              ? `${Math.round(tracking.clickThroughRate * 100)}% of delivered`
+              : undefined
+          }
+          tone={tracking && tracking.uniqueClickers > 0 ? "good" : "default"}
+          hint="Links rewritten to /c/<token>; the proposal PDF is never rewritten"
         />
 
         <MetricCard
@@ -183,6 +219,94 @@ async function attempt<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Tracking that is configured but producing nothing is the failure mode people
+ * notice last, so say which of the three states this is.
+ */
+function TrackingNotice({ tracking }: { tracking: NonNullable<Tracking> }) {
+  const missing = tracking.schemaMissing === true;
+  const dead = !missing && tracking.delivered > 0 && tracking.tracked === 0;
+  const silent = !missing && tracking.tracked > 0 && tracking.uniqueOpeners === 0;
+  if (!missing && !dead && !silent) return null;
+
+  return (
+    <section className="card p-4">
+      <h2 className="text-sm font-medium">
+        {missing
+          ? "Tracking is not installed on this database"
+          : `Tracking is ${dead ? "off" : "running, but quiet"}`}
+      </h2>
+      <ul className="mt-2 space-y-1 text-xs text-muted">
+        {missing ? (
+          <li>
+            <code>0005_email_tracking.sql</code> has not been applied, so the tracking columns and
+            the record/purge RPCs do not exist. Opens and clicks cannot be read until it is — these
+            are unavailable numbers, not evidence that nobody opened anything.
+          </li>
+        ) : null}
+        {dead ? (
+          <li>
+            {tracking.delivered} delivered message{tracking.delivered === 1 ? "" : "s"} in the window
+            and none of them carry a pixel. Either <code>EMAIL_TRACKING=false</code>,
+            <code>EMAIL_PROVIDER=log</code>, or those sends predate
+            <code>0005_email_tracking.sql</code>.
+          </li>
+        ) : null}
+        {silent ? (
+          <li>
+            {tracking.tracked} tracked sends, 0 opens — Most often the recipient could not reach the
+            tracking origin — check that <code>TRACKING_DOMAIN</code> loads from outside this machine
+            and that nothing (a deployment password, a bot challenge) protects <code>/o/*</code>.
+          </li>
+        ) : null}
+      </ul>
+      <div className="mt-3 flex flex-wrap gap-3 text-xs">
+        <Link href="/settings/tracking" className="text-brand hover:underline">
+          Tracking settings →
+        </Link>
+        <Link href="/emails" className="text-brand hover:underline">
+          Email activity →
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+/** Sent a week ago and never opened: worth a follow-up, or worth letting go. */
+function StaleSends({ rows }: { rows: Stale }) {
+  return (
+    <section className="card overflow-hidden">
+      <div className="flex items-center justify-between border-b border-line px-5 py-3">
+        <h2 className="text-sm font-medium">Delivered, never opened</h2>
+        <span className="text-[11px] text-muted">tracked sends older than 7 days</span>
+      </div>
+      <Table>
+        <TBody>
+          {rows.map((row) => (
+            <Tr key={row.id}>
+              <Td className="font-medium">{row.to_email}</Td>
+              <Td className="text-muted">{truncate(row.subject, 52)}</Td>
+              <Td className="text-xs text-muted">sent {relative(row.sent_at ?? "")}</Td>
+              <Td>
+                <Link
+                  href={`/emails/${row.id}`}
+                  className="text-xs text-brand hover:underline"
+                >
+                  Activity →
+                </Link>
+              </Td>
+            </Tr>
+          ))}
+        </TBody>
+      </Table>
+      <p className="border-t border-line px-5 py-3 text-[11px] text-muted/80">
+        {describeOpens(0)} is not the same as ignored — a text-only client, a blocked image, or a
+        corporate proxy that refuses external images all read the same here.
+      </p>
+    </section>
+  );
 }
 
 type Queue = Awaited<ReturnType<typeof leadsRepo.queue>>;

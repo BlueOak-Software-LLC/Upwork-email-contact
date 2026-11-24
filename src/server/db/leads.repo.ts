@@ -10,7 +10,26 @@ import type {
   ProposalRow,
 } from "@/types/lead";
 import { ApiError } from "@/server/http/errors";
+import { jobIdCandidates, jobUrlCandidates, normalizeJobUrl } from "@/lib/job-ref";
 import { logger } from "@/lib/logger";
+
+/** Which field proved a payload is the job we already have. */
+export type MatchedBy = "job_id" | "job_url" | "dedupe_key";
+
+/**
+ * Name the identifier a `dedupe_key` hit really represents, so the ingest
+ * warning can say "matched on job_id" instead of naming an internal hash.
+ */
+function explainMatch(
+  row: { job_id: string | null; job_url: string | null; dedupe_key: string },
+  ref: { jobId: string | null; jobUrl: string | null },
+): MatchedBy {
+  const incomingIds = jobIdCandidates(ref);
+  const storedIds = jobIdCandidates({ jobId: row.job_id, jobUrl: row.job_url });
+  if (incomingIds.some((id) => storedIds.includes(id))) return "job_id";
+  if (row.job_url && row.job_url === normalizeJobUrl(ref.jobUrl)) return "job_url";
+  return "dedupe_key";
+}
 
 export const LEAD_COLUMNS =
   "id,dedupe_key,job_id,job_title,job_url,job_location,industry,company_mentioned,client_name,client_location,job_description,overall_confidence,status,error,received_at,created_at,updated_at";
@@ -48,17 +67,30 @@ export interface ListLeadsQuery {
 
 export const leadsRepo = {
   /**
-   * Insert-or-update by `dedupe_key` (job_id when present, else a hash of the
-   * job URL/title). Existing contacts are left alone unless `replaceContacts`.
+   * Insert-or-skip.
+   *
+   * A payload belongs to an existing lead when **either** identifier matches:
+   * `job_id`, or the job link (compared in canonical form, and also by the id
+   * embedded in that link). Matching on `dedupe_key` alone was not enough — a
+   * scrape that sends `job_id` and one that sends only a `?src=…` link describe
+   * the same Upwork post and used to produce two leads.
+   *
+   * A match does not write. The previous behaviour updated every column and
+   * reset `status` to `received`, which silently rolled a reviewed proposal back
+   * to a raw payload. Ingest now stores what is new and reports the collision;
+   * `refresh: true` is the explicit way to overwrite.
    */
-  async upsert(lead: NormalizedLead): Promise<{ row: LeadRow; created: boolean }> {
+  async upsert(
+    lead: NormalizedLead,
+    options: { refresh?: boolean } = {},
+  ): Promise<{ row: LeadRow; created: boolean; matchedBy: MatchedBy | null }> {
     const supabase = getAdminClient();
 
-    const { data: existing } = await supabase
-      .from("leads")
-      .select("id")
-      .eq("dedupe_key", lead.dedupeKey)
-      .maybeSingle();
+    const match = await this.findByJobRef({
+      jobId: lead.jobId,
+      jobUrl: lead.jobUrl,
+      dedupeKey: lead.dedupeKey,
+    });
 
     const payload = {
       dedupe_key: lead.dedupeKey,
@@ -77,16 +109,17 @@ export const leadsRepo = {
       raw_payload: lead.rawPayload as unknown as never,
     };
 
-    if (existing) {
+    if (match) {
+      if (!options.refresh) return { row: match.row, created: false, matchedBy: match.matchedBy };
       const { data, error } = await supabase
         .from("leads")
         .update({ ...payload, status: "received" as LeadStatus })
-        .eq("id", existing.id)
+        .eq("id", match.row.id)
         .select(LEAD_COLUMNS)
         .single();
 
       if (error) throw ApiError.upstream(`Failed to update lead: ${error.message}`);
-      return { row: data as LeadRow, created: false };
+      return { row: data as LeadRow, created: false, matchedBy: match.matchedBy };
     }
 
     const { data, error } = await supabase
@@ -96,7 +129,74 @@ export const leadsRepo = {
       .single();
 
     if (error) throw ApiError.upstream(`Failed to insert lead: ${error.message}`);
-    return { row: data as LeadRow, created: true };
+    return { row: data as LeadRow, created: true, matchedBy: null };
+  },
+
+  /**
+   * Which existing lead, if any, already covers this job — and by which field.
+   *
+   * Narrow indexed lookups instead of one `or()` filter: PostgREST needs the
+   * values escaped for that syntax, and a job title or URL with a comma in it
+   * would break the query string. Each `.in()` takes the candidate forms of one
+   * field, most canonical first.
+   *
+   * The last probe is a substring match, and it is deliberate. A lead stored
+   * from a link has `job_id = null` — the id lives inside the URL — so an
+   * incoming payload that carries only `job_id` cannot be found by equality.
+   * That is exactly the duplicate the user reported. It runs only after the two
+   * equality probes miss, and only for an id long enough (6+ characters) that
+   * `%<id>%` cannot plausibly hit an unrelated link.
+   */
+  async findByJobRef(ref: {
+    jobId: string | null;
+    jobUrl: string | null;
+    dedupeKey: string;
+  }): Promise<{ row: LeadRow; matchedBy: MatchedBy } | null> {
+    const supabase = getAdminClient();
+
+    const probes: Array<{ column: "job_id" | "job_url" | "dedupe_key"; values: string[]; kind: MatchedBy }> = [
+      { column: "job_id", values: jobIdCandidates({ jobId: ref.jobId, jobUrl: ref.jobUrl }), kind: "job_id" },
+      { column: "job_url", values: jobUrlCandidates(ref.jobUrl), kind: "job_url" },
+      { column: "dedupe_key", values: [ref.dedupeKey], kind: "dedupe_key" },
+    ];
+
+    for (const probe of probes) {
+      if (!probe.values.length) continue;
+      const { data, error } = await supabase
+        .from("leads")
+        .select(LEAD_COLUMNS)
+        .in(probe.column, probe.values)
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw ApiError.upstream(`Failed to look up lead by ${probe.column}: ${error.message}`);
+      if (data) {
+        const row = data as unknown as LeadRow;
+        return {
+          row,
+          // `dedupe_key` is the strongest check — it is the id, or a hash of the
+          // link — but reporting it tells the operator nothing. Say which
+          // identifier the key was standing in for.
+          matchedBy: probe.kind === "dedupe_key" ? explainMatch(row, ref) : probe.kind,
+        };
+      }
+    }
+
+    const id = jobIdCandidates({ jobId: ref.jobId, jobUrl: ref.jobUrl })[0];
+    if (id && id.length >= 6 && !ref.jobUrl) {
+      const { data, error } = await supabase
+        .from("leads")
+        .select(LEAD_COLUMNS)
+        .ilike("job_url", `%${id}%`)
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw ApiError.upstream(`Failed to look up lead by job link: ${error.message}`);
+      if (data) return { row: data as unknown as LeadRow, matchedBy: "job_url" };
+    }
+    return null;
   },
 
   async replaceContacts(leadId: string, contacts: NormalizedLead["contacts"]) {

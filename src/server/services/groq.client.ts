@@ -100,6 +100,10 @@ export async function groqJson<T = Record<string, unknown>>({
   const bodyFor = (temp: number, variant: BodyVariant, override?: ReasoningEffort) => {
     // A retry may force a different effort than the budget-derived default.
     const used = override ?? effort;
+    // gpt-oss accepts low/medium/high (and its own "auto"); `none` and
+    // `minimal` are answered with a 400 that names no parameter we could walk
+    // down the ladder for. Dropping the field is how you ask for no reasoning.
+    const sendable = variant.reasoning && SENDABLE_EFFORT.has(used);
     return JSON.stringify({
       model,
       messages: schemaHint
@@ -116,7 +120,7 @@ export async function groqJson<T = Record<string, unknown>>({
       [variant.tokenParam]: completionBudget,
       // GPT-OSS spends part of the completion budget on hidden reasoning; on a
       // tight allowance it is dropped so the visible document actually finishes.
-      ...(variant.reasoning && used ? { reasoning_effort: used } : {}),
+      ...(sendable ? { reasoning_effort: used } : {}),
       response_format: { type: "json_object" },
     });
   };
@@ -308,6 +312,12 @@ function stripFences(text: string) {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return (fenced?.[1] ?? trimmed).trim();
 }
+
+/**
+ * The effort values this model actually accepts. Anything else must be sent as
+ * "no reasoning_effort at all", not as the word the caller used.
+ */
+const SENDABLE_EFFORT = new Set<ReasoningEffort>(["low", "medium", "high"]);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

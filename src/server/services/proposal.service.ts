@@ -1,11 +1,14 @@
 import { getServerEnv } from "@/lib/env";
-import { brandConfig, estimateGroqCost, groqConfig } from "@/lib/env-extras";
+import { brandConfig, groqConfig } from "@/lib/env-extras";
+import { aiResolution } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { textToHtml } from "@/server/services/templates";
 import { ApiError } from "@/server/http/errors";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { proposalsRepo } from "@/server/db/outreach.repo";
-import { groqJson, type GroqUsage, type ReasoningEffort } from "@/server/services/groq.client";
+import type { ReasoningEffort } from "@/server/services/groq.client";
+import { aiCostOf, aiJson } from "@/server/services/ai";
+import type { AiUsage } from "@/server/services/ai/types";
 import {
   assertEmailShape,
   assertPpdShape,
@@ -68,7 +71,7 @@ export interface PpdGenerationResult {
   proposal: ProposalRow;
   ppd: ProposalPpd;
   warnings: string[];
-  usage: GroqUsage | null;
+  usage: AiUsage | null;
   costUsd: number | null;
   documentWords: number;
   prompt: PromptRunInfo;
@@ -81,7 +84,7 @@ export interface EmailGenerationResult {
   draftError: string | null;
   recipient: { email: string; source: "lead_contact" | "custom"; contactId: string };
   warnings: string[];
-  usage: GroqUsage | null;
+  usage: AiUsage | null;
   costUsd: number | null;
   prompt: PromptRunInfo;
 }
@@ -134,20 +137,22 @@ export async function generatePpdDocument({
     language: env.PROPOSAL_LANGUAGE,
   });
   const rendered = renderPromptPair(prompt, vars);
-  const maxTokens = prompt.maxTokens ?? groqConfig().maxTokens;
-  const modelUsed = model ?? groqConfig().model;
+  const ai = aiResolution();
+  const maxTokens = prompt.maxTokens ?? ai.maxTokens;
+  const modelUsed = model ?? ai.model;
 
   logger.info("ppd_generation_started", {
     leadId: lead.id,
     contactId: contact?.id ?? null,
     version,
+    provider: ai.provider,
     model: modelUsed,
     maxTokens,
     reasoningEffort: reasoningEffort ?? prompt.reasoningEffort ?? groqConfig().reasoningEffort,
   });
 
   const callModel = (effort?: ReasoningEffort) =>
-    groqJson<unknown>({
+    aiJson<unknown>({
       messages: [
         { role: "system", content: rendered.system },
         { role: "user", content: rendered.user },
@@ -209,7 +214,9 @@ export async function generatePpdDocument({
     version,
     output: { ppd },
     model: completion.model,
-    provider: "groq",
+    // Recorded per proposal: a lead generated last month on Groq and one today
+    // on Puter must be tellable apart from the row alone.
+    provider: completion.provider,
     usage: completion.usage,
     // The PDF waits for the review: 'pending' until it is previewed or sent.
     pdfStatus: "pending",
@@ -217,13 +224,17 @@ export async function generatePpdDocument({
 
   await leadsRepo.setStatus(lead.id, "proposal_ready");
 
-  const costUsd = completion.usage ? estimateGroqCost(completion.usage) : null;
+  const cost = aiCostOf(completion.usage);
   logger.info("ppd_generation_completed", {
     proposalId: proposal.id,
     version,
     words: ppdWordCount(ppd),
+    provider: completion.provider,
     usage: completion.usage,
-    costUsd,
+    costUsd: cost.usd,
+    // `billed` is Puter's real charge to the account; `estimated` is Groq's
+    // list-price math over the reported tokens.
+    costBasis: cost.basis,
     warnings,
   });
 
@@ -232,7 +243,7 @@ export async function generatePpdDocument({
     ppd,
     warnings,
     usage: completion.usage,
-    costUsd,
+    costUsd: cost.usd,
     documentWords: ppdWordCount(ppd),
     prompt: promptInfo(prompt, completion, maxTokens, rendered.system, rendered.user, rendered.unknown),
   };
@@ -293,9 +304,11 @@ export async function generateEmailDraft({
     ppd,
   });
   const rendered = renderPromptPair(prompt, vars);
-  const maxTokens = prompt.maxTokens ?? groqConfig().maxTokens;
+  const ai = aiResolution();
+  const maxTokens = prompt.maxTokens ?? ai.maxTokens;
 
   logger.info("email_draft_generation_started", {
+    provider: ai.provider,
     proposalId,
     leadId: proposal.lead_id,
     recipient: contact.normalized_value ?? contact.contact_value,
@@ -303,7 +316,7 @@ export async function generateEmailDraft({
     maxTokens,
   });
 
-  const completion = await groqJson<unknown>({
+  const completion = await aiJson<unknown>({
     messages: [
       { role: "system", content: rendered.system },
       { role: "user", content: rendered.user },
@@ -366,7 +379,7 @@ export async function generateEmailDraft({
     },
     warnings,
     usage: completion.usage,
-    costUsd: completion.usage ? estimateGroqCost(completion.usage) : null,
+    costUsd: aiCostOf(completion.usage).usd,
     prompt: promptInfo(prompt, completion, maxTokens, rendered.system, rendered.user, rendered.unknown),
   };
 }
@@ -496,7 +509,11 @@ function unknownVarWarnings(unknown: string[]): string[] {
 /** What actually went on the wire — the client may clamp the budget or effort. */
 function promptInfo(
   prompt: ResolvedPrompt,
-  completion: { model: string; reasoningEffort: ReasoningEffort; completionBudget: number },
+  completion: {
+    model: string;
+    reasoningEffort?: ReasoningEffort;
+    completionBudget: number;
+  },
   maxTokens: number,
   system: string,
   user: string,
@@ -510,7 +527,7 @@ function promptInfo(
     temperature: prompt.temperature,
     maxTokens: completion.completionBudget || maxTokens,
     requestedMaxTokens: maxTokens,
-    reasoningEffort: completion.reasoningEffort,
+    reasoningEffort: completion.reasoningEffort ?? null,
     system,
     user,
     unknownVars,
@@ -522,7 +539,7 @@ function placeholderPromptInfo(key: PromptRunInfo["key"], model: string | null):
     key,
     label: key === "ppd_document" ? "PPD document" : "Email draft",
     isDefault: true,
-    model: model ?? groqConfig().model,
+    model: model ?? aiResolution().model,
     temperature: 0,
     maxTokens: 0,
     requestedMaxTokens: 0,

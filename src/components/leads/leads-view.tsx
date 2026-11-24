@@ -409,10 +409,13 @@ function PipelineChips({ lead }: { lead: LeadSummary }) {
     { key: "channel", on: (lead.contact_count ?? 0) > 0, label: `${lead.contact_count ?? 0} channel(s) found` },
     {
       key: "doc",
-      on:
-        (lead.proposal_count ?? 0) > 0 ||
-        ["enriched", "proposal_ready", "draft_created", "sent"].includes(lead.status),
-      label: `${lead.proposal_count ?? 0} document version(s) written`,
+      // Only the count tells the truth now that ingest no longer writes a
+      // document: `status` reaches `enriched` as soon as a contact exists.
+      on: (lead.proposal_count ?? 0) > 0,
+      label:
+        (lead.proposal_count ?? 0) > 0
+          ? `${lead.proposal_count} document version(s) written`
+          : "no document yet — open the lead and click Generate PPD",
     },
     { key: "sent", on: lead.status === "sent", label: "email delivered" },
   ];

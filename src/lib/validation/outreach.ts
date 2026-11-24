@@ -33,6 +33,12 @@ export const ingestOptionsSchema = z.object({
   auto: z.enum(["true", "false"]).optional(),
   dry: z.enum(["true", "false"]).optional(),
   regenerate: z.enum(["true", "false"]).optional(),
+  /**
+   * `refresh=true` overwrites a lead whose job_id/job link matched. Without it
+   * a duplicate is reported and left alone, which is what a scraper re-posting
+   * the same job wants: never roll a reviewed proposal back to `received`.
+   */
+  refresh: z.enum(["true", "false"]).optional(),
   senderAccountId: z.string().uuid().optional(),
 });
 

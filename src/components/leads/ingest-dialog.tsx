@@ -51,8 +51,10 @@ const DESCRIPTION_ONLY = `{
 
 export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [text, setText] = useState("");
-  const [auto, setAuto] = useState<"" | "true" | "false">("");
+  // Manual is the default now: a paste should store, not spend tokens.
+  const [auto, setAuto] = useState<"" | "true" | "false">("false");
   const [regenerate, setRegenerate] = useState(false);
+  const [refresh, setRefresh] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const router = useRouter();
   const ingest = useIngestLead();
@@ -76,7 +78,11 @@ export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => 
     }
   }, [text]);
 
-  const query = [auto ? `auto=${auto}` : "", regenerate ? "regenerate=true" : ""]
+  const query = [
+    auto ? `auto=${auto}` : "",
+    regenerate ? "regenerate=true" : "",
+    refresh ? "refresh=true" : "",
+  ]
     .filter(Boolean)
     .join("&");
 
@@ -143,9 +149,9 @@ export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => 
               className="h-8 w-48 text-xs"
               aria-label="Generation mode"
             >
-              <option value="">server default (AUTO_ENRICH_LEADS)</option>
-              <option value="true">?auto=true — write the PPD now</option>
-              <option value="false">?auto=false — store only</option>
+              <option value="">server default (AUTO_ENRICH_LEADS = off)</option>
+              <option value="false">?auto=false — store only, I will click Generate</option>
+              <option value="true">?auto=true — write the PPD inside this request</option>
             </Select>
           </Field>
           <label className="flex items-center gap-2 pb-1 text-xs text-muted">
@@ -157,6 +163,17 @@ export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => 
               aria-label="Regenerate"
             />
             <code className="font-mono text-[11px]">?regenerate=true</code>
+          </label>
+          <label className="flex items-center gap-2 pb-1 text-xs text-muted">
+            <input
+              type="checkbox"
+              checked={refresh}
+              onChange={(event) => setRefresh(event.target.checked)}
+              className="accent-brand"
+              aria-label="Refresh duplicate"
+            />
+            <code className="font-mono text-[11px]">?refresh=true</code>
+            <span className="text-muted/80">overwrite a matched job_id / link</span>
           </label>
         </div>
 
@@ -187,7 +204,7 @@ export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => 
           >
             <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand border-t-transparent" />
             Storing the payload{elapsed > 8 ? ` — ${elapsed}s` : ""}.
-            {auto === "false"
+            {auto !== "true"
               ? " Nothing is generated, so this returns immediately."
               : " With generation on, step 1 (the document) runs inside this request and takes 30–60 s; the lead page opens as soon as it is ready."}
           </p>

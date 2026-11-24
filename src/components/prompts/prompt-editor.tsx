@@ -8,7 +8,7 @@ import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /**
- * Edit one Groq prompt pair (system + `{{variable}}` user template) and its
+ * Edit one prompt pair (system + `{{variable}}` user template) and its
  * model knobs. Used inline on the lead page and on /settings/prompts.
  *
  * Slots that have no value (a typo like `{{job_descritpion}}`) are highlighted

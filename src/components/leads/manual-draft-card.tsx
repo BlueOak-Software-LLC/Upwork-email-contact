@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 
 /**
- * "Write it myself" path: POST /api/leads/:id/drafts without a Groq call.
+ * "Write it myself" path: POST /api/leads/:id/drafts without a model call.
  *
  * Useful when the reviewer would rather type the note than edit the model's
  * copy, and it is also how a custom recipient enters the system — the address

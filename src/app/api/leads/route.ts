@@ -15,7 +15,7 @@ import { removeLeads } from "@/server/services/lead-delete.service";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
-/** Groq + SMTP per lead: give the function room on Vercel (Pro/fluid: 300). */
+/** Generation is not part of ingest any more, but ?auto=true still runs it here. */
 export const maxDuration = 120;
 
 async function readBody(request: NextRequest) {
@@ -42,15 +42,19 @@ export const GET = withApi(async (request: NextRequest) => {
 
 /**
  * API #2 — POST /api/leads
- * Receive an Upwork research payload (single object or array), store every
- * field, then — when the payload contains an email in `verified_contacts` or
- * `potential_contacts` — ask Groq for the PPD + email subject/content and open
- * an SMTP draft.
+ * Receive an Upwork research payload (single object or array) and store it.
+ * Nothing is generated: the document is written when a person clicks Generate
+ * on the lead page, or posts to `/api/leads/:id/generate` themselves.
+ *
+ * A payload whose `job_id` or job link already exists answers
+ * `duplicate: { leadId, matchedBy }` with `created: false` and changes nothing,
+ * so a scraper can re-post freely.
  *
  * Query flags:
- *   auto=false      store only, no generation
+ *   auto=true       generate on arrival (the old behaviour; default is manual)
  *   dry=true        same as auto=false
  *   regenerate=true force a new proposal version
+ *   refresh=true    overwrite the matched lead instead of reporting a duplicate
  *   senderAccountId=<uuid> use a specific sending mailbox for the drafts
  */
 export const POST = withApi(async (request: NextRequest) => {
@@ -75,6 +79,7 @@ export const POST = withApi(async (request: NextRequest) => {
     autoEnrich: options.auto ? options.auto === "true" : undefined,
     dryRun: options.dry === "true",
     regenerate: options.regenerate === "true",
+    refresh: options.refresh === "true",
     senderAccountId: options.senderAccountId,
   };
 
@@ -100,13 +105,18 @@ export const POST = withApi(async (request: NextRequest) => {
     accepted: payloads.length,
     processed: results.length,
     failed: errors.length,
+    stored: results.filter((r) => r.created).length,
+    duplicates: results.filter((r) => r.duplicate).length,
     errors,
     leads: results.map((r) => ({
       id: r.lead.id,
       status: r.lead.status,
       job_title: r.lead.job_title,
+      job_id: r.lead.job_id,
       emails_found: r.emailContacts.length,
       drafts: r.drafts.length,
+      created: r.created,
+      ...(r.duplicate ? { duplicate: r.duplicate } : {}),
       generation: r.generation,
     })),
   });

@@ -1,19 +1,48 @@
-import { emailLogsRepo } from "@/server/db/email-logs.repo";
 import Link from "next/link";
-import { StatusBadge } from "@/components/ui/badge";
+import type { Metadata } from "next";
+import { emailLogsRepo } from "@/server/db/email-logs.repo";
+import { getTrackingOverview } from "@/server/queries";
+import { StatusBadge, Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { CopyButton } from "@/components/ui/copy-button";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { truncate } from "@/lib/utils";
+import { describeOpens, rate, TRACKING_TONE, trackingStateLabel, trackingStateOf } from "@/lib/tracking";
+import { LiveRefresh } from "@/components/layout/live-refresh";
+import type { EmailLogRow, TrackingState } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Email log" };
+export const metadata: Metadata = { title: "Email log" };
 
-export default async function EmailsPage() {
-  const logs = await emailLogsRepo
-    .list({ page: 1, pageSize: 50 })
-    .catch(() => null);
+const TRACKING_FILTERS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Any activity" },
+  { value: "clicked", label: "Clicked" },
+  { value: "opened", label: "Opened, not clicked" },
+  { value: "sent", label: "Sent, not opened" },
+  { value: "untracked", label: "Not tracked" },
+];
+
+interface PageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function EmailsPage({ searchParams }: PageProps) {
+  const params = await searchParams;
+  const activityFilter = pick(params.tracking);
+  const status = pick(params.status);
+
+  const [logs, stats] = await Promise.all([
+    emailLogsRepo
+      .list({
+        page: 1,
+        pageSize: 100,
+        ...(status ? { status: status as EmailLogRow["status"] } : {}),
+        ...(activityFilter ? { tracking: activityFilter as TrackingState } : {}),
+      })
+      .catch(() => null),
+    getTrackingOverview(7),
+  ]);
 
   if (!logs) {
     return (
@@ -22,34 +51,93 @@ export default async function EmailsPage() {
           tone="danger"
           icon="✕"
           title="public.email_logs could not be read"
-          description="Apply the migrations and set the Supabase env vars, then reload — this page re-runs the query on focus."
+          description="Apply the migrations (0005 adds the tracking columns) and set the Supabase env vars, then reload — this page re-runs the query on focus."
         />
       </div>
     );
   }
 
+  const items = logs.items;
+  const tracked = items.filter((log) => Boolean(log.tracking_token));
+  const opened = tracked.filter((log) => Number(log.open_count) > 0);
+  const clicked = tracked.filter((log) => Number(log.click_count) > 0);
+
   return (
     <div className="space-y-4">
+      <LiveRefresh intervalMs={30_000} />
+
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 className="text-sm font-medium text-muted">Delivery log</h2>
+          <h2 className="text-sm font-medium text-muted">Delivery and activity</h2>
           <p className="text-xs text-muted/80">
-            Every <code>POST /api/email/send</code> writes one row per recipient.
+            One row per recipient. <b>Status</b> is what the provider said;{" "}
+            <b>Activity</b> is what the tracked pixel and links reported.
           </p>
         </div>
         <span className="text-xs text-muted tabular">
-          {logs.total} total · showing {logs.items.length}
+          {logs.total} total · showing {items.length}
         </span>
       </div>
 
+      <div className="card p-4">
+        <div className="grid gap-4 sm:grid-cols-4">
+          <Figure label="Tracked here" value={String(tracked.length)} hint={`of ${items.length} shown`} />
+          <Figure
+            label="Opened"
+            value={String(opened.length)}
+            hint={`${rate(opened.length, tracked.length)} of tracked`}
+          />
+          <Figure
+            label="Clicked"
+            value={String(clicked.length)}
+            hint={`${rate(clicked.length, opened.length)} of openers`}
+          />
+          <Figure
+            label="No image part"
+            value={String(items.length - tracked.length)}
+            hint="sent before tracking, or untracked on purpose"
+          />
+        </div>
+        {stats?.schemaMissing ? (
+          <p className="mt-3 text-[11px] text-danger">
+            <code>0005_email_tracking.sql</code> is not applied: the delivery rows are readable but
+            their activity columns are not, so every Activity cell below reads
+            &ldquo;not tracked&rdquo; whatever happened.
+          </p>
+        ) : tracked.length === 0 ? (
+          <p className="mt-3 text-[11px] text-warn">
+            Nothing on this page carries a tracking pixel. Check{" "}
+            <code>EMAIL_TRACKING</code>, and that <code>TRACKING_DOMAIN</code> is a public HTTPS
+            origin a recipient can reach — a pixel nobody can load always reads zero.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wide text-faint">Activity</span>
+        {TRACKING_FILTERS.map((filter) => (
+          <Link
+            key={filter.value}
+            href={filter.value ? `/emails?tracking=${filter.value}` : "/emails"}
+            className={
+              filter.value === (activityFilter ?? "")
+                ? "rounded-full border border-brand/40 bg-brand/12 px-2.5 py-0.5 text-[11px] text-brand"
+                : "rounded-full border border-line-soft px-2.5 py-0.5 text-[11px] text-muted hover:border-line hover:text-ink"
+            }
+          >
+            {filter.label}
+          </Link>
+        ))}
+      </div>
+
       <div className="card overflow-hidden">
-        {logs.items.length === 0 ? (
+        {items.length === 0 ? (
           <EmptyState
-            title="Nothing sent yet"
+            title="Nothing matches this filter"
             description={
               <>
                 Every <code>POST /api/email/send</code> and every draft send writes one row per
-                recipient here, with provider, message id and error text.
+                recipient here, with provider, message id, error text and its tracking counters.
               </>
             }
             action={
@@ -63,65 +151,107 @@ export default async function EmailsPage() {
             <THead>
               <Tr>
                 <Th>Status</Th>
+                <Th>Activity</Th>
                 <Th>To</Th>
                 <Th>Subject</Th>
-                <Th>Body</Th>
                 <Th>Provider</Th>
                 <Th>When</Th>
               </Tr>
             </THead>
             <TBody>
-              {logs.items.map((log) => (
-                <Tr key={log.id}>
-                  <Td>
-                    <StatusBadge status={log.status} />
-                  </Td>
-                  <Td className="font-medium">
-                    <span className="flex items-center gap-1.5">
-                      {log.to_email}
-                      <CopyButton value={log.to_email} size="icon" label="Copy recipient" />
-                    </span>
-                    {log.draft_id ? (
-                      <div className="text-[11px] font-normal text-muted/70">
-                        draft {String(log.draft_id).slice(0, 8)}
-                      </div>
-                    ) : null}
-                  </Td>
-                  <Td className="text-muted">{truncate(log.subject, 48)}</Td>
-                  <Td className="max-w-xs text-xs text-muted/80">
-                    <details>
-                      <summary className="cursor-pointer list-none truncate">
-                        {truncate(log.body_text ?? "", 90)}
-                      </summary>
-                      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-canvas p-2 font-sans text-[11px] text-ink/80">
-                        {log.body_text}
-                      </pre>
-                    </details>
-                    {log.error ? (
-                      <div className="mt-1 text-danger">{truncate(log.error, 90)}</div>
-                    ) : null}
-                  </Td>
-                  <Td className="text-muted">
-                    {log.provider === "log" ? (
-                      <span className="rounded bg-warn/12 px-1.5 py-0.5 text-[11px] text-warn">
-                        log only (dry run)
+              {items.map((log) => {
+                const state = trackingStateOf(log);
+                return (
+                  <Tr key={log.id}>
+                    <Td>
+                      <StatusBadge status={log.status} />
+                    </Td>
+                    <Td>
+                      <Link href={`/emails/${log.id}`} className="group block">
+                        <Badge tone={TRACKING_TONE[state]}>{trackingStateLabel(state)}</Badge>
+                        <div className="mt-1 text-[11px] text-muted/80 group-hover:text-ink">
+                          {describeActivity(log)}
+                        </div>
+                      </Link>
+                    </Td>
+                    <Td className="font-medium">
+                      <span className="flex items-center gap-1.5">
+                        {log.to_email}
+                        <CopyButton value={log.to_email} size="icon" label="Copy recipient" />
                       </span>
-                    ) : (
-                      log.provider
-                    )}
-                    <div className="text-[11px] text-muted/60">
-                      {log.provider_message_id ? truncate(log.provider_message_id, 24) : "—"}
-                    </div>
-                  </Td>
-                  <Td className="text-xs text-muted">
-                    <TimeAgo value={log.created_at} />
-                  </Td>
-                </Tr>
-              ))}
+                      {log.draft_id ? (
+                        <div className="text-[11px] font-normal text-muted/70">
+                          draft {String(log.draft_id).slice(0, 8)}
+                        </div>
+                      ) : null}
+                    </Td>
+                    <Td className="text-muted">
+                      <Link href={`/emails/${log.id}`} className="hover:text-ink">
+                        {truncate(log.subject, 48)}
+                      </Link>
+                    </Td>
+                    <Td className="text-muted">
+                      {log.provider === "log" ? (
+                        <span className="rounded bg-warn/12 px-1.5 py-0.5 text-[11px] text-warn">
+                          log only (dry run)
+                        </span>
+                      ) : log.provider === "pending" ? (
+                        <span className="rounded bg-info/12 px-1.5 py-0.5 text-[11px] text-info">
+                          sending…
+                        </span>
+                      ) : (
+                        log.provider
+                      )}
+                      <div className="text-[11px] text-muted/60">
+                        {log.provider_message_id ? truncate(log.provider_message_id, 24) : "—"}
+                      </div>
+                    </Td>
+                    <Td className="text-xs text-muted">
+                      <TimeAgo value={log.created_at} />
+                      {log.last_event_at ? (
+                        <div className="text-[11px] text-brand/80">
+                          activity <TimeAgo value={log.last_event_at} />
+                        </div>
+                      ) : null}
+                    </Td>
+                  </Tr>
+                );
+              })}
             </TBody>
           </Table>
         )}
       </div>
+
+      <p className="text-[11px] text-muted/70">
+        An <b>opened</b> row means a client fetched the tracking image. Privacy proxies and link
+        scanners do that without a human reading anything, so treat it as a signal worth acting on,
+        not as proof.
+      </p>
     </div>
   );
+}
+
+function Figure({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
+      <div className="text-2xl font-semibold tabular">{value}</div>
+      <div className="text-[11px] text-muted">{hint}</div>
+    </div>
+  );
+}
+
+function describeActivity(log: EmailLogRow): string {
+  if (!log.tracking_token) return "no pixel in this message";
+  const opens = Number(log.open_count);
+  const clicks = Number(log.click_count);
+  if (!opens && !clicks) return "not opened yet";
+  const parts = [opens ? describeOpens(opens) : "", clicks ? `${clicks} click${clicks === 1 ? "" : "s"}` : ""];
+  if (log.last_open_at) parts.push(`last ${new Date(log.last_open_at).toLocaleString()}`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+function pick(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw && raw.trim() ? raw.trim() : undefined;
 }

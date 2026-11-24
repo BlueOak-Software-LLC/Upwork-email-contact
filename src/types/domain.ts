@@ -1,4 +1,8 @@
-import type { Database } from "@/types/database";
+import type {
+  Database,
+  TrackingEventType as DbTrackingEventType,
+  TrackingState as DbTrackingState,
+} from "@/types/database";
 
 export type Maybe<T> = T | null;
 
@@ -10,6 +14,34 @@ export type ContactStatus = Database["public"]["Enums"]["contact_status"];
 export type EmailLogRow = Database["public"]["Tables"]["email_logs"]["Row"];
 export type EmailLogInsert = Database["public"]["Tables"]["email_logs"]["Insert"];
 export type EmailLogStatus = Database["public"]["Enums"]["email_log_status"];
+
+export type TrackingEventType = DbTrackingEventType;
+export type TrackingState = DbTrackingState;
+
+export type TrackedLinkRow = Database["public"]["Tables"]["tracked_links"]["Row"];
+export type TrackingEventRow = Database["public"]["Tables"]["tracking_events"]["Row"] & {
+  /** PostgREST embed of the link an event belongs to. */
+  link?: Maybe<Pick<TrackedLinkRow, "label" | "destination_url">>;
+};
+
+/** What a `record_tracking_event` / `record_log_outcome` call answered. */
+export interface TrackingOutcome {
+  found: boolean;
+  recorded: boolean;
+  /** Same client asking again inside the dedupe window — not a new open. */
+  duplicate?: boolean;
+  /** Per-day cap reached; the click still redirects, the open still returns the image. */
+  capped?: boolean;
+  /** The RPC or column this call needs is not installed — say so, do not blame the row. */
+  unavailable?: boolean;
+  logId?: Maybe<string>;
+  eventId?: Maybe<string>;
+  log?: Maybe<Pick<EmailLogRow, "id" | "status" | "to_email" | "subject" | "open_count" | "click_count">>;
+  link?: Maybe<Pick<TrackedLinkRow, "id" | "token" | "destination_url" | "label" | "click_count">>;
+}
+
+/** Outcomes a human records by hand — the app never reads a mailbox. */
+export type TrackingOutcomeKind = "reply" | "meeting" | "not_interested";
 
 /** Shape the dashboard renders (snake_case straight from Postgres). */
 export type Contact = ContactRow;
@@ -57,6 +89,12 @@ export interface SendEmailResult {
   subject: string;
   createdAt: string;
   error: Maybe<string>;
+  /** True when this recipient's copy carries its own tracking pixel. */
+  tracked?: boolean;
+  /** The `/o/<token>.gif` secret for this recipient. */
+  trackingToken?: Maybe<string>;
+  /** Absolute pixel address, as it was written into the message. */
+  pixelUrl?: Maybe<string>;
 }
 
 export const CONTACT_STATUSES = [

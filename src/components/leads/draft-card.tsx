@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useEditDraft, useSendDraft, useSenderAccounts } from "@/lib/api/outreach-hooks";
+import { summarizeDraftActivity, useDraftActivity } from "@/lib/api/tracking-hooks";
 import type { EmailDraftRow, LeadContactRow } from "@/types/lead";
 import { PdfViewerModal } from "./pdf-viewer-modal";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,10 @@ export function DraftCard({
   const edit = useEditDraft(leadId);
   const accounts = useSenderAccounts();
   const toast = useToast();
+
+  // What the recipients did, once the draft has actually gone out.
+  const activity = useDraftActivity(draft.id, draft.status === "sent");
+  const activityLine = summarizeDraftActivity(activity.data ?? []);
 
   const [editing, setEditing] = useState(false);
   const [subject, setSubject] = useState(draft.subject);
@@ -99,6 +105,15 @@ export function DraftCard({
           <h3 className="flex items-center gap-2 text-sm font-medium">
             Email draft
             <StatusBadge status={draft.status} />
+            {sent && activityLine ? (
+              <Link
+                href={`/emails/${activity.data?.[0]?.logId ?? ""}`}
+                className="rounded-full border border-brand/35 bg-brand/10 px-2 py-0.5 text-[10px] text-brand hover:border-brand/60"
+                title="Open the activity for this send"
+              >
+                {activityLine}
+              </Link>
+            ) : null}
             {draft.recipient_source === "custom" ? (
               <span className="rounded bg-brand/12 px-1 text-[10px] text-brand">custom address</span>
             ) : draft.recipient_source === "lead_contact" ? (
@@ -290,11 +305,13 @@ export function DraftCard({
             ))}
             <li className="pt-1 text-[11px]">
               {results[0]?.provider === "log"
-                ? "EMAIL_PROVIDER=log — recorded only, no SMTP socket was opened."
-                : "The PDF was compiled from the reviewed PPD at send time."}{" "}
-              <a className="underline" href="/emails">
+                ? "EMAIL_PROVIDER=log — recorded only, no SMTP socket was opened, so nothing was tracked."
+                : results.some((r) => r.tracked)
+                  ? `Tracked: ${results.filter((r) => r.tracked).length}/${results.length} recipient${results.length === 1 ? "" : "s"} got a personal pixel. Opens and clicks appear on the activity page.`
+                  : "Sent untracked — EMAIL_TRACKING is off, or this deployment\u2019s tracking origin is not reachable."}{" "}
+              <Link className="underline" href="/emails">
                 see the log
-              </a>
+              </Link>
             </li>
           </ul>
         </div>

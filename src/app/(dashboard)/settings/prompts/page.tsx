@@ -5,7 +5,8 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Prompts · Upwork Outreach" };
 
 /**
- * /settings/prompts — the two Groq prompt pairs used by the pipeline.
+ * /settings/prompts — the two prompt pairs used by the pipeline, whichever
+ * model is configured answers them.
  *
  * `ppd_document` runs at step 1 (the proposal document only), `email_draft`
  * runs at step 3 against the reviewed PPD. Saved edits live in the

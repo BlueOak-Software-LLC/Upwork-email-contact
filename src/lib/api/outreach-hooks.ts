@@ -95,6 +95,8 @@ export function useRenderPdf(leadId: string) {
 export interface IngestResponse {
   lead: LeadRow;
   created: boolean;
+  /** Set when job_id or the job link already exists: the lead shown is the stored one. */
+  duplicate?: { leadId: string; matchedBy: "job_id" | "job_url" | "dedupe_key" };
   contacts: LeadContactRow[];
   proposals: ProposalRow[];
   drafts: EmailDraftRow[];
@@ -131,14 +133,24 @@ export function useIngestLead() {
     onSuccess: ({ data }) => {
       qc.invalidateQueries({ queryKey: ["leads"] });
       qc.invalidateQueries({ queryKey: leadKey(data.lead.id) });
-      toast.success(
-        data.created ? "Lead ingested" : "Lead updated (same dedupe key)",
-        `${data.contacts.length} contact(s) · ${
-          data.generation?.attempted
-            ? `${data.generation.succeeded} document(s) written`
-            : data.generation?.reason ?? "no document generated yet"
-        }`,
-      );
+      // A duplicate is not a failure and not an update: nothing changed, and
+      // saying "Lead updated" would imply the scraper had written something.
+      if (data.duplicate) {
+        toast.warn(
+          "Already stored — nothing added",
+          `Matched on ${data.duplicate.matchedBy.replace("_", " ")} to lead ${data.duplicate.leadId}. ` +
+            "Re-post with ?refresh=true to overwrite it.",
+        );
+      } else {
+        toast.success(
+          data.created ? "Lead stored" : "Lead refreshed",
+          `${data.contacts.length} contact(s) · ${
+            data.generation?.attempted
+              ? `${data.generation.succeeded} document(s) written`
+              : data.generation?.reason ?? "no document generated yet"
+          }`,
+        );
+      }
       for (const warning of data.warnings) toast.warn("Ingest warning", warning);
     },
     onError: (error) => toast.error("Ingest failed", errorMessage(error)),
@@ -498,6 +510,10 @@ export interface SendResult {
   to: string;
   provider: string;
   error: string | null;
+  /** True when this recipient's copy carries its own tracking pixel. */
+  tracked?: boolean;
+  /** Where the pixel lives, as written into the delivered message. */
+  pixelUrl?: string | null;
 }
 
 export function useSendDraft(leadId: string) {

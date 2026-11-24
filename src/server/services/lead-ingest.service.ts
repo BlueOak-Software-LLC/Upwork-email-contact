@@ -1,5 +1,5 @@
 import { getServerEnv } from "@/lib/env";
-import { groqConfig } from "@/lib/env-extras";
+import { aiConfigured } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { emailRecipients, normalizeLeadPayload } from "@/lib/validation/lead";
 import { leadsRepo } from "@/server/db/leads.repo";
@@ -16,12 +16,18 @@ import type {
 const MAX_GENERATIONS_PER_LEAD = 3;
 
 export interface IngestOptions {
-  /** Write the PPD automatically (env AUTO_ENRICH_LEADS by default). */
+  /** Write the PPD automatically (off by default — see `AUTO_ENRICH_LEADS`). */
   autoEnrich?: boolean;
   /** Force a new proposal version even if one exists. */
   regenerate?: boolean;
-  /** Persist the lead and contacts only — no Groq calls. */
+  /** Persist the lead and contacts only — no model calls. */
   dryRun?: boolean;
+  /**
+   * Overwrite an existing lead when its `job_id`/link matches, instead of
+   * reporting the duplicate and leaving the row alone. Off by default: a
+   * re-scrape must not roll a reviewed proposal back to `received`.
+   */
+  refresh?: boolean;
   /** Kept for API compatibility; the draft stores it once you generate the email. */
   senderAccountId?: string | null;
 }
@@ -29,13 +35,16 @@ export interface IngestOptions {
 /**
  * The ingest pipeline behind `POST /api/leads`:
  *
- *   payload → normalise → upsert lead → replace lead_contacts
- *           → pick email recipients from verified_contacts + potential_contacts
- *           → Groq: the PPD document only
+ *   payload → normalise → match by job_id / job link → store lead + contacts
+ *           → stop. The document is written when a person asks for it.
  *
- * Deliberately stops there. The email draft, the PDF and the send are human
- * decisions made on the lead page (see `generateEmailDraft` / `ensureDraftPdf`),
- * so nothing is rendered or attached before the PPD has been reviewed.
+ * Two deliberate stops. A payload whose `job_id` **or** job link already exists
+ * is reported as a duplicate rather than added or overwritten, because the
+ * scraper re-posts the same job with different tracking parameters. And nothing
+ * is generated on arrival: the email draft, the PDF and the send are human
+ * decisions made on the lead page, and so is writing the first draft of the
+ * document. `?auto=true` (or `AUTO_ENRICH_LEADS=true`) restores the old
+ * ingest-writes-documents behaviour for a caller that wants it.
  * Every step is individually failure-isolated: the lead row is always stored.
  */
 export async function ingestLeadPayload(
@@ -45,11 +54,43 @@ export async function ingestLeadPayload(
   const env = getServerEnv();
   const normalized = normalizeLeadPayload(payload);
 
-  const { row: lead, created } = await leadsRepo.upsert(normalized);
-  const storedContacts = await leadsRepo.replaceContacts(
-    lead.id,
-    normalized.contacts,
-  );
+  const { row: lead, created, matchedBy } = await leadsRepo.upsert(normalized, {
+    refresh: options.refresh,
+  });
+
+  // A duplicate is not re-written, contacts included: replacing them would
+  // discard whatever the reviewer corrected on the row we already had.
+  if (matchedBy && !created && !options.refresh) {
+    const stored = await leadsRepo.contacts(lead.id);
+    const emailContacts = stored.filter((c) => c.is_email);
+    const reason =
+      matchedBy === "job_id"
+        ? `job_id ${lead.job_id ?? "(stored)"}`
+        : matchedBy === "job_url"
+          ? `job link ${lead.job_url ?? "(stored)"}`
+          : "the same normalised job";
+    return {
+      lead,
+      created: false,
+      duplicate: { leadId: lead.id, matchedBy },
+      contacts: stored,
+      emailContacts,
+      proposals: [],
+      drafts: [],
+      warnings: [
+        `Duplicate of lead ${lead.id} (${reason}) — nothing was added. Post again with "refresh": true to overwrite it, or generate from the existing lead.`,
+      ],
+      generation: {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: true,
+        reason: "duplicate",
+      },
+    };
+  }
+
+  const storedContacts = await leadsRepo.replaceContacts(lead.id, normalized.contacts);
 
   const emailContacts = storedContacts.filter((c) => c.is_email);
   const warnings: string[] = [];
@@ -70,9 +111,9 @@ export async function ingestLeadPayload(
     generation.skipped = true;
     generation.reason = options.dryRun
       ? "dryRun"
-      : "AUTO_ENRICH_LEADS is disabled — generate the proposal on demand from the lead page";
+      : "manual — the lead is stored; click \"Generate PPD\" on the lead page (or POST /api/leads/:id/generate) to write the document";
     await stamp(lead, emailContacts.length ? "enriched" : "received");
-    return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
+    return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation, matchedBy);
   }
 
   // Recipients: emails from verified_contacts / potential_contacts (a key
@@ -80,9 +121,9 @@ export async function ingestLeadPayload(
   const recipients = emailRecipients(normalized.contacts);
 
   if (recipients.length === 0) {
-    if (!groqConfig().apiKey) {
+    if (!aiConfigured()) {
       generation.skipped = true;
-      generation.reason = "No recipient email in the payload and generation is not configured";
+      generation.reason = "No recipient email in the payload and no AI provider configured";
       await stamp(lead, "received");
       return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
     }
@@ -117,9 +158,9 @@ export async function ingestLeadPayload(
     return buildResult(lead, created, storedContacts, emailContacts, proposalsFromRun, [], warnings, generation);
   }
 
-  if (!groqConfig().apiKey) {
+  if (!aiConfigured()) {
     generation.skipped = true;
-    generation.reason = "GROQ_API_KEY is not set — proposals were not generated";
+    generation.reason = "No AI provider configured (PUTER_AUTH_TOKEN / GROQ_API_KEY) — proposals were not generated";
     warnings.push(generation.reason);
     await stamp(lead, "enriched");
     return buildResult(lead, created, storedContacts, emailContacts, [], [], warnings, generation);
@@ -244,10 +285,12 @@ function buildResult(
   drafts: EmailDraftRow[],
   warnings: string[],
   generation: IngestResult["generation"],
+  matchedBy?: "job_id" | "job_url" | "dedupe_key" | null,
 ): IngestResult {
   return {
     lead,
     created,
+    ...(matchedBy && !created ? { duplicate: { leadId: lead.id, matchedBy } } : {}),
     contacts,
     emailContacts,
     proposals,

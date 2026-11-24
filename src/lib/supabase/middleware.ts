@@ -11,12 +11,19 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * It deliberately does NOT redirect on its own: the dashboard reads through our
  * own /api routes (service role), so it still works while you are wiring auth.
  * Flip `REQUIRE_SESSION` on to gate every non-public route behind /login.
+ *
+ * `/o/<token>.gif` and `/c/<token>` are in PUBLIC_PATHS because a mail client
+ * has no session: the token in the URL is the only credential, and it is
+ * single-purpose. Note that the matcher below already skips `*.gif`, so the
+ * pixel route never reaches here — `/c/<token>` does, and must not bounce a
+ * client's click to a login page.
  */
 const REQUIRE_SESSION = false;
 
-const PUBLIC_PATHS = ["/login", "/auth", "/api/health", "/api/email/send"];
+const PUBLIC_PATHS = ["/login", "/auth", "/api/health", "/api/email/send", "/o", "/c"];
 
-function isPublic(pathname: string) {
+/** Exported so the public surface stays testable when `REQUIRE_SESSION` flips. */
+export function isPublic(pathname: string) {
   return (
     pathname === "/" ||
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))

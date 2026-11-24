@@ -9,7 +9,7 @@ import { generatePpdDocument, resolveRecipientContact } from "@/server/services/
 import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120; // Groq (with retries)
+export const maxDuration = 120; // one model call with retries (AI_TIMEOUT_MS < this)
 
 /** Route params: `withApi<P>` wraps P as `{ params: Promise<P> }`. */
 type Ctx = { id: string };
@@ -26,7 +26,8 @@ async function readJsonOrEmpty(request: NextRequest) {
 
 /**
  * STEP 1 — POST /api/leads/:id/generate
- * Groq writes **only the PPD document**. No email copy, no draft and no PDF:
+ * The configured model writes **only the PPD document**. No email copy, no
+ * draft and no PDF:
  * those wait until a human has reviewed the document (`generate-email`, `send`).
  *
  * Body (all optional):

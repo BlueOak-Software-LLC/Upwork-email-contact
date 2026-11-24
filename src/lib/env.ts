@@ -37,6 +37,39 @@ const ServerEnvSchema = z.object({
   // Encrypts sender-account SMTP passwords before they are stored in Postgres
   APP_ENCRYPTION_KEY: z.string().min(16).optional(),
 
+  // ── Proposal generation: which AI answers the prompt ──────────────────────
+  // `auto` prefers Puter when PUTER_AUTH_TOKEN is present, then Groq when
+  // GROQ_API_KEY is. Puter is the keyless, per-user-billed route: it has no
+  // Groq-style tokens-per-minute wall, which is what blocked generation here.
+  AI_PROVIDER: z.enum(["auto", "puter", "groq", "none"]).default("auto"),
+  /**
+   * A Puter auth token (`puter login` prints it; the CLI also reads
+   * PUTER_AUTH_TOKEN). It belongs to a Puter account, and that account is
+   * billed for the usage — the User-Pays model, so this app holds no AI key of
+   * its own and Groq's free-tier ceiling stops being the limit on how many
+   * proposals you can write in a day.
+   */
+  PUTER_AUTH_TOKEN: z.string().min(8).optional(),
+  PUTER_API_ORIGIN: z.string().url().default("https://api.puter.com"),
+  /**
+   * Claude Sonnet 5.5 (Anthropic, Sep 2026): 1M-token context, 128K max output,
+   * positioned by Anthropic for producing documents, and $2/$10 per million —
+   * half Opus 5.5. Proposal writing is a long-form document task with a strict
+   * JSON shape, which is exactly what it is sold for.
+   */
+  PUTER_MODEL: z.string().default("anthropic/claude-sonnet-5-5"),
+  /** Second model tried when the first refuses or is unavailable. */
+  PUTER_FALLBACK_MODEL: z.string().default("openai/gpt-6.2-sol"),
+  /** Completion budget for either provider (was GROQ_MAX_TOKENS). */
+  AI_MAX_TOKENS: z.coerce.number().int().min(512).max(65_536).optional(),
+  /**
+   * Wall-clock budget for one generation call. Frontier writing models are
+   * slower than Groq's ASICs, and a 12k-token document takes real time — but
+   * this must stay under the route's `maxDuration` (120 s), or the platform
+   * kills the function and the lead keeps no reason why.
+   */
+  AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(115_000).default(105_000),
+
   // Groq — proposal generation. `llama-3.3-70b-versatile` was retired upstream
   // (404 model_not_found), so the default is a model verified against the API.
   GROQ_API_KEY: z.string().optional(),
@@ -81,7 +114,13 @@ const ServerEnvSchema = z.object({
   PROPOSAL_TITLE: z.string().max(120).default(""),
   /** e.g. "USD 45–65/hour — indicative, confirmed after a scoping call". */
   PROPOSAL_RATE: z.string().max(160).default(""),
-  AUTO_ENRICH_LEADS: booleanish(true),
+  /**
+   * Off by default: writing a proposal is a decision, not a side effect of a
+   * payload arriving. A lead is stored as `received`, and the reviewer clicks
+   * "Generate PPD" on the lead page (or POSTs /api/leads/:id/generate). Turn
+   * this on only if you want the old ingest-writes-documents behaviour back.
+   */
+  AUTO_ENRICH_LEADS: booleanish(false),
 
   // Proposal PDF rendering
   PDF_PROVIDER: z.enum(["pdfme", "none"]).default("pdfme"),
@@ -97,6 +136,28 @@ const ServerEnvSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_SECURE: booleanish(false),
+
+  // Email tracking (open pixel + link clicks) — see 0005_email_tracking.sql
+  /**
+   * Master switch. A no-op whenever `EMAIL_PROVIDER=log`, because nothing
+   * reaches an inbox in a dry run and a pixel that nobody can load is a lie.
+   */
+  EMAIL_TRACKING: booleanish(true),
+  /** Rewrite destinations in the body to `/c/<token>`. Opens work without it. */
+  LINK_TRACKING: booleanish(true),
+  /**
+   * Public HTTPS origin that serves `/o/*` and `/c/*`. Must be this app.
+   * Falls back to `NEXT_PUBLIC_APP_URL`. Unsetting it after a send is not
+   * cosmetic: every already-delivered email keeps the original URLs.
+   */
+  TRACKING_DOMAIN: z.string().url().optional(),
+  /** Days of `open`/`click` rows kept before `purge_tracking_events` deletes them. */
+  TRACKING_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(365),
+  /**
+   * Guards the retention purge when a scheduler calls it. Generate with
+   * `openssl rand -hex 32`; it is never logged and never sent to the browser.
+   */
+  CRON_SECRET: z.string().min(8).optional(),
 
   // App
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
@@ -214,6 +275,11 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
       "AUTO_ENRICH_LEADS is on but GROQ_API_KEY is unset: ingested leads are stored without proposals — generate them from the lead page once the key is set.",
     );
   }
+  if (env.AUTO_ENRICH_LEADS) {
+    envWarnings.push(
+      "AUTO_ENRICH_LEADS is on: every ingested payload spends tokens on a document nobody has read yet. Leave it off and generate per lead.",
+    );
+  }
   if (env.GROQ_MAX_TOKENS < 8000) {
     envWarnings.push(
       `GROQ_MAX_TOKENS=${env.GROQ_MAX_TOKENS} is tight: GPT-OSS bills reasoning against the same cap, so a 4–6 page document can run out mid-JSON.`,
@@ -224,10 +290,64 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
       "PROPOSAL_COMPANY is unset: proposal PDFs fall back to the EMAIL_FROM display name for the header and footer branding.",
     );
   }
+  const ai = aiResolution(env);
+  if (ai.provider === "none" && ai.requested !== "none") {
+    envWarnings.push(
+      `No AI provider available (${ai.reason}): leads are stored, and clicking "Generate PPD" will fail until PUTER_AUTH_TOKEN or GROQ_API_KEY is set.`,
+    );
+  } else if (ai.provider === "puter" && env.PUTER_FALLBACK_MODEL === env.PUTER_MODEL) {
+    envWarnings.push("PUTER_FALLBACK_MODEL equals PUTER_MODEL: a refusal has nowhere to go.");
+  }
+  pushTrackingDiagnostics(env);
   return {
     ...env,
     EMAIL_REPLY_TO: env.EMAIL_REPLY_TO || undefined,
   };
+}
+
+/**
+ * The origin baked into every pixel and redirect URL, and the honest state of
+ * the tracking switch.
+ *
+ * `trackingEnabled()` is the single answer to "should this send be tracked":
+ * it also refuses `log` mode, so a staging run cannot mint live tokens.
+ */
+export function trackingOrigin(env: ServerEnv = getServerEnv()): string {
+  return (env.TRACKING_DOMAIN ?? env.NEXT_PUBLIC_APP_URL).replace(/\/+$/, "");
+}
+
+export function trackingEnabled(env: ServerEnv = getServerEnv()): boolean {
+  return env.EMAIL_TRACKING && env.EMAIL_PROVIDER !== "log";
+}
+
+export function linkTrackingEnabled(env: ServerEnv = getServerEnv()): boolean {
+  return trackingEnabled(env) && env.LINK_TRACKING;
+}
+
+function pushTrackingDiagnostics(env: ServerEnv) {
+  if (!env.EMAIL_TRACKING) return;
+  if (env.EMAIL_PROVIDER === "log") {
+    envWarnings.push(
+      "EMAIL_TRACKING is on but EMAIL_PROVIDER=log: no tracking tokens are minted, because a dry run delivers nothing that could load a pixel.",
+    );
+    return;
+  }
+  const origin = trackingOrigin(env);
+  const local = /^(https?):\/\/(localhost|127\.|\[::1\]|0\.0\.0\.0)/i.test(origin);
+  if (local) {
+    envWarnings.push(
+      `Tracking origin is ${origin}: a real mailbox cannot reach it, so opens and clicks will never record. Set TRACKING_DOMAIN to the deployed HTTPS URL (curl -I https://<host>/api/health proves it is reachable).`,
+    );
+  } else if (origin.startsWith("http://")) {
+    envWarnings.push(
+      `TRACKING_DOMAIN is not HTTPS (${origin}): mail clients block mixed-content images, so the pixel will not load in a delivered email.`,
+    );
+  }
+  if (env.LINK_TRACKING) {
+    envWarnings.push(
+      "LINK_TRACKING is on: destination URLs found in the email body are rewritten to /c/<token>. Links inside the proposal PDF are never rewritten.",
+    );
+  }
 }
 
 /** Values safe to ship to the browser. */
@@ -235,3 +355,58 @@ export const publicEnv = {
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
 } as const;
+
+/** Which provider will actually answer the next generation call, and why. */
+export type AiProviderName = "puter" | "groq" | "none";
+
+export interface AiResolution {
+  provider: AiProviderName;
+  /** What `AI_PROVIDER` asked for (`auto` resolved to the provider below). */
+  requested: "auto" | "puter" | "groq" | "none";
+  model: string;
+  /** Set when the request could not be honoured, for the settings UI to show. */
+  reason: string | null;
+  /** Completion budget shared by both providers. */
+  maxTokens: number;
+}
+
+/**
+ * The single place that answers "what writes proposals here".
+ *
+ * `auto` prefers Puter because it is the route without a per-minute token
+ * ceiling; Groq stays configured as the fallback so a missing Puter token is an
+ * inconvenience rather than a dead pipeline. A wrong choice is reported, never
+ * silently swapped: if `AI_PROVIDER=puter` and there is no token, generation
+ * fails with the reason instead of quietly spending Groq quota.
+ */
+export function aiResolution(env = getServerEnv()): AiResolution {
+  const hasPuter = Boolean(env.PUTER_AUTH_TOKEN);
+  const hasGroq = Boolean(env.GROQ_API_KEY);
+  const maxTokens = env.AI_MAX_TOKENS ?? env.GROQ_MAX_TOKENS;
+
+  const pick = (provider: AiProviderName, reason: string | null): AiResolution => ({
+    provider,
+    requested: env.AI_PROVIDER,
+    model: provider === "puter" ? env.PUTER_MODEL : provider === "groq" ? env.GROQ_MODEL : "",
+    reason,
+    maxTokens,
+  });
+
+  switch (env.AI_PROVIDER) {
+    case "puter":
+      return pick(hasPuter ? "puter" : "none", hasPuter ? null : "PUTER_AUTH_TOKEN is not set");
+    case "groq":
+      return pick(hasGroq ? "groq" : "none", hasGroq ? null : "GROQ_API_KEY is not set");
+    case "none":
+      return pick("none", "AI_PROVIDER=none — generation is disabled");
+    default:
+      if (hasPuter) return pick("puter", null);
+      if (hasGroq) return pick("groq", null);
+      return pick("none", "Neither PUTER_AUTH_TOKEN nor GROQ_API_KEY is set");
+  }
+}
+
+/** True when some provider can answer a generation call right now. */
+export function aiConfigured(env = getServerEnv()) {
+  return aiResolution(env).provider !== "none";
+}

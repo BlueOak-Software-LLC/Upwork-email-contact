@@ -36,7 +36,7 @@ export const GET = withApi<Ctx>(async (request, { params }) => {
 /**
  * POST /api/leads/:id/drafts — write it yourself.
  *
- * No Groq call at all: this is the escape hatch for a custom email to a custom
+ * No model call at all: this is the escape hatch for a custom email to a custom
  * address (the recipient does not have to come from the payload). The PDF is
  * still rendered from the reviewed PPD at send time when `proposalId` is set.
  *

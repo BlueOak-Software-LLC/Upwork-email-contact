@@ -245,6 +245,12 @@ export interface ProposalOutput {
 export interface IngestResult {
   lead: LeadRow;
   created: boolean;
+  /**
+   * Set when this payload describes a job already stored: `job_id` or the job
+   * link matched an existing row, so nothing was added. The lead in `lead` is
+   * the one that was already there.
+   */
+  duplicate?: { leadId: string; matchedBy: "job_id" | "job_url" | "dedupe_key" };
   contacts: LeadContactRow[];
   emailContacts: LeadContactRow[];
   proposals: ProposalRow[];

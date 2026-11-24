@@ -11,6 +11,7 @@ import type {
   NormalizedLead,
 } from "@/types/lead";
 import { LEAD_CONFIDENCES } from "@/types/lead";
+import { jobIdCandidates, normalizeJobId, normalizeJobUrl } from "@/lib/job-ref";
 
 /**
  * The scraper payload is parsed loosely on purpose: every field may be null,
@@ -240,8 +241,15 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
   // keys at the top level. Nested wins (that is what the scraper writes), the top
   // level is the fallback — reading only one side silently dropped a title, and
   // the title feeds both the prompt and the dedupe key.
-  const jobId = str(job.job_id) ?? str(raw.job_id);
-  const jobUrl = str(job.job_url) ?? str(raw.job_url) ?? str(job.url) ?? str(raw.url);
+  // Canonical: Upwork links carry the id with a `~02` prefix that is not part
+  // of the identifier, and the column has to stay comparable to the id a later
+  // payload's link implies.
+  const jobId = normalizeJobId(str(job.job_id) ?? str(raw.job_id)) || null;
+  // Canonical form, so a re-scrape with different tracking parameters still
+  // matches. The original string survives in raw_payload.
+  const jobUrl = normalizeJobUrl(
+    str(job.job_url) ?? str(raw.job_url) ?? str(job.url) ?? str(raw.url),
+  ) || null;
   const jobTitle =
     str(job.job_title) ?? str(raw.job_title) ?? str(job.title) ?? str(raw.title);
   const clientName =
@@ -314,8 +322,13 @@ export function computeDedupeKey(parts: {
   industry?: string | null;
 }): string {
   const { jobId, jobUrl, jobTitle, clientName, jobDescription, companyMentioned, industry } = parts;
-  if (jobId) return jobId;
-  if (jobUrl) return sha1(jobUrl.toLowerCase());
+  // The id, whether it came from `job_id` or is embedded in the link. Two
+  // scrapes of one Upwork post differ in tracking query and `~02` prefix, so
+  // both forms have to land on the same key or the lead is filed twice.
+  const ids = jobIdCandidates({ jobId, jobUrl });
+  if (ids.length) return ids[0]!;
+  const canonicalUrl = normalizeJobUrl(jobUrl);
+  if (canonicalUrl) return sha1(canonicalUrl);
   if (jobTitle || clientName) {
     return sha1(`${(jobTitle ?? "").toLowerCase()}|${(clientName ?? "").toLowerCase()}`);
   }

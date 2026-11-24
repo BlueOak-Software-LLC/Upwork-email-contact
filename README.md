@@ -22,9 +22,10 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 | Data | Supabase Postgres (RLS on, service-role access from the server), Supabase Storage (`proposals` bucket), Supabase Auth (magic link) |
 | Client data | TanStack Query v5 hitting our own `/api` routes |
 | Validation | Zod v4 for env, inbound payloads, and LLM output coercion |
-| LLM | Groq (`llama-3.3-70b-versatile`, JSON mode) — proposal + email generation |
+| LLM | **Puter.js** (default: `anthropic/claude-sonnet-5-5`, fallback `openai/gpt-6.2-sol`) — keyless, billed to the Puter account, no per-minute ceiling. **Groq** (`openai/gpt-oss-120b`, JSON mode) stays configured as the alternative. `AI_PROVIDER=auto\|puter\|groq\|none` picks one; the prompt, the PPD contract and the review flow are identical either way |
 | PDF | pdfme (`@pdfme/generator`) with a repo-owned template |
 | Email out | SMTP per sender account (nodemailer) or `resend` / `log` via env |
+| Email tracking | 1×1 pixel per recipient + `/c/` link redirects, recorded by Postgres RPCs (§7) |
 | Secrets | `API_MASTER_KEY` guards `/api`; SMTP passwords AES-256-GCM encrypted with `APP_ENCRYPTION_KEY` |
 
 ## 2. Structure
@@ -36,37 +37,50 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │                                      proposals, email_drafts, storage bucket
 │   ├── 0003_prompt_templates_review_flow.sql  prompt_templates, ppd_reviewed_at,
 │   │                                          pdf_generated_at, recipient_source
-│   └── 0004_job_description_ingestion.sql job_description in the search tsvector,
-│                                          recipient-less proposal version lane,
-│                                          leads_awaiting_recipient view
+│   ├── 0004_job_description_ingestion.sql job_description in the search tsvector,
+│   │                                      recipient-less proposal version lane,
+│   │                                      leads_awaiting_recipient view
+│   └── 0005_email_tracking.sql            email_logs engagement columns,
+│                                          tracked_links, tracking_events,
+│                                          record_tracking_event / record_log_outcome /
+│                                          purge_tracking_events (service role only)
 ├── templates/pdfme/proposal-template.json # ← reference copy of one compiled doc (Designer import)
 ├── src/
 │   ├── app/
 │   │   ├── (dashboard)/                   FRONTEND
-│   │   │   ├── page.tsx                   overview (contacts + leads + sends)
+│   │   │   ├── page.tsx                   overview (contacts + leads + sends + opens)
 │   │   │   ├── leads/page.tsx             ingested payloads, filters, search
 │   │   │   ├── leads/[id]/page.tsx        job description + contacts + proposal + draft
-│   │   │   ├── contacts/ emails/ settings/senders/ settings/prompts/ api-docs/
+│   │   │   ├── contacts/ emails/ emails/[id]/ settings/senders/ settings/prompts/
+│   │   │   │   settings/tracking/ settings/ai/ api-docs/
 │   │   │   └── actions.ts                 sign-out server action
+│   │   ├── o/[token]/route.ts             GET pixel (public, no session, always a gif)
+│   │   ├── c/[token]/route.ts             GET tracked link → record click → 302 (public)
 │   │   ├── api/                           BACKEND (route handlers)
 │   │   │   ├── leads/route.ts             GET list (JSON) · POST ingest
 │   │   │   ├── leads/[id]/route.ts        GET detail · PATCH status · DELETE
-│   │   │   ├── leads/[id]/generate/route.ts   POST Groq → PPD + draft
+│   │   │   ├── leads/[id]/generate/route.ts   POST step 1 → PPD only (manual)
 │   │   │   ├── leads/[id]/pdf/route.ts    GET proposal PDF (render on demand)
 │   │   │   ├── drafts/[id]/route.ts       GET · PATCH (edit subject/body/sender)
 │   │   │   ├── drafts/[id]/send/route.ts  POST send over SMTP
 │   │   │   ├── sender-accounts/route.ts   GET · POST (encrypts SMTP password)
 │   │   │   ├── sender-accounts/[id]/…     PATCH · DELETE · POST test (verify)
 │   │   │   ├── email/send/route.ts        POST send (API #2)
-│   │   │   ├── email/route.ts             GET delivery log
+│   │   │   ├── email/route.ts             GET delivery log (+ engagement filter)
+│   │   │   ├── email/[id]/route.ts        GET one message: row + links + timeline
+│   │   │   ├── tracking/stats/route.ts    GET overview numbers + effective config
+│   │   │   ├── tracking/events/route.ts   GET raw open/click stream
+│   │   │   ├── tracking/outcome/route.ts  POST reply / meeting / not_interested
+│   │   │   ├── maintenance/purge/route.ts POST retention sweep (CRON_SECRET)
 │   │   │   ├── contacts/…                 manual contact list
 │   │   │   └── health/route.ts            GET probe
 │   │   ├── login/ · auth/callback/        magic-link auth
 │   │   └── layout.tsx · globals.css
 │   ├── components/
 │   │   ├── leads/     leads-view, lead-workspace, proposal-card, draft-card, contacts-list
-│   │   ├── contacts/ settings/ dashboard/ layout/ providers/ ui/
+│   │   ├── contacts/ settings/ (senders · prompts · tracking · ai) dashboard/ layout/ providers/ ui/
 │   ├── lib/
+│   │   ├── job-ref.ts                     canonical job_id / job_url: the dedupe identity
 │   │   ├── crypto.ts                      AES-256-GCM for stored secrets
 │   │   ├── env.ts · env-extras.ts         validated env + groq/pdf config
 │   │   ├── pdfme/                         compiler.ts (PPD → template+inputs) + template.ts (types)
@@ -75,11 +89,14 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   ├── services/lead-delete.service.ts  permanent removal + PDF storage cleanup
 │   │   └── supabase/                      client / server / admin / middleware
 │   ├── server/
-│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo
-│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · groq.client · templates · prompts/
-│   │   ├── http/          withApi · errors · responses · auth · rate-limit
+│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo · tracking.repo
+│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · templates · prompts/ · tracking/ (token · urls · links · build · headers) · ai/ (index · puter · groq · probe · types) · groq.client
+│   │   ├── http/          withApi · errors · responses · auth · rate-limit · id
 │   │   └── queries.ts     Server-Component reads
-│   └── types/             database.ts (generated-style) · lead.ts · domain.ts
+│   ├── types/             database.ts (generated-style) · lead.ts · domain.ts
+│   └── tests/             tracking-sql (real Postgres via PGlite) · tracking-body ·
+│                          tracking-routes · tracking-api · email-tracking
+├── scripts/check-tracking.mjs  # npm run check:tracking — is 0005 applied and reachable?
 ```
 
 Layering: `app/api/*` (transport) → `server/services` (orchestration) →
@@ -94,10 +111,116 @@ Layering: `app/api/*` (transport) → `server/services` (orchestration) →
 | `lead_contacts` | Every channel: `list_type` (verified/potential/company_page/linkedin/social/key_person), `channel` (email/phone/url/other), `contact_value`, `normalized_value`, `confidence`, `rationale`, `is_email`, `is_primary` |
 | `proposals` | Groq output: `ppd` (JSONB → pdfme), `email_subject`, `email_content`, `pdf_path`, `pdf_status`, `version`, token usage |
 | `email_drafts` | Draft first: `to_email`, `subject`, `body_text/html`, `attachments`, `sender_account_id`, `status` (draft/queued/sent/failed/cancelled) |
-| `email_logs` | Delivery audit (now linked to `draft_id`, `proposal_id`, `sender_account_id`) |
+| `email_logs` | Delivery audit (now linked to `draft_id`, `proposal_id`, `sender_account_id`) + engagement: `tracking_token`, `open_count`, `click_count`, `unique_click_count`, `first/last_open_at`, `first/last_click_at`, `last_event_at`. `status` stays delivery-only — `sent` and `opened` are different axes |
+| `tracked_links` | One row per clickable URL per message: `log_id`, `token`, `destination_url`, `label`, `position`, `click_count`, `last_clicked_at`. `on delete cascade` with the message |
+| `tracking_events` | Append-only timeline (`open`, `click`, `sent`, `reply`, `meeting`, `not_interested`): `log_id`, `link_id`, `occurred_at`, `user_agent`, `meta`. No IP column, ever |
+| RPCs | `record_tracking_event(kind, token, agent, at)`, `record_log_outcome(log_id, kind, at)`, `purge_tracking_events(before)` — `security definer`, `grant revoke from public/anon/authenticated`, service role only |
 
 Statuses on a lead: `received → enriched → proposal_ready → draft_created → sent`
 (+ `failed`, `archived`).
+
+Engagement is never stored in `email_logs.status`. It is derived, in this order:
+`click_count > 0 → clicked`, `open_count > 0 → opened`, `tracking_token is null → untracked`,
+otherwise `sent`. So a message that bounced and was somehow opened still reports the bounce.
+
+## 7. Email tracking
+
+Every delivered message gets a 24-byte URL-safe token and a 1×1 transparent GIF at the bottom of
+its HTML body:
+
+```
+<img src="https://<TRACKING_DOMAIN>/o/<token>.gif" width="1" height="1" alt=""
+     style="display:none" aria-hidden="true">
+```
+
+When a mail client loads that image, `GET /o/<token>.gif` records an `open` and returns the GIF —
+`200`, `image/gif`, `cache-control: no-store`, for a valid token, a forged one, a rate-limited one
+and a broken database alike. A reply that leaks "that token does not exist" is a oracle for
+enumerating who received what, so the endpoint never distinguishes anything.
+
+With `LINK_TRACKING=true`, every `http(s)` link in the body is rewritten to
+`https://<TRACKING_DOMAIN>/c/<link-token>` and the destination is stored in `tracked_links`.
+`GET /c/<token>` re-validates the destination at click time, records the click and issues a `302`.
+
+### What makes the numbers worth reading
+
+`public.record_tracking_event()` (in `supabase/migrations/0005_email_tracking.sql`) is the only
+writer, and it does four things a naive `update ... open_count = open_count + 1` cannot:
+
+- **Dedupes**: an identical `open` for the same message from the same truncated user-agent within
+  60 seconds is dropped. Gmail Image Proxy, Outlook's Safe Links and Apple's privacy proxy each
+  fetch the pixel on their own schedule; counting them would double every open.
+- **Caps**: 40 opens per message per day, 200 clicks per link per day. A bot that hammers the URL
+  cannot turn a 0 % open rate into a 100 % one.
+- **Locks**: `select ... for update` on the message row, so two simultaneous proxy fetches cannot
+  lose a count.
+- **Refuses**: a token that is not 22–64 URL-safe characters returns `found:false` without touching
+  a row; the endpoints run no arbitrary SQL and store no IP.
+
+Unique openers are counted as distinct messages opened (`email_logs.first_open_at is not null`);
+unique clickers are messages with at least one click. `click_count` counts every click, while
+`unique_click_count` counts distinct links — that difference is the "opened twice, clicked once"
+signal.
+
+### Where tracking is deliberately off
+
+| Case | Why |
+| --- | --- |
+| `EMAIL_PROVIDER=log` | nothing reaches an inbox; a pixel that cannot load would train you to ignore zeros |
+| `track: false` / `EMAIL_TRACKING=false` | one send, or the whole app |
+| `skipLog: true` | the token would belong to no row, so the event would be written off |
+| body with no HTML part | `textToHtml()` output is tracked, but a plain-text-only body cannot render a pixel — and no `<img>` tag pasted into a plain body is ever re-activated |
+| dashboard preview | `/emails/[id]` renders the stored body with the pixel stripped (`stripTrackingPixels`); the Overview "what a recipient gets" sample uses `preview: true`, which mints no token |
+| the proposal PDF | its links go to your portfolio, not through us; rewriting them would put a redirector between a client and the work |
+
+Manual outcomes (`reply`, `meeting`, `not_interested`) exist because the app sends mail but never
+reads a mailbox. They are recorded on the same timeline as opens and clicks, so "opened 4×, replied,
+booked" is one story in one table.
+
+### Turning it on
+
+```bash
+# 1. apply the migration once (Supabase SQL editor, after 0001–0004)
+#    supabase/migrations/0005_email_tracking.sql
+
+# 2. tell the app where recipients can reach it — a public HTTPS origin, not localhost
+TRACKING_DOMAIN=https://your-app.vercel.app
+EMAIL_TRACKING=true
+LINK_TRACKING=true
+TRACKING_RETENTION_DAYS=365
+CRON_SECRET=$(openssl rand -hex 32)   # only for the purge endpoint
+
+# 3. ask the database whether that is true
+npm run check:tracking
+```
+
+`check:tracking` reads `.env.local`, probes `email_logs`, `tracked_links`, `tracking_events` and the
+RPCs through PostgREST, and prints what is missing — it calls `record_tracking_event` with a token
+that belongs to nothing (which answers `found:false` and writes no row), sends no email, and prints
+no secret. PostgREST confirms the RPC signatures by name, so a wrong parameter list shows up here
+rather than as a silent 502 in production.
+
+Retention: `POST /api/maintenance/purge` (bearer `CRON_SECRET`, `x-vercel-cron: 1`, or an API key)
+deletes event rows older than `TRACKING_RETENTION_DAYS` and then **recomputes every counter** from
+the events that remain, under an advisory lock. A send from last year keeps "opened 3×, clicked 1×"
+without keeping the request log. Add to `vercel.json` when you want it automatic:
+
+```json
+{ "crons": [{ "path": "/api/maintenance/purge", "schedule": "0 4 * * *" }] }
+```
+
+### Two things that will bite you
+
+1. **Vercel Deployment Protection.** If "Real requests only" is on, `GET /o/…gif` returns `401` to
+   every recipient and every counter stays at zero forever. Exempt the two prefixes under
+   Vercel → Project → Settings → Deployment Protection → Protected Functions (`/o/*`, `/c/*`).
+   Our own middleware already treats both as public — `PUBLIC_PATHS` in
+   `src/lib/supabase/middleware.ts` — and the matcher excludes `*.gif`, so nothing on our side can
+   require a session there. The risk is entirely Vercel's edge in front of us.
+2. **Opens are not reads.** An open means one image request from an unknown client. Some providers
+   pre-fetch every image; some block all of them. Report opens as activity, never as interest — the
+   dashboard says "tracked opens" rather than "views" everywhere, and `/emails/[id]` keeps the raw
+   user-agent list next to the counters so you can see who actually fetched it.
 
 ## 4. The ingest contract
 
@@ -148,17 +271,31 @@ What happens next (`src/server/services/lead-ingest.service.ts`):
 1. `normalizeLeadPayload()` — trims strings, maps `notes`/`reason` → `rationale`,
    `contact_type`/`type` label + value → `channel`, flags `is_email` on
    `^[^@\s]+@[^@\s]+\.[a-z]{2,}$`, and turns `""` into null rather than an error.
-2. Upsert `leads` on `dedupe_key` (`computeDedupeKey`), in order: `job_id` →
-   SHA-1 of `job_url` → SHA-1 of `job_title + client_name` → **SHA-1 of the
-   description + company + industry**. That last one matters: with every
-   identifier null, hashing the empty string would fold unrelated posts into one
-   row and let a later payload silently overwrite an earlier one.
+2. **Match before inserting** (`leadsRepo.findByJobRef`, `src/lib/job-ref.ts`).
+   A payload is the same job when **either** identifier matches: `job_id`, or the
+   job link. Both are compared in canonical form — the link loses `www.`, the
+   fragment and tracking parameters (`?src=`, `utm_…`), and the id is read out of
+   the path when it is embedded there (`/jobs/~02<id>` → `<id>`, `?job_id=<id>` →
+   `<id>`) — because Upwork gives the same post two different-looking URLs. The
+   stored `job_id` is normalised the same way, so `~02…` never becomes a second
+   identity. Order of proof: `job_id` equality → `job_url` equality → `dedupe_key`
+   → one `%id%` substring probe of `job_url` (a lead stored from a link alone has
+   `job_id = null`, so an id-only payload could not otherwise find it; it runs
+   only after the equality probes miss, and only for ids of 6+ characters).
+   A match **adds nothing and changes nothing** — no status reset, no contact
+   rewrite — and answers `duplicate: { leadId, matchedBy }`; `?refresh=true` is
+   the explicit way to overwrite. If neither identifier is present, `dedupe_key`
+   falls back to SHA-1 of `job_title + client_name`, then of the **description +
+   company + industry**: hashing the empty string instead would fold unrelated
+   posts into one row and let a later payload silently overwrite an earlier one.
 3. `replaceContacts` rewrites `lead_contacts` but **keeps manual contacts**
    (addresses a human typed in), so re-ingesting never deletes a recipient you chose.
 4. **Recipients** = emails in `verified_contacts` + `potential_contacts` (a
    `key_people` email outranks a generic mailbox), ranked list → confidence →
    name-known, `info@/contact@/support@` penalised, top 3 used.
-5. With `AUTO_ENRICH_LEADS=true` each recipient gets **step 1 only**: a PPD
+5. **Nothing is generated.** The lead is stored (`received`, or `enriched` when
+   it has a channel) and the pipeline stops. With `?auto=true` /
+   `AUTO_ENRICH_LEADS=true` each recipient gets **step 1 only**: a PPD
    written by `generatePpdDocument()`. No email copy, no draft, no PDF.
    * **No address in the payload but the post text is there** → one
      recipient-less PPD is still written (`proposals.lead_contact_id is null`,
@@ -173,8 +310,11 @@ What happens next (`src/server/services/lead-ingest.service.ts`):
 7. Lead status is stamped (and returned) as `proposal_ready`; per-recipient errors
    come back in `warnings[]`.
 
-Flags: `?dry=true` (store only), `?auto=false`, `?regenerate=true` (new version),
-`?senderAccountId=<uuid>`. Env default: `AUTO_ENRICH_LEADS=true`.
+Flags: `?auto=true` (generate inside this request — the old behaviour),
+`?dry=true` (store only), `?regenerate=true` (new version),
+`?refresh=true` (overwrite a matched lead instead of reporting it),
+`?senderAccountId=<uuid>`. Env default: `AUTO_ENRICH_LEADS=false` — a payload
+arrives, nothing is generated, and the reviewer clicks.
 
 ## 5. PPD contract → compiled pdfme template
 
@@ -269,11 +409,49 @@ identity, and `renderProposalPdf()` stamps it again at render time — so a prop
 generated before `PROPOSAL_*` existed stops printing whatever `EMAIL_FROM` it had
 inherited, without touching a word of the reviewed prose.
 
-### Groq tokens, length and cost (measured on this pipeline)
+### Tokens, length and cost (measured on this pipeline)
 
-Groq writes the *content*; the PDF is rendered locally and costs **zero** extra
-tokens. `openai/gpt-oss-120b`: 131,072 context / 65,536 max completion tokens,
-$0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*` when pricing moves).
+**Puter (default).** One call, one document, no per-minute ceiling to clamp
+against. `anthropic/claude-sonnet-5-5` (Sep 2026): 1M-token context, 128K max
+output, $2 per M input / $10 per M output — chosen because Anthropic positions it
+for producing documents, which is exactly what `ppd_document` asks for, and it
+costs half Opus 5.5 for the same job. `openai/gpt-6.2-sol` is the fallback
+(same price band, 1.05M context, "clear and natural writing").
+
+| | Groq `gpt-oss-120b` | Puter `claude-sonnet-5-5` |
+| --- | --- | --- |
+| Who pays | your Groq key | the **Puter account** behind `PUTER_AUTH_TOKEN` |
+| Hard stop | ~8k tokens/minute, ~200k/day (≈35 documents) | the account's monthly allowance; no TPM wall |
+| Cost per document | ~$0.002 (estimated from tokens) | ~$0.01 (Puter reports the real charge) |
+| Latency | 6–19 s | slower: budget `AI_TIMEOUT_MS` (105 s) under the route's 120 s |
+| Cost basis in the log | `estimated` (list price × tokens) | `billed` (`usage.cost` in microcents) |
+
+The two are not interchangeable in the numbers they return, so `aiCostOf()`
+labels each run `billed` or `estimated` rather than mixing them into one column.
+
+**Getting the token.** Puter's Node entry point takes an auth token, and that
+account is billed (their User-Pays model) — which is how this app gets AI with no
+API key of its own:
+
+```bash
+npm i -g @heyputer/puter-cli && puter login     # browser flow
+puter whoami                                     # which account will be billed
+# paste the token into PUTER_AUTH_TOKEN in .env.local
+npm run dev                                       # /settings/ai → "Probe it"
+```
+
+The client here does **not** import `@heyputer/puter.js`: its Node entry runs the
+browser bundle inside `node:vm` and reads it off disk, which a Vercel serverless
+trace does not always carry. `src/server/services/ai/puter.ts` speaks the same
+wire the SDK uses — `POST {origin}/drivers/call`, `content-type:
+text/plain;actually=json`, token in the body — with `normalize: true` so the
+primary and the fallback model answer in one shape. `tests/ai-provider.test.ts`
+pins that body.
+
+**Groq (alternative).** `openai/gpt-oss-120b`: 131,072 context / 65,536 max
+completion tokens, $0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*`
+when pricing moves). Groq writes the *content*; the PDF is rendered locally and
+costs **zero** extra tokens.
 
 | `GROQ_REASONING_EFFORT` | wall clock | completion tokens (of which reasoning) | document | est. cost |
 | --- | --- | --- | --- | --- |
@@ -282,6 +460,10 @@ $0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*` when pricing moves)
 | unset (model default ≈ high) | 19 s | 8,000 (**6,296**) | 950 words, then truncated | $0.00511 |
 
 Lessons baked into the code:
+* **`reasoning_effort: "none"` is a lie gpt-oss does not accept** — it answers a
+  400 naming no parameter the compatibility ladder can walk. "No reasoning" is
+  sent by omitting the field (`SENDABLE_EFFORT`), which matters because the
+  budget tuner picks `none` on a tight allowance.
 * **Reasoning is billed against the same completion cap** as the visible JSON, so
   `GROQ_MAX_TOKENS` (12,000) needs headroom; hitting it raises the
   `completion used N of the M-token budget` warning and a parse error that names
@@ -310,6 +492,23 @@ Lessons baked into the code:
 Everything a human touches lives under `src/app/(dashboard)` and reads through
 `/api` only — never Supabase directly — so validation, encryption and logging
 stay on the server.
+
+**Engagement.** `/emails` is one row per recipient with delivery on the left and
+activity on the right (`not tracked` / `sent` / `opened` / `clicked`, with open and
+click counts and the last event), filterable by either axis. `/emails/<id>` is the
+story of a single message: counters, the tracked links with their own click counts,
+the raw event timeline with user-agents, the body as sent (pixel removed), and
+buttons to record `reply` / `meeting` / `not_interested`. The lead workspace shows
+the same thing compactly under a sent draft, and `/settings/tracking` states what
+the app is configured to do — including whether the database has the columns to
+record any of it.
+
+**Generation is a click.** Ingest stores; it does not write. A lead with no
+document shows **1 · Generate PPD** in the workspace (and its pipeline dot reads
+"no document yet" in the list), which runs step 1 against the configured model
+and stops at the document — no email copy, no PDF until you have reviewed it.
+`/settings/ai` says which model that click will call and probes it once, in 64
+tokens, without touching the database.
 
 **Data freshness.** `/leads/[id]` is server-rendered for the first paint, then
 handed to TanStack Query (`useLead(leadId, initialData)`), which every mutation
@@ -374,7 +573,7 @@ leads with an **attention queue**: documents awaiting review, reviewed docs with
 no email, drafts ready to send, PDFs marked stale after an edit — each linking to
 the step that clears it. Navigation collapses into a drawer below `md`.
 
-## 7. Setup
+## 8. Setup
 
 ```bash
 npm install                       # Next 15 + Supabase + Groq(fetch) + pdfme 6.2.8 + nodemailer
@@ -385,11 +584,12 @@ Then verify the toolchain you just installed:
 
 ```bash
 npm run check          # tsc --noEmit + eslint
-npm run build          # production build (24 routes)
+npm test               # 109 tests: tracking SQL on a real Postgres, the send path, routes, API
+npm run build          # production build — 27 route handlers + 11 dashboard pages
 node -e "console.log(require('@pdfme/generator') ? 'pdfme ok' : '')"  # no export-mismatch crash
 ```
 
-Supabase (apply migrations in order — `0001`, `0002`, `0003`, then `0004`):
+Supabase (apply migrations in order — `0001`, `0002`, `0003`, `0004`, then `0005`):
 
 ```bash
 supabase link --project-ref <ref> && supabase db push
@@ -397,7 +597,10 @@ supabase link --project-ref <ref> && supabase db push
 # `proposals` storage bucket; 0003 adds prompt_templates, proposals.ppd_reviewed_at
 # / pdf_generated_at and email_drafts.recipient_source (custom recipients);
 # 0004 folds job_information.job_description into leads.search, gives recipient-less
-# proposals their own version lane and adds the leads_awaiting_recipient view.
+# proposals their own version lane and adds the leads_awaiting_recipient view;
+# 0005 adds the engagement columns on email_logs plus tracked_links, tracking_events
+# and the record/purge RPCs (see §7 — without it the dashboard shows activity as
+# unavailable, not as zeros).
 # The app runs on 0001+0002 alone: prompt reads fall back to the code defaults and
 # the 0003/0004 columns the app writes are dropped with a `db_columns_missing` log
 # line naming this file — but saving edited prompts then returns 502.
@@ -411,8 +614,12 @@ Required env (see `.env.example`):
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | service role is server-only |
 | `API_MASTER_KEY` | `openssl rand -hex 32`; **required in production** — with it unset, `/api` is open in dev and answers `403` in prod |
 | `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords at rest |
+| `AI_PROVIDER` | `auto` (default) · `puter` · `groq` · `none`. `auto` prefers Puter, then Groq, by which credential exists |
+| `PUTER_AUTH_TOKEN` | the login token of a Puter account (`npm i -g @heyputer/puter-cli && puter login`). That account is billed; there is no API key of ours to rotate. Treat it as a password — it can read that account's cloud |
+| `PUTER_MODEL` / `PUTER_FALLBACK_MODEL` | default `anthropic/claude-sonnet-5-5` → `openai/gpt-6.2-sol`; any id from <https://developer.puter.com/ai/models/> |
+| `AI_MAX_TOKENS` / `AI_TIMEOUT_MS` | shared completion budget (defaults to `GROQ_MAX_TOKENS`) and wall clock; the timeout must stay under the route's 120 s |
 | `GROQ_API_KEY` | from <https://console.groq.com/keys>. **Rotate any key that was ever pasted into a chat/ticket/ticket-tracker** — this repo never stores it in code |
-| `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning |
+| `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning. `AUTO_ENRICH_LEADS` defaults **off**: ingest stores, a person clicks Generate |
 | `GROQ_MAX_TOKENS` / `GROQ_TOKENS_PER_MINUTE` / `GROQ_REASONING_EFFORT` | completion budget; effort is auto-tuned down on a tight TPM allowance |
 | `PROPOSAL_COMPANY` | who signs the document; the model cannot override it |  
 | `PROPOSAL_WEBSITE` | printed in the PDF header, the signature block and the email sign-off |  
@@ -420,6 +627,10 @@ Required env (see `.env.example`):
 | `PROPOSAL_TITLE` | the writer's role, printed under the name (`Luan Le · Senior Software Engineer`) |  
 | `PROPOSAL_RATE` | optional; empty means the writer proposes an indicative USD range for the scope |
 | `PDF_PROVIDER` / `PDFME_TEMPLATE_PATH` | `pdfme` \| `none` |
+| `EMAIL_TRACKING` / `LINK_TRACKING` | open pixel and `/c/` link rewrites; both default on, both forced off by `EMAIL_PROVIDER=log` |
+| `TRACKING_DOMAIN` | public HTTPS origin a recipient can reach; defaults to `NEXT_PUBLIC_APP_URL`, and a loopback/HTTP value is reported by `npm run check:tracking` |
+| `TRACKING_RETENTION_DAYS` | how long raw open/click rows survive the purge (default 365; counters are rebuilt after it) |
+| `CRON_SECRET` | `openssl rand -hex 32` — bearer token for `POST /api/maintenance/purge` |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` / `EMAIL_REPLY_TO` + `RESEND_API_KEY` or `SMTP_*` | fallback env-based sending; per-account SMTP wins when `senderAccountId` is given |
 
 ```bash
@@ -428,7 +639,7 @@ npm run check      # tsc --noEmit + eslint
 npm run db:types   # regenerate src/types/database.ts after schema changes
 ```
 
-## 8. Run it end to end
+## 9. Run it end to end
 
 The pipeline has four steps, and the PDF is deliberately last — nothing is
 rendered until a human has approved the document it would be rendered from.
@@ -448,8 +659,10 @@ curl -s -X POST http://localhost:3000/api/sender-accounts/<id>/test -H "x-api-ke
 curl -s -X POST "http://localhost:3000/api/leads" \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   --data-binary @lead.json
-# → lead + contacts stored; with AUTO_ENRICH_LEADS=true Groq also writes the PPD
-#   from job_information.job_description
+# → lead + contacts stored, nothing generated: AUTO_ENRICH_LEADS is off, so the
+#   model is only called when a person asks. ?auto=true writes the PPD inline.
+#   A second post of the same job_id / job link answers duplicate + matchedBy and
+#   adds nothing (npm test covers all six shapes; check with two identical posts).
 
 # 2b. a payload with the post body but no identifiers and no contacts still gets
 #     a document: it is written recipient-less (proposals.lead_contact_id = null)
@@ -480,6 +693,8 @@ curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate \
 # omit both → the lead's primary email; no email on the lead at all → a
 # recipient-less PPD is still written from job_information.job_description
 # → ppd JSON, words/tokens/cost, pdf_status: "pending", no draft, no PDF
+# this is the click the dashboard shows as "1 · Generate PPD": ingest never
+# calls it for you, and nothing is billed until someone does
 
 # ── STEP 2 · review it (dashboard tab "Edit PPD JSON", or PATCH here) ─────
 curl -s -X PATCH http://localhost:3000/api/proposals/<proposalId> \
@@ -505,6 +720,15 @@ curl -s -X POST http://localhost:3000/api/drafts/<draftId>/send \
 # 5. audit
 curl -s "http://localhost:3000/api/email?status=sent" -H "x-api-key: $API_MASTER_KEY"
 curl -s http://localhost:3000/api/prompts -H "x-api-key: $API_MASTER_KEY"
+
+# ── STEP 5 · activity (needs 0005 + a public HTTPS TRACKING_DOMAIN) ───────
+curl -s "http://localhost:3000/api/email?tracking=opened" -H "x-api-key: $API_MASTER_KEY"
+curl -s "http://localhost:3000/api/tracking/stats?days=7" -H "x-api-key: $API_MASTER_KEY"
+npm run check:tracking   # names the missing piece, if any
+# a real open cannot be simulated from this machine — the pixel URL is only
+# reachable by the recipient's mail client, so verify it after a live send:
+#   curl -si $TRACKING_DOMAIN/o/<tracking_token>.gif | head -6
+# → 200 image/gif, and the message's Activity cell in /emails ticks up.
 ```
 
 Dashboard pages: **Overview** · **Leads** (search/filter, click → detail) ·
@@ -526,7 +750,7 @@ template (`{{job_title}}`, `{{research_notes}}`, `{{rate}}`, `{{ppd_summary}}`, 
 with the generation report so you can see what produced what. Unknown slots are
 reported instead of silently blanked.
 
-## 9. Deploy to Vercel
+## 10. Deploy to Vercel
 
 ```bash
 vercel --prod        # or push to GitHub → Import Project
@@ -547,7 +771,7 @@ vercel --prod        # or push to GitHub → Import Project
    `x-api-key`; in production either sign in on the dashboard or use
    `?url=true` to get a signed Storage link instead.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
@@ -559,16 +783,25 @@ vercel --prod        # or push to GitHub → Import Project
 | `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
+| "I can't generate" — every click fails on quota | That is Groq's free tier, not the prompt. Switch the route: `puter login`, paste the token as `PUTER_AUTH_TOKEN`, and `AI_PROVIDER=auto` resolves to Puter (billed to that account, no tokens-per-minute wall). `/settings/ai` → **Probe it** proves the credential works before you generate a batch, and `GET /api/health` reports which provider is live. Nothing about the prompt, the PPD contract or the review flow changes between providers. |
+| `Puter: PUTER_AUTH_TOKEN is wrong or revoked` | The token is a login token, not an API key: it expires when you revoke it in the Puter dashboard. Run `puter login` again and re-paste it. (`token_auth_failed` on the wire.) |
+| `Puter: the account has spent its monthly allowance` | Real, and on that account, not yours: top up at puter.com/dashboard#billing, or set `AI_PROVIDER=groq` to spend the Groq key instead. The client does **not** silently switch providers — a fallback model is tried only when the *model* refused, never when the account is out. |
+| The same Upwork job appears twice in `/leads` | Pre-`src/lib/job-ref.ts` behaviour: dedupe compared `job_id` and the raw URL string, so one scrape with `~02…` in a link and another with `job_id` alone produced two rows. Now both are matched in canonical form, in either direction. Merge by hand: open the newer lead, note the older id, `DELETE /api/leads {"ids":[<newer>]}`. |
 | `Groq returned 429 … tokens per day (TPD): Limit 200000, Used 199672, Requested …` | The free tier's **daily** budget is spent (≈200k tokens ≈ 35–40 documents a day, one PPD running 4–5k). It resets at midnight UTC, so the client **stops retrying** on a TPD answer and says so — waiting would burn the same tokens. Upgrade the Groq tier, lower `GROQ_MAX_TOKENS`, or leave `AUTO_ENRICH_LEADS` off and generate in batches. A per-minute 429 is different: that one is retried up to three times, honouring `Retry-After`. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |
 | A deleted row reappears in the list a second later | `GET /api/leads` sends `Cache-Control: private, max-age=10`, so a refetch after a mutation replayed the old page. `apiFetch`/`apiFetchBlob` now pass `cache: "no-store"` — keep it if you add another client-side cache. |
 | Crash at import: *“'@pdfme/common' does not provide an export named 'createDynamicLayoutSplitRange'”* | pdfme version skew. Keep `@pdfme/common`, `@pdfme/generator`, `@pdfme/schemas` on the **same exact version** (pinned `6.2.8`, no caret). |
 | 500 responses hide the real reason | Outside production, `withApi` now echoes the message + top of the stack in `error.details` so you can debug without attaching a logger. |
+| Activity column reads **“not tracked”** on a message you know went out | Three different causes, and `/emails` says which: `EMAIL_PROVIDER=log` (nothing was delivered), the send predates `0005_email_tracking.sql`, or the body had no HTML to carry a pixel. `npm run check:tracking` probes the database and names the missing piece. |
+| Opens and clicks are all zero, but the pixel URL returns 200 from your laptop | **Vercel Deployment Protection.** With "Real requests only" on, recipient traffic to `/o/*` and `/c/*` gets `401` before Next ever sees it. Exempt both prefixes (Settings → Deployment Protection → Protected Functions). Second candidate: `TRACKING_DOMAIN` left on `localhost` or `http://` — a mail client cannot reach either. |
+| `upstream_error — Recording outcomes needs supabase/migrations/0005_email_tracking.sql` | The RPC is absent (or PostgREST cached the old schema). Apply 0005, then `notify pgrst, 'reload schema'` in the SQL editor. The route deliberately does not answer 404 here: the message row exists, the function does not. |
+| One Gmail open shows up as two events | Expected, and not a bug: Gmail fetches the pixel through `googleimageproxy.com` **and** `googleusercontent.com`, twice each. The 60-second dedupe window is keyed on the truncated user-agent, so genuinely different clients still count separately — that is why "unique openers" counts *messages opened*, not requests. |
+| A tracking link `302`s to the wrong host | It cannot. `validateDestination()` runs again at click time (and the stored URL was validated at send time), so a link edited straight in the database to a private/metadata address returns 400 instead of redirecting. |
 
 In dev, `/api/*` is open when `API_MASTER_KEY` is empty (logged as `api_open_dev_mode`);
 the same config in production answers `403` until you set a key.
 
-## 11. Security notes
+## 12. Security notes
 
 * **Removal is id-scoped and reported.** `DELETE /api/leads` takes 1–100 exact
   uuids — never a filter, never a wildcard — and answers with what left and what
@@ -584,16 +817,44 @@ the same config in production answers `403` until you set a key.
   invalidates stored passwords — re-save the accounts).
 * `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS and is only read from `src/server/**`;
   RLS stays enabled on every table with no public policies.
+* `PUTER_AUTH_TOKEN` is a **login token, not a scoped API key**: it can read the
+  Puter account's cloud, so it belongs in the server environment only (never a
+  `NEXT_PUBLIC_*` name, never a client bundle) and is revoked in the Puter
+  dashboard rather than rotated in code. It is read in `src/lib/env.ts` and sent
+  only from `src/server/services/ai/puter.ts`, in the body of one POST to
+  `PUTER_API_ORIGIN` — which defaults to `https://api.puter.com` and should stay
+  that way: an attacker-controlled origin would receive the token.
+* Generation cost lands on whoever owns that Puter account, not on this app.
+  That is the point of the User-Pays model, and also why `AI_PROVIDER=groq`
+  exists as an explicit, separately-billed escape hatch.
 * Email bodies, PPDs and raw payloads contain personal data — keep the bucket
   private, and add retention if your jurisdiction needs it.
 * Generation is untrusted input → LLM → stored text: the prompt forbids inventing
   prices/facts, and `sanitizeProposal()` caps lengths; still, **a human reviews the
   draft before `POST /api/drafts/:id/send`**. Nothing sends automatically.
+* **The tracking URLs are the only intentionally public endpoints**, so they carry the
+  least information that still works: tokens are 24 random bytes (`crypto.randomUUID`
+  grade, 184 bits) and unguessable; an unknown token is answered exactly like a known one;
+  `tracking_events` has no IP column and truncates the user-agent to 300 characters; the
+  three RPCs are `security definer` with `grant revoke from public, anon, authenticated`
+  so only the service role can call them, and the routes are the only caller. A leaked
+  `/o/<token>.gif` URL lets someone inflate one message's open count up to 40/day — it
+  reveals nothing, because the response is the same 42-byte GIF regardless. Treat a token as a
+  capability anyway: never log one at full length, and the retention purge removes the
+  request history while keeping the counters.
 
-## 12. Next steps
+## 13. Next steps
 
 * [ ] Replace the sample `deliverables`/`pricing` wording with your real service catalogue
 * [ ] Add `job_description` to the scraper payload so proposals get the full text
-* [ ] Move bulk generation to a queue (Inngest/QStash) if you ingest >20 leads/hour
-* [ ] Reply detection: IMAP polling or inbound webhook → set `status = replied`
-* [ ] Flip `REQUIRE_SESSION = true` in `src/lib/supabase/middleware.ts` once auth users exist
+* [ ] Batch generation: now that ingest is manual, a "generate these 10 leads" action on `/leads`
+      would want a queue (Inngest/QStash) rather than 10 sequential 120-second function calls
+* [ ] Per-lead model choice: `POST /api/leads/:id/generate` already accepts `{"model": "…"}`, so the
+      workspace could offer a model picker without any schema change
+* [ ] Reply detection: IMAP polling or inbound webhook → the `reply` outcome is already modelled in
+      `tracking_events`, so this becomes a writer rather than a schema change
+* [ ] Follow-up nudges driven by the tracking data (opened 3× in 48 h and no reply → nudge queue)
+* [ ] Flip `REQUIRE_SESSION = true` in `src/lib/supabase/middleware.ts` once auth users exist —
+      `/o/*` and `/c/*` are already in `PUBLIC_PATHS`, so gating the dashboard will not break tracking
+* [ ] Per-user accounts: `email_logs` has no owner column yet, so every authenticated user sees every
+      message; add `owner_id` + RLS before inviting a second person
