@@ -35,6 +35,7 @@
   const ASSISTANT = '[data-message-author-role="assistant"]';
   const USER = '[data-message-author-role="user"]';
   const ACTIVE_KEY = "upworkChatActive";
+  const SENT_KEY_PREFIX = "upworkChatSent:";
   const BUDGET_MS = 20 * 60 * 1000;
   const STABLE_MS = 12000;
   const STALL_MS = 4 * 60 * 1000;
@@ -317,19 +318,17 @@
     return null;
   }
 
-  async function beginFreshChat() {
-    const control = newChatControl();
-    if (!control) return;
-    if (location.pathname === "/" && answerNodes().length === 0) return;
-    try {
-      control.click();
-    } catch {
-      return;
+  // The current conversation is reused. The New chat control is only used as a
+  // readiness check: its presence means the signed-in shell has rendered. It is
+  // never clicked, because switching chats drops the conversation the user is
+  // looking at and makes the dashboard's phase disagree with the tab.
+  async function waitForShell(timeoutMs = 4000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (findComposer() && newChatControl()) return true;
+      await sleep(200);
     }
-    for (let tries = 0; tries < 24; tries += 1) {
-      await sleep(250);
-      if (location.pathname === "/" && answerNodes().length === 0 && findComposer()) return;
-    }
+    return Boolean(findComposer());
   }
 
   function answerLooksComplete(text) {
@@ -342,13 +341,28 @@
   }
 
   async function typePrompt(prompt) {
-    const looksTyped = () => clean(composerText(findComposer())) === clean(prompt);
+    const canonical = (value) => clean(value).replace(/\s+/g, " ").trim();
+    const wanted = canonical(prompt);
+    const markerStart = wanted.slice(0, 64);
+    // The system prompt is shared by every job, so the opening alone cannot
+    // tell one draft from another. The closing characters identify this job.
+    const markerEnd = wanted.slice(-64);
+    // Editors normalize newlines and trailing spaces, so exact equality is too
+    // strict and used to make the same prompt be typed again.
+    const looksTyped = () => {
+      const value = canonical(composerText(findComposer()));
+      if (!value || !markerStart || !markerEnd) return false;
+      return value.includes(markerStart) && value.includes(markerEnd);
+    };
     const ready = await waitForComposer();
     if (!ready) {
       throw new Error(
         "The ChatGPT message box was not found — the tab may still be loading or signed out. Reload chatgpt.com, sign in, then press Run again",
       );
     }
+    // A reload during typing keeps the draft in the editor. Do not type the
+    // same prompt over itself; the send step can run from what is already there.
+    if (looksTyped()) return;
     for (const approach of ["insert", "paste", "paint"]) {
       const composer = findComposer() || ready;
       selectComposer(composer);
@@ -362,9 +376,9 @@
       }
       // A raw textContent write can be visible for one frame and then be
       // reverted by the editor; only accept text that survives a beat.
-      for (let tries = 0; tries < 24; tries += 1) {
+      for (let tries = 0; tries < 16; tries += 1) {
         if (looksTyped()) {
-          await sleep(400);
+          await sleep(450);
           if (looksTyped()) return;
         }
         await sleep(150);
@@ -428,21 +442,37 @@
     return `composer=${name} chars=${chars} users=${userCount()}/${usersBefore} controls=[${controls.join(", ")}]`;
   }
 
-  async function waitForUserTurn(usersBefore, timeoutMs) {
+  // Typing into a thread that is still writing the previous answer makes the
+  // send control disappear and is the usual reason a prompt appears in the box
+  // but never runs. The worker sends one job at a time, but a manual question
+  // or a slow finish can still leave the tab busy.
+  async function waitForIdle(timeoutMs = 90_000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (userCount() > usersBefore) return true;
-      await sleep(300);
+      if (!stopButton()) return true;
+      await sleep(400);
     }
     return false;
   }
 
-  async function sendPrompt(composer, usersBefore, prompt) {
-    // Only a new user turn proves ChatGPT took the prompt; an emptied or
-    // rebuilt composer can also mean the page simply re-rendered, so it is
-    // only trusted together with a stop button or a chat URL change.
+  // A send is proven by any of the page's own signals, not just the optimistic
+  // user turn: the stop control appears while an answer is being written, and a
+  // new chat address means the request was accepted.
+  async function waitForSendSignal(usersBefore, startUrl, timeoutMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (userCount() > usersBefore) return true;
+      if (stopButton() || location.href !== startUrl) return true;
+      await sleep(200);
+    }
+    return false;
+  }
+
+  async function sendPrompt(composer, usersBefore) {
+    // One pass of the three send affordances. The prompt is never typed again
+    // here: a retype after a send that did work is what produced duplicate
+    // questions while the tab was still painting the first one.
     const startUrl = location.href;
-    const marker = clean(prompt).slice(0, 40);
     const attempts = [
       [
         "button",
@@ -465,37 +495,31 @@
       ],
     ];
 
-    // A slow or busy ChatGPT can take several seconds to add the optimistic
-    // user turn, and a re-render can drop the draft. Retype and retry rather
-    // than failing the job on the first quiet send.
-    for (let round = 0; round < 3; round += 1) {
-      composer = findComposer() || composer;
-      if (!clean(composerText(composer)).includes(marker)) {
-        await typePrompt(prompt);
-        composer = findComposer() || composer;
+    for (const [, fire] of attempts) {
+      let fired = false;
+      try {
+        fired = fire() !== false;
+      } catch {
+        /* the next attempt is tried */
       }
-      for (const [, fire] of attempts) {
-        let fired = false;
-        try {
-          fired = fire() !== false;
-        } catch {
-          /* the next attempt is tried */
+      if (!fired) continue;
+      if (await waitForSendSignal(usersBefore, startUrl, 6000)) return;
+      const current = findComposer() || composer;
+      if (!clean(composerText(current))) {
+        // An emptied box is the page's own acceptance signal. Give the stop
+        // control or user turn a moment to paint, then trust it and wait for
+        // the answer; the prompt is never put back, so a slow request cannot
+        // become a duplicate.
+        for (let tries = 0; tries < 6; tries += 1) {
+          if (await waitForSendSignal(usersBefore, startUrl, 300)) return;
+          await sleep(150);
         }
-        if (!fired) continue;
-        if (await waitForUserTurn(usersBefore, 6000)) return;
-        const current = findComposer() || composer;
-        if (!clean(composerText(current))) {
-          // ChatGPT clears the box as soon as it accepts the message; give a
-          // slow thread a moment to paint the user turn before giving up.
-          if (await waitForUserTurn(usersBefore, 3500)) return;
-          if (stopButton() || location.href !== startUrl) return;
-        }
-        composer = current;
+        return;
       }
-      await sleep(1200);
+      composer = current;
     }
     throw new Error(
-      `The prompt was typed but ChatGPT would not send it — press Enter in the ChatGPT tab, then press Run again (${sendDiagnostics(composer, usersBefore)})`,
+      `The prompt is still in the message box and ChatGPT did not start it — press Enter in the ChatGPT tab, then press Run again (${sendDiagnostics(composer, usersBefore)})`,
     );
   }
 
@@ -668,11 +692,32 @@
     }
   }
 
-  async function clearActive() {
+  async function clearActive(jobId) {
     try {
       await chrome.storage.local.remove(ACTIVE_KEY);
+      if (jobId) await chrome.storage.local.remove(SENT_KEY_PREFIX + jobId);
     } catch {
       /* nothing to clear */
+    }
+  }
+
+  // Written as soon as ChatGPT accepts a prompt. A reload then waits for the
+  // answer instead of typing the same prompt into the conversation again.
+  async function readSent(jobId) {
+    try {
+      const key = SENT_KEY_PREFIX + jobId;
+      const stored = await chrome.storage.local.get(key);
+      return stored?.[key] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function writeSent(jobId, data) {
+    try {
+      await chrome.storage.local.set({ [SENT_KEY_PREFIX + jobId]: data });
+    } catch {
+      /* storage is best effort */
     }
   }
 
@@ -682,7 +727,17 @@
     activeJobId = job.jobId;
     try {
       let state = job;
-      if (!resume || job.phase !== "waiting") {
+      let alreadySent = false;
+      if (resume && job.phase !== "waiting") {
+        const sent = await readSent(job.jobId);
+        if (sent && Number.isFinite(sent.beforeCount)) {
+          state = { ...job, ...sent, phase: "waiting" };
+          alreadySent = true;
+          await setActive(state);
+          tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting" });
+        }
+      }
+      if (!alreadySent && (!resume || job.phase !== "waiting")) {
         // The worker brings the tab forward before this message; wait for the
         // document to actually own focus, because the editor ignores some
         // programmatic input while it is in the background.
@@ -692,11 +747,16 @@
           /* the tab is already active */
         }
         await waitForDocumentFocus(3000);
-        // Persist the job before touching the page: opening "New chat" can
-        // replace the document, and the next injection resumes from storage.
+        if (!(await waitForIdle())) {
+          throw new Error(
+            "ChatGPT is still writing the previous answer — wait for it to finish in the ChatGPT tab, then press Run again",
+          );
+        }
+        // Persist the job before touching the page so a reload can resume it.
         await setActive({ ...job, phase: "opening" });
-        // A fresh chat keeps one lead's text out of the next lead's answer.
-        await beginFreshChat();
+        // Check that the signed-in shell is ready without clicking New chat:
+        // the user's current conversation is the one this job uses.
+        await waitForShell();
         const nodes = answerNodes();
         const beforeCount = nodes.length;
         const beforeLast = nodes.length ? textOf(nodes[nodes.length - 1]) : "";
@@ -709,7 +769,13 @@
         await typePrompt(prompt);
         const composer = findComposer();
         if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
-        await sendPrompt(composer, usersBefore, prompt);
+        await sendPrompt(composer, usersBefore);
+        await writeSent(job.jobId, {
+          beforeCount: state.beforeCount,
+          beforeLast: state.beforeLast,
+          usersBefore: state.usersBefore,
+          at: Date.now(),
+        });
         state = { ...state, phase: "waiting" };
         await setActive(state);
         await sleep(900);
@@ -727,7 +793,7 @@
       if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
       tell({ type: "CHATGPT_REPLY", jobId: job.jobId, text: answer });
-      await clearActive();
+      await clearActive(job.jobId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (cancelled.has(job.jobId)) {
@@ -735,7 +801,7 @@
       } else {
         tell({ type: "CHATGPT_PROBLEM", jobId: job.jobId, message });
       }
-      await clearActive();
+      await clearActive(job.jobId);
     } finally {
       activeJobId = null;
       cancelled.delete(job.jobId);

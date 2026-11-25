@@ -102,6 +102,17 @@ async function findChatTab() {
   } catch {
     /* fall back to the remembered tab */
   }
+  // The ChatGPT tab used most recently wins over the remembered one. The
+  // dashboard itself is active when Run is pressed, so preferring a stored id
+  // could type into an older background conversation while the user watches a
+  // different tab.
+  const tabs = await chrome.tabs.query({ url: CHATGPT_URLS });
+  const recent = tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+  if (recent?.id) {
+    state.chatTabId = recent.id;
+    await saveState();
+    return recent;
+  }
   if (state.chatTabId) {
     try {
       const tab = await chrome.tabs.get(state.chatTabId);
@@ -110,13 +121,6 @@ async function findChatTab() {
       /* the tab was closed */
     }
     state.chatTabId = null;
-  }
-  const tabs = await chrome.tabs.query({ url: CHATGPT_URLS });
-  const tab = tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
-  if (tab?.id) {
-    state.chatTabId = tab.id;
-    await saveState();
-    return tab;
   }
   return null;
 }
@@ -349,7 +353,9 @@ async function processQueue() {
       throw new Error(reply?.error || "The ChatGPT page refused the prompt");
     }
     await armWatchdog(job.jobId);
-    broadcast({ type: "RUNNING", jobId: job.jobId, phase: "typing" });
+    // A deduped reply means this tab is already typing or waiting; do not move
+    // the dashboard back to "typing" while the page is waiting for an answer.
+    if (!reply.deduped) broadcast({ type: "RUNNING", jobId: job.jobId, phase: "typing" });
   } catch (error) {
     await failCurrent(error instanceof Error ? error.message : String(error));
   }
