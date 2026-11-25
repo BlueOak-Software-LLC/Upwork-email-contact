@@ -86,6 +86,22 @@ async function pendingResults() {
 }
 
 async function findChatTab() {
+  // The ChatGPT tab the user is looking at wins over a remembered background
+  // one, so "Run" keeps working in the current tab.
+  try {
+    const [active] = await chrome.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+      url: CHATGPT_URLS,
+    });
+    if (active?.id) {
+      state.chatTabId = active.id;
+      await saveState();
+      return active;
+    }
+  } catch {
+    /* fall back to the remembered tab */
+  }
   if (state.chatTabId) {
     try {
       const tab = await chrome.tabs.get(state.chatTabId);
