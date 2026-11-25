@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { signOut } from "@/app/(dashboard)/actions";
 import { NAV } from "./nav";
 import { Badge } from "@/components/ui/badge";
+import { ChatGptSessionTrigger } from "@/components/chatgpt/session-trigger";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,7 +23,7 @@ export function Topbar({
   title: string;
   subtitle?: string;
   user?: { email?: string } | null;
-  brand?: { company: string; byline: string; initials: string };
+  brand?: { name: string; byline: string; initials: string };
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -56,6 +57,7 @@ export function Topbar({
         </div>
 
         <div className="flex items-center gap-2 md:gap-3">
+          <ChatGptSessionTrigger />
           <Badge tone={user ? "brand" : "warn"} className="max-w-[46vw] truncate sm:max-w-none">
             {user?.email ?? "anonymous (dev mode)"}
           </Badge>
@@ -91,8 +93,8 @@ export function Topbar({
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold">Email Contact</span>
-                  {brand?.company ? (
-                    <span className="block truncate text-[11px] text-muted">{brand.company}</span>
+                  {brand?.name ? (
+                    <span className="block truncate text-[11px] text-muted">{brand.name}</span>
                   ) : null}
                 </span>
               </div>

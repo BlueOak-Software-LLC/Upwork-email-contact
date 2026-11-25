@@ -3,9 +3,8 @@ export const NAV = [
   { href: "/leads", label: "Leads", icon: "⌁" },
   { href: "/contacts", label: "CRM contacts", icon: "◉" },
   { href: "/emails", label: "Email activity", icon: "✉" },
-  { href: "/settings/senders", label: "Senders", icon: "⚙" },
-  { href: "/settings/models", label: "AI models", icon: "◈" },
-  { href: "/settings/ai", label: "AI status", icon: "◇" },
+  { href: "/settings/senders", label: "Senders & profile", icon: "⚙" },
+
   { href: "/settings/prompts", label: "Prompts", icon: "✎" },
   { href: "/settings/tracking", label: "Tracking", icon: "▤" },
   { href: "/api-docs", label: "API", icon: "{}" },

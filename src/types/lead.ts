@@ -123,7 +123,7 @@ export interface NormalizedContact {
 }
 
 /**
- * ── PPD contract ── what Groq returns and what the pdfme compiler renders.
+ * ── PPD contract ── what ChatGPT returns and what the pdfme compiler renders.
  *
  * The document is **block-based**, not fixed-slot: `lib/pdfme/compiler.ts`
  * turns each block into positioned pdfme `text` fields, pre-wraps the lines to
@@ -206,17 +206,27 @@ export interface PpdSection {
 }
 
 export interface ProposalPpd {
-  /** Our company — comes from PROPOSAL_COMPANY, never from the model. */
-  company: string;
   document_title: string;
   subtitle: string;
   job_title: string;
   job_reference: string;
+  /** Who the proposal is addressed to (client name / hiring team). */
   prepared_for: string;
+  /** The signed-in person, copied from their sender profile at generation time. */
   prepared_by: string;
+  prepared_role: string;
+  sender_email: string;
+  sender_phone: string;
+  sender_whatsapp: string;
+  sender_linkedin: string;
+  sender_website: string;
+  sender_location: string;
+  /** Human date printed under “DATE”, e.g. “25 November 2026”. */
+  date: string;
+  valid_until: string;
   rate: string;
+  /** Kept for older documents; the new layout prints timeline rows instead. */
   engagement: string;
-  website: string;
   sections: PpdSection[];
   closing: string;
 }

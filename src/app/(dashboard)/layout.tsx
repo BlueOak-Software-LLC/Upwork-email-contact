@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { LiveRefresh } from "@/components/layout/live-refresh";
+import { ChatGptSessionProvider } from "@/components/chatgpt/session-provider";
+import { ChatGptSessionDrawer } from "@/components/chatgpt/session-drawer";
 import { brandConfig } from "@/lib/env-extras";
 import { createClient } from "@/lib/supabase/server";
 
@@ -11,13 +13,15 @@ import { createClient } from "@/lib/supabase/server";
  */
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const brand = brandConfig();
-  // Whose name is stamped on the documents, shown in the shell so the sidebar
-  // tells you which identity a proposal will carry before you generate one.
+  // The person who signs documents, shown in the shell so the sidebar tells
+  // you which identity a proposal will carry before you generate one. There is
+  // deliberately no company name anywhere in this shell.
+  const name = brand.preparedBy || "Your profile";
   const identity = {
-    company: brand.company,
-    byline: [brand.preparedBy, brand.title].filter(Boolean).join(" · "),
+    name,
+    byline: brand.title || "Add a sender profile to sign documents",
     initials:
-      brand.company
+      name
         .split(/\s+/)
         .slice(0, 2)
         .map((word) => word[0] ?? "")
@@ -32,7 +36,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
 
   return (
-    <div className="flex min-h-dvh">
+    <ChatGptSessionProvider>
+      <div className="flex min-h-dvh">
       <Sidebar brand={identity} />
       <div className="flex min-w-0 flex-1 flex-col">
         <LiveRefresh />
@@ -52,6 +57,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           {children}
         </main>
       </div>
-    </div>
+      </div>
+      <ChatGptSessionDrawer />
+    </ChatGptSessionProvider>
   );
 }

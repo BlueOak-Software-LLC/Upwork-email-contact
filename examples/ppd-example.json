@@ -1,12 +1,21 @@
 {
-  "company": "Blueoak Software LLC",
-  "document_title": "PROJECT CAPABILITY & PROPOSED WORKFLOW",
+  "document_title": "Customer support workflow proposal",
+  "subtitle": "A practical plan for ticket routing, AI assistance, CRM sync and production monitoring.",
+  "prepared_for": "Hiring team · Northstar Support",
+  "prepared_by": "Luan Le",
+  "prepared_role": "Senior Software Engineer",
+  "sender_email": "luan@example.com",
+  "sender_phone": "+84 90 123 4567",
+  "sender_whatsapp": "https://wa.me/84901234567",
+  "sender_linkedin": "https://www.linkedin.com/in/luanle",
+  "sender_website": "https://luanle.dev",
+  "sender_location": "Ho Chi Minh City, GMT+7",
+  "date": "25 November 2026",
+  "valid_until": "9 December 2026",
   "job_title": "Build an AI-Powered Customer Support Workflow with CRM Integration",
-  "subtitle": "A practical implementation plan for customer support routing, AI assistance, CRM synchronization, and production monitoring.",
-  "prepared_for": "Hiring team (client name not verified)",
-  "prepared_by": "Blueoak Software LLC",
-  "engagement": "Discovery and milestones to be confirmed",
-  "website": "https://blueoaksoftware.cloud",
+  "job_reference": "~01abc23def456789",
+  "rate": "USD 4,800–6,200, indicative",
+  "engagement": "Milestone-based",
   "sections": [
     {
       "id": "understanding",
@@ -15,61 +24,34 @@
         {
           "type": "paragraph",
           "items": [
-            "The job calls for a customer support workflow that can classify incoming requests, make relevant knowledge available to support agents, and synchronize ticket activity with the CRM.",
-            "A reliable implementation should account for escalation rules, customer context, permissions, response quality, and measurable outcomes rather than relying on AI responses alone."
+            "Your support team handles a growing queue across email and chat, and agents currently read each ticket, decide its category and copy context into the CRM by hand. The result is slower first response, inconsistent routing and customer history that is hard to trust.",
+            "The goal is a workflow that classifies incoming requests, surfaces the right help-centre content to an agent, and writes a clean activity record back to the CRM. Success means faster first response, fewer misrouted tickets and a measurable accuracy baseline before any automation is allowed to act without review."
           ]
         }
       ]
     },
     {
-      "id": "skills",
-      "title": "How the proposed skillset maps to your requirements",
-      "blocks": [
-        {
-          "type": "capabilityMatrix",
-          "items": [
-            {
-              "requirement": "AI-based ticket classification",
-              "approach": "Define supported ticket categories, confidence thresholds, and fallbacks to human review."
-            },
-            {
-              "requirement": "CRM and helpdesk integration",
-              "approach": "Map identifiers, authentication, event triggers, data contracts, and synchronization rules."
-            },
-            {
-              "requirement": "Production reliability",
-              "approach": "Include retries, audit logs, permissions, quality checks, and monitoring from the pilot stage."
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "workflow",
-      "title": "Proposed project workflow",
+      "id": "approach",
+      "title": "Proposed approach",
       "blocks": [
         {
           "type": "numberedSteps",
           "items": [
             {
-              "title": "Discovery and data review",
-              "description": "Identify ticket channels, CRM fields, knowledge sources, priority rules, security constraints, and success metrics."
+              "title": "Map the real queue",
+              "description": "Review 100–200 historical tickets with your team, agree the categories that matter and identify the CRM fields an agent actually uses."
             },
             {
-              "title": "Solution design",
-              "description": "Define the AI classification and retrieval design, API contracts, fallback behavior, and human approval points."
+              "title": "Design the routing contract",
+              "description": "Define confidence thresholds, fallback to human review, duplicate handling and the exact event payload written back to the CRM."
             },
             {
-              "title": "Pilot implementation",
-              "description": "Connect one support channel to the chosen CRM and validate classification, enrichment, and handoff events."
+              "title": "Build and calibrate the pilot",
+              "description": "Connect one channel, classify live tickets in shadow mode and compare the model's choices with your team's decisions before enabling routing."
             },
             {
-              "title": "Quality and failure testing",
-              "description": "Test ambiguous tickets, sensitive information, outages, duplicate events, and low-confidence AI responses."
-            },
-            {
-              "title": "Rollout and handover",
-              "description": "Deploy the approved workflow, establish monitoring, and document maintenance and escalation procedures."
+              "title": "Harden and hand over",
+              "description": "Add retries, audit logs, permission checks and monitoring, then document how to change categories and investigate a bad classification."
             }
           ]
         }
@@ -77,46 +59,42 @@
     },
     {
       "id": "deliverables",
-      "title": "Potential deliverables",
+      "title": "Scope and deliverables",
       "blocks": [
         {
           "type": "bullets",
           "items": [
-            "Documented integration workflow and CRM field mappings",
-            "Configured ticket classification and routing logic within the agreed scope",
-            "Test plan covering common failures, escalations, and data handling",
-            "Deployment notes, operational monitoring checklist, and handover guide"
+            "Category taxonomy, routing rules and confidence thresholds agreed with your support lead",
+            "Working connector for one channel plus CRM activity and contact synchronisation",
+            "Shadow-mode evaluation report with accuracy, false-route rate and sample failures",
+            "Operator runbook covering retries, escalations, permissions and rollback",
+            "Two review sessions with your team and a final handover walkthrough"
           ]
         }
       ]
     },
     {
-      "id": "quality",
-      "title": "Coordination and quality checks",
-      "blocks": [
-        {
-          "type": "paragraph",
-          "items": [
-            "Start with representative ticket categories and review the quality of classifications and CRM updates against agreed acceptance criteria. Roll out additional queues only after stakeholders approve the pilot.",
-            "Monitor unexpected model outputs, incorrect routing, retry behavior, access-control mistakes, and failed CRM synchronization."
-          ]
-        }
-      ]
-    },
-    {
-      "id": "terms",
-      "title": "Commercial terms",
+      "id": "timeline",
+      "title": "Timeline and investment",
       "blocks": [
         {
           "type": "keyValueTable",
           "rows": [
             {
               "label": "Working basis",
-              "value": "Milestone-based scope and acceptance criteria to be agreed."
+              "value": "Fixed-scope milestones with written acceptance criteria"
             },
             {
-              "label": "Initial step",
-              "value": "Review integration access, ticket samples, and the target CRM workflow."
+              "label": "First milestone",
+              "value": "Taxonomy and integration map in week one"
+            },
+            {
+              "label": "Indicative investment",
+              "value": "USD 4,800–6,200, confirmed after a scoping call"
+            },
+            {
+              "label": "Your inputs",
+              "value": "Ticket samples, CRM sandbox access and one support lead for reviews"
             }
           ]
         }
@@ -124,38 +102,41 @@
     },
     {
       "id": "questions",
-      "title": "Information needed to confirm scope",
+      "title": "Questions from your brief",
       "blocks": [
         {
           "type": "bullets",
           "items": [
-            "Which helpdesk and CRM platforms, including versions, are in scope?",
-            "What data may be sent to the AI service, and what human review is required?",
-            "What ticket volumes and accuracy metrics should the pilot satisfy?"
+            "Yes — I can connect to your CRM and helpdesk. Please confirm which platforms and versions are in scope so I can validate the available APIs before the first milestone.",
+            "Yes — the pilot can run without sending customer data to an external model. I can start with a local classifier or a redacted payload, and we can agree the data policy before any live traffic.",
+            "For the pilot I would target at least 90% agreement with your team on the top five categories, with every low-confidence ticket routed to a human."
           ]
         }
       ]
     },
     {
-      "id": "references",
-      "title": "Relevant production references",
+      "id": "next-steps",
+      "title": "Next steps",
       "blocks": [
         {
-          "type": "references",
-          "items": []
-        }
-      ]
-    },
-    {
-      "id": "note",
-      "title": "",
-      "blocks": [
-        {
-          "type": "note",
-          "text": "This document describes a proposed execution plan, not a claim of previously delivered work with any particular vendor."
+          "type": "numberedSteps",
+          "items": [
+            {
+              "title": "15-minute call",
+              "description": "Confirm the queue, CRM and the one channel for the pilot."
+            },
+            {
+              "title": "Scoping note",
+              "description": "I send a one-page scope, milestone plan and fixed price within two working days."
+            },
+            {
+              "title": "Week-one kickoff",
+              "description": "We start with ticket samples and the integration map once the scope is signed off."
+            }
+          ]
         }
       ]
     }
   ],
-  "closing": "Thank you for considering this proposal."
+  "closing": "Thank you for considering this proposal. I am happy to walk through the plan or adjust the pilot scope on a short call."
 }

@@ -33,7 +33,8 @@ export const GET = withApi(async (request: NextRequest) => {
 /**
  * PUT /api/prompts — save an edited prompt pair.
  * { key, systemText, userTemplate, temperature, maxTokens, reasoningEffort, note }
- * Null maxTokens/reasoningEffort fall back to GROQ_MAX_TOKENS / GROQ_REASONING_EFFORT.
+ * maxTokens/reasoningEffort are retained in the template shape for old rows, but
+ * the ChatGPT session ignores them.
  */
 export const PUT = withApi(async (request: NextRequest) => {
   await requireApiKey(request);

@@ -659,7 +659,7 @@ export const leadsRepo = {
 
   async setStatus(id: string, status: LeadStatus, error?: string) {
     const supabase = getAdminClient();
-    // A long Groq call can outlive the keep-alive connection PostgREST handed us,
+    // A long generation job can outlive the keep-alive connection PostgREST handed us,
     // so the first PATCH sometimes surfaces as "fetch failed". One retry keeps
     // the lead from looking stuck on `received` after a successful generation.
     for (let attempt = 0; attempt < 2; attempt += 1) {

@@ -32,6 +32,13 @@ export const createContactSchema = z.object({
 
 export const updateContactSchema = createContactSchema
   .partial()
+  // As with sender PATCH, `.partial()` would re-apply create-time defaults and
+  // silently reset status/source/tags when only one field is edited.
+  .extend({
+    status: contactStatusSchema.optional(),
+    source: trimmed(1, 60).optional(),
+    tags: z.array(trimmed(1, 40)).max(25).optional(),
+  })
   .refine((value) => Object.keys(value).length > 0, {
     message: "No fields to update",
   });

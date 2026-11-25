@@ -5,7 +5,7 @@ import { escapeHtml } from "@/server/services/templates";
  * Turns a stored body into the HTML that actually leaves the building.
  *
  * Ported from BlueOak Track's `server/html.ts`, with one important difference:
- * Upwork drafts are written as plain text (Groq output, escaped by
+ * Upwork drafts are written as plain text (ChatGPT output, escaped by
  * `textToHtml`), so there are no `{{link:Label}}` placeholders to expand.
  * Instead the builder works on whatever it is given:
  *

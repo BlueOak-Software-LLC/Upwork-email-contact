@@ -45,6 +45,10 @@ export function useLead(leadId: string, initialData?: LeadDetailDto) {
     initialData,
     staleTime: 5_000,
     refetchOnWindowFocus: true,
+    // New leads and answers arrive from other tabs/people, so keep the open
+    // lead fresh without a manual reload. The hook only decides how often to
+    // ask; authorization happens in the API route.
+    refetchInterval: 15_000,
   });
 }
 
@@ -162,6 +166,7 @@ export function useLeads(filters: Record<string, string | number | undefined> = 
     queryFn: () => apiFetch<LeadSummary[]>("/api/leads", { query: filters }),
     staleTime: 10_000,
     refetchOnWindowFocus: true,
+    refetchInterval: 20_000,
   });
 }
 
@@ -188,6 +193,23 @@ export function useCreateSenderAccount() {
       toast.success("Sender account added", data.account.from_email);
     },
     onError: (error) => toast.error("Could not add the account", errorMessage(error)),
+  });
+}
+
+export function useUpdateSenderAccount() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & Record<string, unknown>) =>
+      apiFetch<{ account: SenderAccountDto }>(`/api/sender-accounts/${id}`, {
+        method: "PATCH",
+        body,
+      }),
+    onSuccess: ({ data }) => {
+      qc.invalidateQueries({ queryKey: ["sender-accounts"] });
+      toast.success("Sender profile saved", data.account.from_email);
+    },
+    onError: (error) => toast.error("Could not save the profile", errorMessage(error)),
   });
 }
 
@@ -223,109 +245,7 @@ export function useTestSenderAccount() {
   });
 }
 
-export interface PromptRunInfo {
-  key: "ppd_document" | "email_draft";
-  label: string;
-  isDefault: boolean;
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  /** GROQ_MAX_TOKENS / prompt setting before the TPM clamp. */
-  requestedMaxTokens: number;
-  reasoningEffort: string | null;
-  system: string;
-  user: string;
-  unknownVars: string[];
-}
 
-export interface PpdRun {
-  proposal: ProposalRow;
-  ppd: unknown;
-  documentWords: number;
-  usage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number } | null;
-  costUsd: number | null;
-  warnings: string[];
-  recipient: { contactId: string; email: string; source: "lead_contact" | "custom" } | null;
-  /** Set when the document was written from the post text with no address. */
-  recipientNote: string | null;
-  pdfStatus: string;
-  prompt: PromptRunInfo;
-  next: string;
-}
-
-export interface EmailRun {
-  proposal: ProposalRow;
-  email: { subject: string; content: string };
-  draft: EmailDraftRow | null;
-  draftError: string | null;
-  recipient: { email: string; source: "lead_contact" | "custom"; contactId: string };
-  usage: { prompt_tokens: number; completion_tokens: number; reasoning_tokens?: number } | null;
-  costUsd: number | null;
-  warnings: string[];
-  pdfStatus: string;
-  prompt: PromptRunInfo;
-  next: string | null;
-}
-
-export function useGenerateProposal(leadId: string) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  return useMutation({
-    mutationFn: (body: {
-      contactId?: string;
-      toEmail?: string;
-      regenerate?: boolean;
-      model?: string;
-      reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
-    } = {}) =>
-      apiFetch<PpdRun>(`/api/leads/${leadId}/generate`, { method: "POST", body }),
-    onSuccess: ({ data }) => {
-      qc.invalidateQueries({ queryKey: leadKey(leadId) });
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      toast.success(
-        `PPD v${data.proposal.version} written`,
-        `${data.documentWords} words${
-          data.recipient ? ` for ${data.recipient.email}` : " with no recipient yet"
-        }${data.costUsd !== null ? ` · ~$${data.costUsd.toFixed(5)}` : ""}`,
-      );
-      for (const warning of data.warnings) toast.warn("PPD warning", warning);
-    },
-    onError: (error) => toast.error("PPD generation failed", errorMessage(error)),
-  });
-}
-
-/** Step 2: write the email for the reviewed PPD and open the draft. */
-export function useGenerateEmailDraft(leadId: string) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  return useMutation({
-    mutationFn: (body: {
-      proposalId?: string;
-      contactId?: string;
-      toEmail?: string;
-      cc?: string[];
-      senderAccountId?: string | null;
-      createDraft?: boolean;
-      reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
-    } = {}) =>
-      apiFetch<EmailRun>(`/api/leads/${leadId}/generate-email`, { method: "POST", body }),
-    onSuccess: ({ data }) => {
-      qc.invalidateQueries({ queryKey: leadKey(leadId) });
-      qc.invalidateQueries({ queryKey: ["leads"] });
-      qc.invalidateQueries({ queryKey: ["email-logs"] });
-      if (data.draftError) {
-        toast.warn("Email written, draft not created", data.draftError);
-      } else {
-        toast.success(
-          data.draft ? "Email draft created" : "Email copy written to the proposal",
-          data.email.subject,
-        );
-      }
-      for (const warning of data.warnings) toast.warn("Email warning", warning);
-    },
-    onError: (error) => toast.error("Email draft failed", errorMessage(error)),
-  });
-}
 
 /**
  * The review step: save an edited PPD back onto the proposal.
@@ -405,7 +325,7 @@ function wordCount(ppd: unknown): number {
   return words.join(" ").split(/\s+/).filter(Boolean).length;
 }
 
-/** A hand-written draft to any address, no Groq call. */
+/** A hand-written draft to any address, no ChatGPT job. */
 export function useCreateManualDraft(leadId: string) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -433,7 +353,7 @@ export function useCreateManualDraft(leadId: string) {
 }
 
 export interface PromptDto {
-  key: "ppd_document" | "email_draft";
+  key: "ppd_document" | "email_draft" | "follow_up";
   label: string;
   note: string;
   system: string;

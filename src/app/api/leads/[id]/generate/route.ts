@@ -5,13 +5,10 @@ import { requireApiKey } from "@/server/http/auth";
 import { ApiError, parseOrThrow } from "@/server/http/errors";
 import { generateProposalSchema } from "@/lib/validation/outreach";
 import { leadsRepo } from "@/server/db/leads.repo";
-import { generatePpdDocument, resolveRecipientContact } from "@/server/services/proposal.service";
+import { prepareChatGptJob } from "@/server/services/chatgpt.service";
 import { requireParamId } from "@/server/http/id";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120; // one model call with retries (AI_TIMEOUT_MS < this)
-
-/** Route params: `withApi<P>` wraps P as `{ params: Promise<P> }`. */
 type Ctx = { id: string };
 
 async function readJsonOrEmpty(request: NextRequest) {
@@ -26,62 +23,29 @@ async function readJsonOrEmpty(request: NextRequest) {
 
 /**
  * STEP 1 — POST /api/leads/:id/generate
- * The configured model writes **only the PPD document**. No email copy, no
- * draft and no PDF:
- * those wait until a human has reviewed the document (`generate-email`, `send`).
- *
- * Body (all optional):
- *   { "contactId": "uuid" }        write for a specific contact on the lead
- *   { "toEmail": "a@b.com" }       write for a custom address (stored as a
- *                                  manual contact so the trail explains itself)
- *   { "regenerate": true }         force a new version (default true)
- *   { "model": "…", "reasoningEffort": "low|medium|high" }
+ * Prepares the PPD prompt and returns a ChatGPT-session job. The signed-in
+ * browser tab writes the answer; `POST /api/chatgpt/jobs/:id/complete` stores it.
+ * No OpenAI/ChatGPT API key is involved.
  */
 export const POST = withApi<Ctx>(async (request, { params }) => {
-  await requireApiKey(request);
+  const auth = await requireApiKey(request);
   const id = requireParamId((await params).id, "lead id");
   const input = parseOrThrow(generateProposalSchema, await readJsonOrEmpty(request));
 
-  const lead = await leadsRepo.byId(id);
-  const { contact, source } = await resolveRecipientContact(id, {
+  const result = await prepareChatGptJob({
+    leadId: id,
+    kind: "ppd_document",
     contactId: input.contactId,
     toEmail: input.toEmail,
-    // A post with a description but no address still gets a document; the email
-    // step is where an address becomes mandatory.
-    requireRecipient: false,
-  });
-
-  const result = await generatePpdDocument({
-    lead,
-    contact,
     regenerate: input.regenerate,
-    model: input.model,
-    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+    createdBy: auth.kind === "user" ? auth.id : auth.kind === "service" ? auth.label : "anonymous",
   });
 
+  if (result.reused) return ok({ job: null, reused: true, proposal: result.proposal });
   return created({
-    proposal: result.proposal,
-    ppd: result.ppd,
-    documentWords: result.documentWords,
-    usage: result.usage,
-    costUsd: result.costUsd,
-    warnings: result.warnings,
-    recipient: contact
-      ? {
-          contactId: contact.id,
-          email: contact.normalized_value ?? contact.contact_value,
-          source,
-        }
-      : null,
-    // Written from the post itself when no address was supplied.
-    recipientNote:
-      contact === null
-        ? "no recipient yet — the document is addressed to the hiring team; give the email step a toEmail"
-        : null,
-    // The document is intentionally not rendered yet.
-    pdfStatus: result.proposal.pdf_status,
-    prompt: result.prompt,
-    next: `Review or edit the PPD, then POST /api/leads/${id}/generate-email`,
+    job: result.dto,
+    reused: false,
+    next: `Run the prompt in ChatGPT, then POST /api/chatgpt/jobs/${result.dto.id}/complete with the answer`,
   });
 });
 

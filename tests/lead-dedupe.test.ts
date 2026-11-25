@@ -115,7 +115,6 @@ const BASE_ENV = {
   NEXT_PUBLIC_APP_URL: "https://track.example.com",
   EMAIL_PROVIDER: "smtp",
   SMTP_HOST: "smtp.example.com",
-  PUTER_AUTH_TOKEN: "a-puter-token-value",
 };
 
 function payloadFor(overrides: Record<string, unknown> = {}) {
@@ -267,29 +266,23 @@ describe("ingest behaviour on a duplicate", () => {
 
 describe("ingest is manual by default", () => {
   it("stores the lead and spends no tokens", async () => {
-    const generate = vi.fn();
-    vi.doMock("@/server/services/proposal.service", () => ({ generatePpdDocument: generate }));
-
     const run = await ingest();
     const result = await run(payloadFor({ job_id: "fff666" }));
 
     expect(result.created).toBe(true);
     expect(result.generation.skipped).toBe(true);
     expect(result.generation.reason).toMatch(/Generate PPD/);
-    expect(generate).not.toHaveBeenCalled();
     // Status reflects what is known, not what was generated.
     expect(["received", "enriched"]).toContain(result.lead.status);
   });
 
-  it("generates on arrival when the caller asks for it", async () => {
-    const proposal = { id: "p1", lead_id: "x", lead_contact_id: null, version: 1 };
-    vi.doMock("@/server/services/proposal.service", () => ({
-      generatePpdDocument: vi.fn().mockResolvedValue({ proposal, warnings: [], ppd: {} }),
-    }));
-
+  it("ignores autoEnrich — generation always waits for the ChatGPT button", async () => {
     const run = await ingest();
     const result = await run(payloadFor({ job_id: "ggg777" }), { autoEnrich: true });
-    expect(result.generation.attempted).toBeGreaterThan(0);
+
+    expect(result.created).toBe(true);
+    expect(result.generation.attempted).toBe(0);
+    expect(result.generation.skipped).toBe(true);
   });
 });
 

@@ -150,6 +150,31 @@ export const emailLogsRepo = {
     return (data as Maybe<EmailLogRow>) ?? null;
   },
 
+  /**
+   * Real RFC Message-IDs for a follow-up chain, keyed by draft id.
+   *
+   * A draft can have a failed attempt and then a successful one, so the newest
+   * sent row wins. Null/opaque provider ids are returned as null; the caller
+   * decides whether they are safe to put in a header.
+   */
+  async sentMessageIds(draftIds: string[]): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>();
+    if (draftIds.length === 0) return result;
+    const supabase = getAdminClient();
+    const { data, error } = await supabase
+      .from("email_logs")
+      .select("draft_id,provider_message_id")
+      .in("draft_id", draftIds)
+      .eq("status", "sent")
+      .order("created_at", { ascending: false });
+    if (error) throw ApiError.upstream(`Failed to load thread headers: ${error.message}`);
+    for (const row of data ?? []) {
+      if (!row.draft_id || result.has(row.draft_id)) continue;
+      result.set(row.draft_id, row.provider_message_id ?? null);
+    }
+    return result;
+  },
+
   /** The row plus the contact it went to. */
   async withContact(id: string) {
     const supabase = getAdminClient();

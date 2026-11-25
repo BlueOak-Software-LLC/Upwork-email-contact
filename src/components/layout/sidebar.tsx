@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { NAV } from "./nav";
 import { truncate } from "@/lib/utils";
 
-export type ShellBrand = { company: string; byline: string; initials: string };
+export type ShellBrand = { name: string; byline: string; initials: string };
 
 export function Sidebar({ brand }: { brand?: ShellBrand }) {
   const pathname = usePathname();
@@ -21,7 +21,7 @@ export function Sidebar({ brand }: { brand?: ShellBrand }) {
         <div className="min-w-0 leading-tight">
           <div className="truncate text-sm font-semibold">Email Contact</div>
           <div className="truncate text-[11px] text-muted">
-            {brand?.company ? truncate(brand.company, 22) : "Upwork outreach"}
+            {brand?.name ? truncate(brand.name, 22) : "Upwork outreach"}
           </div>
         </div>
       </div>

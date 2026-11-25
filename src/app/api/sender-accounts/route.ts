@@ -31,11 +31,16 @@ export const GET = withApi(async (request: NextRequest) => {
  * Add one of our two email addresses + its SMTP server.
  *
  * {
- *   "label": "Studio Gmail",
- *   "fromEmail": "hello@yourdomain.com",
- *   "displayName": "Your Studio",
+ *   "label": "Luan — Gmail",
+ *   "fromEmail": "luan@yourdomain.com",
+ *   "displayName": "Luan Le", "roleTitle": "Senior Software Engineer",
+ *   "phone": "+84 90 123 4567", "whatsapp": "https://wa.me/84901234567",
+ *   "linkedinUrl": "https://linkedin.com/in/luanle", "website": "https://luanle.dev",
+ *   "location": "Ho Chi Minh City, GMT+7",
+ *   "experienceSummary": "Built React and Node products for 10 years.",
+ *   "skills": "React, TypeScript, Supabase",
  *   "smtpHost": "smtp.gmail.com", "smtpPort": 465, "smtpSecure": true,
- *   "smtpUser": "hello@yourdomain.com", "smtpPassword": "app password",
+ *   "smtpUser": "luan@yourdomain.com", "smtpPassword": "app password",
  *   "dailyLimit": 50, "isDefault": true
  * }
  *
@@ -52,6 +57,14 @@ export const POST = withApi(async (request: NextRequest) => {
     displayName: input.displayName ?? null,
     replyTo: input.replyTo ?? null,
     signature: input.signature ?? null,
+    roleTitle: input.roleTitle ?? null,
+    phone: input.phone ?? null,
+    whatsapp: input.whatsapp ?? null,
+    linkedinUrl: input.linkedinUrl ?? null,
+    website: input.website ?? null,
+    location: input.location ?? null,
+    experienceSummary: input.experienceSummary ?? null,
+    skills: input.skills ?? null,
     smtpHost: input.smtpHost,
     smtpPort: input.smtpPort,
     smtpSecure: input.smtpSecure,

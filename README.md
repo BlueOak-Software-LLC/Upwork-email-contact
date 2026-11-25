@@ -6,7 +6,7 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 1. **Ingest** an Upwork research payload (job info, client, key people, contacts) via `POST /api/leads`
 2. **Store** every field — raw JSON kept as-is, contacts normalised into rows
 3. **Detect** email addresses inside `verified_contacts` / `potential_contacts`
-4. **Generate** with Groq: a **PPD** (Professional Proposal Document as *pdfme* JSON) + email **subject/content**
+4. **Generate in your ChatGPT session**: the companion extension runs the prompt in the signed-in tab, and the server stores the **PPD** (Professional Proposal Document as *pdfme* JSON) + email **subject/content**
 5. **Render** the PPD: `lib/pdfme/compiler.ts` generates a pdfme template from the content (A4, mm, page numbers) → `@pdfme/generator` → Supabase Storage
 6. **Draft** an email (with the PDF attached) and **send it over SMTP** using credentials stored per sender account
 7. **Review** everything in the dashboard: lead list → lead detail (job description, email subject + content, PPD)
@@ -22,11 +22,11 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 | Data | Supabase Postgres (RLS on, service-role access from the server), Supabase Storage (`proposals` bucket), Supabase Auth (magic link) |
 | Client data | TanStack Query v5 hitting our own `/api` routes |
 | Validation | Zod v4 for env, inbound payloads, and LLM output coercion |
-| LLM | **Puter → Groq → Gemini**, each on a free tier and each skipped when it has no key. Puter defaults to `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` (550B, 1M context), Groq to `openai/gpt-oss-120b`, Gemini to `gemini-3.8-flash`. Keys and models are saved (encrypted) on `/settings/models`; DB → env → built-in default. The prompt, PPD contract and review flow are identical on every provider |
+| Generation | **The user's signed-in ChatGPT tab** through `chatgpt-extension/`. No OpenAI/ChatGPT API key and no model API call from the server. The server prepares durable jobs, then parses/sanitises the answer |
 | PDF | pdfme (`@pdfme/generator`) with a repo-owned template |
 | Email out | SMTP per sender account (nodemailer) or `resend` / `log` via env |
 | Email tracking | 1×1 pixel per recipient + `/c/` link redirects, recorded by Postgres RPCs (§7) |
-| Secrets | `API_MASTER_KEY` guards `/api`; SMTP passwords and AI provider keys are AES-256-GCM encrypted with `APP_ENCRYPTION_KEY` |
+| Secrets | `API_MASTER_KEY` guards `/api`; SMTP passwords are AES-256-GCM encrypted with `APP_ENCRYPTION_KEY` |
 
 ## 2. Structure
 
@@ -44,10 +44,18 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │                                      tracked_links, tracking_events,
 │   │                                      record_tracking_event / record_log_outcome /
 │   │                                      purge_tracking_events (service role only)
-│   ├── 0006_ai_settings.sql               per-provider model + encrypted API key,
-│   │                                      service role only (an absent row = env/default)
-│   └── 0007_lead_list_view.sql            counted public.lead_list view + created_at index,
-│                                          used by the lead list's pipeline/count filters
+│   ├── 0006_ai_settings.sql               legacy table from the removed model API; unused
+│   ├── 0007_lead_list_view.sql            counted public.lead_list view + created_at index
+│   ├── 0008_chatgpt_session_followups.sql  chatgpt_jobs, follow-up draft columns,
+│   │                                      follow_up prompt key
+│   ├── 0009_chatgpt_completion_claim.sql  completing status + one-winner finalise
+│   ├── 0010_sender_profile.sql            sender profile fields: role, phone,
+│   │                                      WhatsApp, LinkedIn, website, location,
+│   │                                      experience, skills
+│   └── 0011_retire_ai_settings.sql        drops the unused API-key table,
+│                                          defaults proposals to chatgpt-session
+├── chatgpt-extension/                     MV3 bridge: types the prompt in the signed-in ChatGPT tab
+├── public/fonts/                          Source Sans 3 (OFL) used by the PDF compiler
 ├── templates/pdfme/proposal-template.json # ← reference copy of one compiled doc (Designer import)
 ├── src/
 │   ├── app/
@@ -56,15 +64,18 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   │   ├── leads/page.tsx             ingested payloads, filters, search
 │   │   │   ├── leads/[id]/page.tsx        job description + contacts + proposal + draft
 │   │   │   ├── contacts/ emails/ emails/[id]/ settings/senders/ settings/prompts/
-│   │   │   │   settings/models/ settings/tracking/ settings/ai/ api-docs/
+│   │   │   │   settings/tracking/ api-docs/
 │   │   │   └── actions.ts                 sign-out server action
 │   │   ├── o/[token]/route.ts             GET pixel (public, no session, always a gif)
 │   │   ├── c/[token]/route.ts             GET tracked link → record click → 302 (public)
 │   │   ├── api/                           BACKEND (route handlers)
 │   │   │   ├── leads/route.ts             GET list (JSON) · POST ingest
 │   │   │   ├── leads/[id]/route.ts        GET detail · PATCH status · DELETE
-│   │   │   ├── leads/[id]/generate/route.ts   POST step 1 → PPD only (manual)
+│   │   │   ├── leads/[id]/generate/route.ts   POST step 1 → prepare PPD ChatGPT job
+│   │   │   ├── leads/[id]/generate-email/route.ts  POST step 2 → prepare email job
 │   │   │   ├── leads/[id]/pdf/route.ts    GET proposal PDF (render on demand)
+│   │   │   ├── chatgpt/jobs/route.ts     POST prepare · GET jobs for a lead
+│   │   │   ├── chatgpt/jobs/[id]/…       start · complete · fail · cancel
 │   │   │   ├── drafts/[id]/route.ts       GET · PATCH (edit subject/body/sender)
 │   │   │   ├── drafts/[id]/send/route.ts  POST send over SMTP
 │   │   │   ├── sender-accounts/route.ts   GET · POST (encrypts SMTP password)
@@ -75,8 +86,6 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   │   ├── tracking/stats/route.ts    GET overview numbers + effective config
 │   │   │   ├── tracking/events/route.ts   GET raw open/click stream
 │   │   │   ├── tracking/outcome/route.ts  POST reply / meeting / not_interested
-│   │   │   ├── ai/settings/route.ts        GET effective config · PUT save key/model · DELETE reset
-│   │   │   ├── ai/test/route.ts            POST one 64-token probe through the live chain
 │   │   │   ├── maintenance/purge/route.ts POST retention sweep (CRON_SECRET)
 │   │   │   ├── contacts/…                 manual contact list
 │   │   │   └── health/route.ts            GET probe
@@ -84,24 +93,27 @@ Next.js 15 app that is **both the dashboard and the backend**, on **Supabase** +
 │   │   └── layout.tsx · globals.css
 │   ├── components/
 │   │   ├── leads/     leads-view, lead-workspace, proposal-card, draft-card, contacts-list
-│   │   ├── contacts/ settings/ (senders · prompts · tracking · models · ai) dashboard/ layout/ providers/ ui/
+│   │   ├── chatgpt/   session-provider, session-drawer, session-trigger
+│   │   ├── contacts/ settings/ (senders · prompts · tracking) dashboard/ layout/ providers/ ui/
 │   ├── lib/
 │   │   ├── job-ref.ts                     canonical job_id / job_url: the dedupe identity
 │   │   ├── crypto.ts                      AES-256-GCM for stored secrets
-│   │   ├── env.ts · env-extras.ts         validated env + groq/pdf config
+│   │   ├── env.ts · env-extras.ts         validated env + pdf/brand config
 │   │   ├── pdfme/                         compiler.ts (PPD → template+inputs) + template.ts (types)
 │   │   ├── validation/                    lead.ts (payload normaliser), outreach.ts, email.ts, contact.ts
-│   │   ├── api/                           client.ts + hooks.ts + outreach-hooks.ts
+│   │   ├── api/                           client.ts + hooks.ts + outreach-hooks.ts + chatgpt.ts
+│   │   ├── chatgpt/                       extension bridge, job API types, prompt handoff
 │   │   ├── services/lead-delete.service.ts  permanent removal + PDF storage cleanup
 │   │   └── supabase/                      client / server / admin / middleware
 │   ├── server/
-│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo · tracking.repo · ai-settings.repo
-│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · templates · prompts/ · tracking/ (token · urls · links · build · headers) · ai/ (index · config · puter · gemini.client · probe · types) · groq.client
+│   │   ├── db/            leads.repo · contacts.repo · outreach.repo (proposals+drafts) · sender-accounts.repo · email-logs.repo · tracking.repo · chatgpt-jobs.repo
+│   │   ├── services/      lead-ingest · proposal · proposal-sanitize · draft · email · smtp · pdf · templates · prompts/ · tracking/ · chatgpt.service
 │   │   ├── http/          withApi · errors · responses · auth · rate-limit · id
 │   │   └── queries.ts     Server-Component reads
 │   ├── types/             database.ts (generated-style) · lead.ts · domain.ts
 │   └── tests/             tracking-sql (real Postgres via PGlite) · tracking-body ·
-│                          tracking-routes · tracking-api · email-tracking · ai-provider
+│                          tracking-routes · tracking-api · email-tracking · proposal-ppd ·
+│                          chatgpt-parse · chatgpt-jobs-sql · sender-profile · email-threading
 ├── scripts/check-tracking.mjs  # npm run check:tracking — is 0005 applied and reachable?
 ```
 
@@ -115,12 +127,12 @@ Layering: `app/api/*` (transport) → `server/services` (orchestration) →
 | `sender_accounts` | Our mailboxes: `from_email`, display name, signature, `smtp_host/port/secure/user`, `smtp_password_cipher` (encrypted), `daily_limit`, `is_default`, `status`, `last_verified_at` |
 | `leads` | One row per payload: flattened job/client columns, `key_people`/`contact_information`/`raw_payload` as JSONB, `status`, generated `search` tsvector |
 | `lead_contacts` | Every channel: `list_type` (verified/potential/company_page/linkedin/social/key_person), `channel` (email/phone/url/other), `contact_value`, `normalized_value`, `confidence`, `rationale`, `is_email`, `is_primary` |
-| `proposals` | Groq output: `ppd` (JSONB → pdfme), `email_subject`, `email_content`, `pdf_path`, `pdf_status`, `version`, token usage |
+| `proposals` | ChatGPT-session output: `ppd` (JSONB → pdfme), `email_subject`, `email_content`, `pdf_path`, `pdf_status`, `version` |
 | `email_drafts` | Draft first: `to_email`, `subject`, `body_text/html`, `attachments`, `sender_account_id`, `status` (draft/queued/sent/failed/cancelled) |
 | `email_logs` | Delivery audit (now linked to `draft_id`, `proposal_id`, `sender_account_id`) + engagement: `tracking_token`, `open_count`, `click_count`, `unique_click_count`, `first/last_open_at`, `first/last_click_at`, `last_event_at`. `status` stays delivery-only — `sent` and `opened` are different axes |
 | `tracked_links` | One row per clickable URL per message: `log_id`, `token`, `destination_url`, `label`, `position`, `click_count`, `last_clicked_at`. `on delete cascade` with the message |
 | `tracking_events` | Append-only timeline (`open`, `click`, `sent`, `reply`, `meeting`, `not_interested`): `log_id`, `link_id`, `occurred_at`, `user_agent`, `meta`. No IP column, ever |
-| `ai_settings` | One row per provider (`puter`, `groq`, `gemini`): `api_key_cipher` (AES-256-GCM `v1:`), `model`, `fallback_model`, `enabled`. **Absent row = env/default**, so an untouched deployment needs no seed. Service role only; keys are never returned by the API |
+| `chatgpt_jobs` | Durable prompt hand-off: `kind` (`ppd_document`/`email_draft`/`follow_up`), `status` (`queued`→`running`→`completing`→`completed`), `prompt_system`/`prompt_user`, `context`, `response_text`, `error`. One live job per `(lead_id, kind)`; only the request that claims `completing` writes the proposal/draft; stale jobs expire after 45 minutes |
 | RPCs | `record_tracking_event(kind, token, agent, at)`, `record_log_outcome(log_id, kind, at)`, `purge_tracking_events(before)` — `security definer`, `grant revoke from public/anon/authenticated`, service role only |
 
 Statuses on a lead: `received → enriched → proposal_ready → draft_created → sent`
@@ -341,17 +353,26 @@ reviewer clicks **Generate PPD** in the lead workspace.
 ## 5. PPD contract → compiled pdfme template
 
 The document is **block-based**, and the pdfme template is generated from the
-content per proposal — no fixed slots, so a proposal can be 2 pages or 8.
+content per proposal — no fixed slots. The prompt targets 450–700 words and the
+compiler hard-stops at **two A4 pages**; excess prose is clipped at the page-2
+footer rather than opening page three.
 
 ```jsonc
 // proposals.ppd  (types in src/types/lead.ts; sample: examples/ppd-example.json)
 {
-  "company": "…", "document_title": "…", "subtitle": "…", "job_title": "…", "job_reference": "…",
-  "prepared_for": "…", "prepared_by": "…", "rate": "…", "engagement": "…", "website": "…",
-  "closing": "…",
+  "document_title": "…", "subtitle": "…", "prepared_for": "…",
+  "prepared_by": "…", "prepared_role": "…",
+  "sender_email": "…", "sender_phone": "…", "sender_whatsapp": "…",
+  "sender_linkedin": "…", "sender_website": "…", "sender_location": "…",
+  "date": "…", "valid_until": "…", "job_title": "…", "job_reference": "…",
+  "rate": "…", "engagement": "…", "closing": "…",
   "sections": [{ "id": "workflow", "title": "Proposed workflow", "blocks": [ /* … */ ] }]
 }
 ```
+
+There is no company field. The person is the document: name, role, email, phone,
+WhatsApp, LinkedIn, website and location are stamped from the sender profile
+selected in the lead workspace (Settings → Senders & profile).
 
 Seven block types, and nothing else: `paragraph {items[]}`, `bullets {items[]}`,
 `numberedSteps {items:[{title,description}]}`, `capabilityMatrix
@@ -360,29 +381,30 @@ Seven block types, and nothing else: `paragraph {items[]}`, `bullets {items[]}`,
 
 ### `src/lib/pdfme/compiler.ts` — the template generator
 
-Port of `compile_pdfme.py` from the Blueoak PDFme package. It flows the blocks
-down an A4 page in **millimetres** and emits one positioned pdfme `text` field
-per **wrapped line** (`paragraph_0007`, `table_key_0031`, …), starting a new page
-when the cursor passes `y = 273`, then stamps every page with the rule, the job
-title and `n / total`. Output: `{ template, inputs, pages, fieldCount }` where
-`inputs` is a **single record for the whole document** (pdfme v6 counts
-documents, not pages).
+It flows the blocks down an A4 page in **millimetres** and emits one positioned
+pdfme `text` field per **wrapped line** (`paragraph_0007`, `table_key_0031`, …).
+The layout is deliberately simple: a navy identity band (name, role, contact), a
+title/subtitle, a prepared-for/date block, then sections. Section headings stay
+with the first block, and a key/value table is never split across a page break.
+Output: `{ template, inputs, pages, fieldCount }` where `inputs` is a **single
+record for the whole document** (pdfme v6 counts documents, not pages).
 
-* Verified: for `examples/ppd-example.json` it produces **exactly** the same 3
-  pages / 84 fields (same names, coordinates, colours) as the shipped Python
-  compiler, and renders a 14.5 KB, 595×842 pt PDF on `@pdfme/generator` 6.2.8.
-* Geometry stays inside the page for any length: a 4,243-word document compiled
-  to 12 pages / 462 fields with 0 out-of-bounds fields and 0 mismatched keys.
+* Font: **Source Sans 3** (OFL, `public/fonts/`) is registered through
+  `options.font`; `fontName` selects the regular or semibold face. A familiar,
+  readable sans is the point — no designer display face.
+* Hard cap: the builder stops at two pages. Longer text is clipped at the page-2
+  footer instead of growing the document. The prompt separately targets
+  450–700 words / 4–6 sections.
 * `templates/pdfme/proposal-template.json` is the **reference copy** of one
   compiled document — import it into <https://pdfme.com/template-design> to
   re-style, or use it as the visual spec. Runtime never reads it; the compiler
   writes an equivalent template per proposal.
 * Old flat PPD rows (`deliverables[]`, `timeline_*`, `pricing_option_*`) are
   migrated to sections on the fly, so `?render=true` still works on proposals
-  written before this change.
-* Rendering runs server-side (`generate`, with a `renderPdf` fallback) and
-  uploads to the private `proposals` bucket. It happens **only** on an explicit
-  `GET /api/leads/:id/pdf?render=true` preview or inside
+  written before this change. Legacy `company`/`website` values are ignored.
+* Rendering runs server-side (`generate` with the text/line/rectangle plugins and
+  the bundled fonts) and uploads to the private `proposals` bucket. It happens
+  **only** on an explicit `GET /api/leads/:id/pdf?render=true` preview or inside
   `POST /api/drafts/:id/send` — never during generation — so a PDF can only ever
   be built from a PPD a human has reviewed (`proposals.ppd_reviewed_at`).
   Saving an edited PPD flips a ready PDF back to `pending` so the stale file is
@@ -390,16 +412,21 @@ documents, not pages).
 
 ### Identity, placeholders and the sign-off
 
-Everything that says **who is writing** comes from the environment — never from
-the model, and never from a bracket a human has to fill in:
+Everything that says **who is writing** comes from the selected sender profile —
+never from the model, and never from a bracket a human has to fill in:
 
 | Place | What it prints |
 | --- | --- |
-| PDF header | `PROPOSAL_COMPANY / PROFESSIONAL PROPOSAL` |
-| PDF "Prepared by" | `PROPOSAL_PREPARED_BY · PROPOSAL_TITLE` |
-| PDF closing block | the same byline, then `PROPOSAL_WEBSITE` |
-| `ppd.prepared_by` / `company` / `website` | stamped by `sanitizePpd` / `sanitizeEditedPpd` from env |
-| Every email | `Best regards,` / name / `role · company` / site — appended by `sanitizeEmail()` **after** the model stops writing, and any sign-off the model invented is cut (only the last few short lines are considered, so "Thanks for the detailed post." in the body survives) |
+| PDF identity band | full name, role, email, phone, WhatsApp, LinkedIn, website, location |
+| PDF client/date block | `prepared_for`, date, valid-until, job reference |
+| PDF footer | name · role · email and `Page n of total` |
+| `ppd.prepared_by` / `prepared_role` / `sender_*` / `date` / `valid_until` | stamped by `sanitizePpd` / `sanitizeEditedPpd`; model output for these fields is discarded |
+| Every email | `Best regards,` / name / role / contact line — appended by `sanitizeEmail()` **after** the model stops writing, and any sign-off the model invented is cut (only the last few short lines are considered, so "Thanks for the detailed post." in the body survives) |
+
+No company or studio name appears anywhere. The profile is chosen per lead in
+the PPD card; without an explicit choice the default active sender is used.
+Environment `PROPOSAL_*` values are only a fallback for a fresh install with no
+sender row yet.
 
 The prompt tells the writer to **decide** rather than hedge: timeline, milestone
 split, revision rounds, file formats, tooling and an indicative USD range are
@@ -414,7 +441,7 @@ editor produces:
 | Token | Becomes |
 | --- | --- |
 | `[TO CONFIRM]`, `TBC`, `TBD`, `[...]`, `[?]`, `[TODO: …]` | "to be confirmed on the kickoff call" |
-| `[YOUR NAME]`, `[YOUR COMPANY]`, `[WEBSITE]`, `[EMAIL]` | the real identity from env |
+| `[YOUR NAME]`, `[YOUR COMPANY]`, `[WEBSITE]`, `[EMAIL]` | the sender profile name, role, site and email |
 | `[YOUR PRICING]`, `[RATE]`, `[BUDGET]` | "indicative — confirmed after a short scoping call" |
 | `[START DATE]`, any all-caps token | the kickoff wording |
 | `[client logo files]` | "the client logo files" — the meaning stays, the brackets go |
@@ -426,112 +453,77 @@ bug ("report this, do not fill them by hand") rather than telling you to complet
 a form field, and `findBracketTokens()` counts what the model left so the
 rewritten lines get re-read.
 
-Older documents upgrade themselves: saving a PPD re-applies the **current** env
-identity, and `renderProposalPdf()` stamps it again at render time — so a proposal
-generated before `PROPOSAL_*` existed stops printing whatever `EMAIL_FROM` it had
-inherited, without touching a word of the reviewed prose.
+Older documents upgrade themselves: saving a PPD keeps the identity stored on the
+document (or the current profile when a field is missing), and
+`renderProposalPdf()` fills only missing identity fields at render time. A PPD
+approved by its author never changes name under them at send time.
 
-### Tokens, length and cost (measured on this pipeline)
+### No model API — the signed-in ChatGPT session writes the answer
 
-**Puter (first).** `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` is the
-largest free text model in Puter's catalogue: 550B, 1M-token context, 64K output —
-enough headroom for a 12k-token PPD. `openrouter:nvidia/nemotron-3.5-lightning:free`
-is the within-Puter fallback. The `:free` suffix is what makes them unmetered per
-token; Puter still enforces the account's daily/monthly allowance, and a 402
-`insufficient_funds` moves the chain to the next provider instead of failing the lead.
-There is no tokens-per-minute wall.
+PPD and email generation no longer call Puter, Groq, Gemini or OpenAI. The
+server only renders the prompt; the companion extension in
+`chatgpt-extension/` types it into the ChatGPT tab the user is already signed in
+to, waits for the answer, and posts the raw text back. The server parses,
+sanitises and stores it exactly as before, so the PPD contract and review flow
+are unchanged.
 
-**Groq (second).** `openai/gpt-oss-120b`: 131,072 context / 65,536 max completion
-tokens, $0.15 per M input, $0.60 per M output (adjust `GROQ_PRICE_*` when pricing
-moves). The developer tier is free but capped, and it is the fastest leg.
+1. The dashboard prepares a row in `chatgpt_jobs` and returns the prompt.
+2. The extension receives it over `chrome.runtime.connect(EXTENSION_ID)`, starts
+   a fresh ChatGPT chat, types the prompt with three fallbacks, verifies the send,
+   and reads the completed answer through ChatGPT's Copy button.
+3. The dashboard posts the answer to `/api/chatgpt/jobs/:id/complete`. That route
+   parses JSON, applies `sanitizePpd`/`sanitizeEmail`, and writes the proposal or
+   draft. A failed parse stays retryable instead of half-saving a document.
 
-**Gemini (last).** `gemini-3.8-flash`: the current free-tier Flash (1M input /
-64K output), fast and good at JSON, with a per-model daily quota. It is reached only when Puter and Groq are
-both unconfigured or both fail; with no `GEMINI_API_KEY` it is not in the chain at
-all. Gemini also refuses some regions with `User location is not supported`; the
-error now says so instead of blaming the key, and Puter/Groq remain the answer
-there.
+Everything is visible in the **ChatGPT session** drawer: connection state, queue,
+prompt transcript, progress, errors, Cancel/Run, and a textarea for pasting an
+answer by hand when the extension cannot be installed. There is deliberately no
+iframe: ChatGPT cannot be embedded usefully, so the drawer shows the job and the
+extension drives the real tab in the background.
 
-| | Puter `:free` | Groq `gpt-oss-120b` | Gemini `3.8-flash` |
-| --- | --- | --- | --- |
-| Who pays | the **Puter account** behind `PUTER_AUTH_TOKEN` | your Groq key | your Google AI Studio key |
-| Hard stop | the account's allowance (no TPM wall) | ~8k tokens/minute, ~200k/day (≈35 documents) | free-tier daily quota per model |
-| Cost per document | $0 on `:free`; billed if a paid model is chosen | ~$0.002 (estimated from tokens) | $0 on the free tier |
-| Latency | tens of seconds; 70 s when all three are configured (105 s hard cap) | 6–19 s | a few seconds |
-| Cost basis in the log | `billed` when Puter reports `usage.cost`, otherwise `none` | `estimated` (list price × tokens) | `none` (no price in the response) |
+**Setup:** load `chatgpt-extension/` unpacked (see its README), keep
+`NEXT_PUBLIC_CHATGPT_EXTENSION_ID=phieeciapeplplficoclmjenfbmbdcke`, and sign in
+to ChatGPT once in that browser profile. Each user brings their own session; the
+server never sees ChatGPT cookies. `APP_ENCRYPTION_KEY` is now only for SMTP
+passwords.
 
-The providers are not interchangeable in the numbers they return, so `aiCostOf()`
-labels each run `billed`, `estimated` or `none` rather than mixing them into one
-column.
+**Prompt templates** live in `/settings/prompts`: `ppd_document`, `email_draft`
+and `follow_up`. They are global (any dashboard user can edit them), so treat
+that page as workspace configuration. Token/temperature fields still exist on
+old rows but the ChatGPT session ignores them.
 
-### Choosing models and keys (`/settings/models`)
+The default PPD prompt asks for 450–700 words in 4–6 sections, and explicitly
+forbids company branding, invented case studies and bracketed placeholders.
+When the post contains direct questions, `extractQuestions()` sends them as
+`{{job_questions}}` and the prompt requires one direct answer per question.
 
-Every provider card takes a model id (with the free presets suggested), an optional
-within-provider fallback (Puter only), an **enabled** switch, and an API key. A save
-writes one row to `public.ai_settings`; the key is AES-256-GCM encrypted with
-`APP_ENCRYPTION_KEY` and is never returned by the API. Resolution is:
+The default email prompt does three things a model usually skips:
 
-1. the saved row (model, key, enabled flag);
-2. the environment variable;
-3. the built-in free default in `src/lib/ai-models.ts`.
+1. **Researches real products** that solve the client's problem. Only official
+   product sites, official docs, `apps.apple.com` and `play.google.com` are
+   accepted; blogs, listicles, review/aggregator sites, social posts, agencies,
+   affiliate/referral URLs and shorteners are rejected by the prompt **and** by
+   `sanitizeEmail()`. If the model cannot verify a product, it returns an empty
+   list instead of inventing a URL.
+2. **Uses only real experience** from the selected profile
+   (`experience_summary` / `skills`). Invented employers, metrics or years are
+   forbidden.
+3. **Answers every direct question** from the job post, in order, before asking
+   for a call. The client should not have to repeat the brief.
 
-The order is **Puter → Groq → Gemini**, overridable with `AI_PROVIDER_ORDER`;
-`AI_PROVIDER` pins a preferred provider to the front, and
-`AI_FALLBACK_PROVIDER=none` makes it a single leg (a failure stays a failure).
-A provider with **no key from either source is skipped** — not attempted, not logged
-as a failure. **Reset provider** deletes the row and restores env/default.
+**Follow-ups** are separate `email_drafts` rows: `sequence` (1, 2, …),
+`parent_draft_id` and `purpose` (`initial`/`follow_up`). A follow-up is offered
+only after a `sent` draft to the same contact, and the prompt includes the
+previous emails so the new message continues the thread instead of starting over.
+On SMTP sends the previous message's RFC `Message-ID` is forwarded as
+`In-Reply-To` / `References`, so mail clients group the follow-up with the first
+message instead of relying on the subject alone.
 
-**Getting the Puter token.** Puter's Node entry point takes an auth token, and that
-account is billed (their User-Pays model) — which is how this app gets AI without
-buying a per-token key:
-
-```bash
-npm i -g @heyputer/puter-cli && puter login     # browser flow
-puter whoami                                     # which account will be billed
-# paste the token on /settings/models, or as PUTER_AUTH_TOKEN in .env.local
-npm run dev                                       # /settings/ai → "Probe it"
-```
-
-The client here does **not** import `@heyputer/puter.js`: its Node entry runs the
-browser bundle inside `node:vm` and reads it off disk, which a Vercel serverless
-trace does not always carry. `src/server/services/ai/puter.ts` speaks the same
-wire the SDK uses — `POST {origin}/drivers/call`, `content-type:
-text/plain;actually=json`, token in the body — with `normalize: true` so the
-primary and the fallback model answer in one shape. `tests/ai-provider.test.ts`
-pins that body. Gemini uses `POST /v1beta/models/<id>:generateContent` with the key
-in an `x-goog-api-key` header, never in the URL.
-
-Groq writes the *content*; the PDF is rendered locally and costs **zero** extra
-tokens.
-
-| `GROQ_REASONING_EFFORT` | wall clock | completion tokens (of which reasoning) | document | est. cost |
-| --- | --- | --- | --- | --- |
-| `low` | 6 s | 1,577 (28) | ~500 words → 3 pages | $0.00126 |
-| `medium` (default) | 16 s | 2,755 (1,124) | ~880 words → **4 pages** | $0.00198 |
-| unset (model default ≈ high) | 19 s | 8,000 (**6,296**) | 950 words, then truncated | $0.00511 |
-
-Lessons baked into the code:
-* **`reasoning_effort: "none"` is a lie gpt-oss does not accept** — it answers a
-  400 naming no parameter the compatibility ladder can walk. "No reasoning" is
-  sent by omitting the field (`SENDABLE_EFFORT`), which matters because the
-  budget tuner picks `none` on a tight allowance.
-* **Reasoning is billed against the same completion cap** as the visible JSON, so
-  `GROQ_MAX_TOKENS` (12,000) needs headroom; hitting it raises the
-  `completion used N of the M-token budget` warning and a parse error that names
-  the knob to turn.
-* **Your tier's TPM is the real ceiling.** This key allows 8,000 tokens/minute, so
-  a 12k request came back `413 Request too large … Limit 8000, Requested 10090`.
-  The client therefore clamps the budget to `GROQ_TOKENS_PER_MINUTE − estimated
-  prompt − 256`, and on a 413 it re-reads the limit from the error body, resizes
-  and retries once (`groq_tpm_resize`).
-* **A global word target does not steer this model** — 1,200–2,000 words produced
-  504. The prompt now states per-section counts (3×65-word paragraphs, 6 matrix
-  rows, 6 steps of 35–50 words, …), which is what moved it to 880 words / 4 pages.
-* json mode occasionally returns `json_validate_failed` with an empty generation:
-  two backed-off retries (cooler, then cooler + `reasoning_effort: low`).
-* Page-count target: ~800–1,500 words ⇒ 4–6 pages here. `DOC_WORD_TARGET`
-  (`proposal-sanitize.ts`) warns outside 700–2,600 words.
-
+**Several people or tabs on one lead.** Preparing is serialised by a unique live
+job per `(lead_id, kind)`. Claiming `queued → running` decides which browser may
+type the prompt, and only `running → completing` may write the proposal/draft.
+The owning tab resumes its own run after a reload (per-tab `sessionStorage`);
+other tabs show the same job and wait for the result instead of typing it again.
 > ⚠ **Keep the three pdfme packages on the same exact version.** They are pinned
 > `6.2.8` (no caret) in `package.json`: `@pdfme/generator` declares its peers as
 > `"latest"`, so `^5.x` + a 6.x `@pdfme/schemas` crashes at import time with
@@ -556,11 +548,11 @@ record any of it.
 
 **Generation is a click.** Ingest stores; it does not write. A lead with no
 document shows **1 · Generate PPD** in the workspace (and its pipeline dot reads
-"no document yet" in the list), which runs step 1 against the configured model
-and stops at the document — no email copy, no PDF until you have reviewed it.
-`/settings/models` is where that click's provider ladder and keys are chosen;
-`/settings/ai` shows which model will actually answer and probes it once, in 64
-tokens, without touching the database.
+"no document yet" in the list), which prepares the prompt and hands it to the
+ChatGPT session. It stops at the document — no email copy, no PDF until you have
+reviewed it. The **ChatGPT** pill in the top bar opens the session drawer: queue,
+progress, errors, Cancel/Run and manual paste. `/settings/prompts` is where the
+PPD, email and follow-up templates are edited for the whole workspace.
 
 **Finding a lead.** `/leads` keeps the whole view in the URL — `q`,
 `pipeline`, `confidence`, `from`, `to`, `sort`, `order` and `page` — so a
@@ -615,8 +607,9 @@ of pretending a message went out.
 - **Edit document** (`ppd-editor.tsx`) — block-aware editor: sections and blocks
   can be added, removed and reordered; paragraphs, bullets, numbered steps,
   requirement→approach matrices and label/value tables each get their own
-  inputs. `company / website / prepared_by / job_title / job_reference` are shown
-  locked, because `sanitizeEditedPpd()` re-applies them server-side anyway.
+  inputs. `prepared_by / prepared_role / sender_* / date / valid_until /
+  job_title / job_reference` are shown locked, because `sanitizeEditedPpd()`
+  re-applies them server-side anyway.
 - **JSON** — same document as text; a syntax error blocks the save and says why.
 - **Prompts** — both prompt pairs inline, with click-to-insert `{{variables}}`
   and a budget warning when `max_tokens` is below what that step needs.
@@ -651,7 +644,7 @@ the step that clears it. Navigation collapses into a drawer below `md`.
 ## 8. Setup
 
 ```bash
-npm install                       # Next 15 + Supabase + Groq(fetch) + pdfme 6.2.8 + nodemailer
+npm install                       # Next 15 + Supabase + pdfme 6.2.8 + nodemailer
 cp .env.example .env.local
 ```
 
@@ -659,12 +652,12 @@ Then verify the toolchain you just installed:
 
 ```bash
 npm run check          # tsc --noEmit + eslint
-npm test               # 201 tests: migration 0007 and tracking SQL on a real Postgres, the send path, routes, API, AI chain
+npm test               # 180 tests: migrations 0007–0011 and tracking SQL on a real Postgres, the send path, routes, ChatGPT parsing, PATCH semantics, PPD sanitising, follow-up Message-ID threading and a two-page PDF render
 npm run build          # production build — 27 route handlers + 11 dashboard pages
 node -e "console.log(require('@pdfme/generator') ? 'pdfme ok' : '')"  # no export-mismatch crash
 ```
 
-Supabase (apply migrations in order — `0001` through `0007`):
+Supabase (apply migrations in order — `0001` through `0011`):
 
 ```bash
 supabase link --project-ref <ref> && supabase db push
@@ -676,13 +669,22 @@ supabase link --project-ref <ref> && supabase db push
 # 0005 adds the engagement columns on email_logs plus tracked_links, tracking_events
 # and the record/purge RPCs (see §7 — without it the dashboard shows activity as
 # unavailable, not as zeros);
-# 0006 adds ai_settings, the per-provider model + encrypted key store behind
-# /settings/models. It is optional: without it the app still uses env/defaults, and
-# a save returns a message naming the migration instead of failing silently.
+# 0006 is the legacy ai_settings table; apply it only if an older deployment
+# already has it. Nothing in the ChatGPT-session flow reads or writes it.
 # 0007 adds public.lead_list (correlated contact/proposal/draft counts) and a
 # created_at index. Without it the lead list still renders: date/sort/slice use
 # the old query and a pipeline filter scans a bounded window in memory, so apply
 # it for exact counts and for "doc ready" filters over a large table.
+# 0008 adds chatgpt_jobs, the follow-up columns on email_drafts, and the
+# follow_up prompt key. PPD/email/follow-up generation needs it.
+# 0009 adds the `completing` job state and keeps it in the one-live-job index,
+# so two tabs holding the same answer cannot write the proposal/draft twice.
+# 0010 adds the sender profile columns used by the PPD header, the PDF and the
+# email sign-off (role, phone, WhatsApp, LinkedIn, website, location, experience,
+# skills). Apply it before generating; otherwise the API logs a missing-column
+# error and the profile falls back to the environment.
+# 0011 drops the unused ai_settings key table (if it was ever created) and
+# defaults new proposals to provider chatgpt-session. Safe to run last.
 # The app runs on 0001+0002 alone: prompt reads fall back to the code defaults and
 # the 0003/0004 columns the app writes are dropped with a `db_columns_missing` log
 # line naming this file — but saving edited prompts then returns 502.
@@ -695,28 +697,25 @@ Required env (see `.env.example`):
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | service role is server-only |
 | `API_MASTER_KEY` | `openssl rand -hex 32`; **required in production** — with it unset, `/api` is open in dev and answers `403` in prod |
-| `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords **and AI API keys** at rest. Required to save a key on `/settings/models` |
-| `AI_PROVIDER` | `auto` (default) · `puter` · `groq` · `gemini` · `none`. `auto` follows `AI_PROVIDER_ORDER`; a preferred provider with no key is skipped |
-| `AI_PROVIDER_ORDER` | default `puter,groq,gemini` — the ladder itself. Saved keys/models on `/settings/models` override the env values, not the order |
-| `AI_FALLBACK_PROVIDER` | `auto` (default) keeps the rest of the order; `none` makes one leg and lets a failure stay a failure |
-| `PUTER_AUTH_TOKEN` | the login token of a Puter account (`npm i -g @heyputer/puter-cli && puter login`). That account is billed; there is no API key of ours to rotate. Treat it as a password — it can read that account's cloud. Or save it on `/settings/models` |
-| `PUTER_MODEL` / `PUTER_FALLBACK_MODEL` | default `openrouter:nvidia/nemotron-3-ultra-550b-a55b:free` → `openrouter:nvidia/nemotron-3.5-lightning:free`; any id from <https://developer.puter.com/ai/models/> |
-| `AI_MAX_TOKENS` / `AI_TIMEOUT_MS` | shared completion budget (defaults to `GROQ_MAX_TOKENS`) and per-call wall clock; the chain may shorten a leg to reserve `AI_MIN_ATTEMPT_MS` for each fallback, and the total must stay under the route's 120 s |
-| `GROQ_API_KEY` | from <https://console.groq.com/keys>, or save it on `/settings/models`. **Rotate any key that was ever pasted into a chat/ticket-tracker** — this repo never stores it in code |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` / `GEMINI_TIMEOUT_MS` | last-resort Gemini key (<https://aistudio.google.com/apikey>), model (default `gemini-3.8-flash`) and timeout (default 90 s). No key = skipped; a retired id gets the API's replacement in the error |
-| `GROQ_MODEL` / `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | generation tuning. `AUTO_ENRICH_LEADS` is **deprecated and ignored**: ingest always stores, and a person clicks Generate (or sends `?auto=true` explicitly) |
-| `GROQ_MAX_TOKENS` / `GROQ_TOKENS_PER_MINUTE` / `GROQ_REASONING_EFFORT` | completion budget; effort is auto-tuned down on a tight TPM allowance |
-| `PROPOSAL_COMPANY` | who signs the document; the model cannot override it |  
-| `PROPOSAL_WEBSITE` | printed in the PDF header, the signature block and the email sign-off |  
-| `PROPOSAL_PREPARED_BY` | the writer's name (falls back to the `EMAIL_FROM` display name) |  
-| `PROPOSAL_TITLE` | the writer's role, printed under the name (`Luan Le · Senior Software Engineer`) |  
-| `PROPOSAL_RATE` | optional; empty means the writer proposes an indicative USD range for the scope |
+| `APP_ENCRYPTION_KEY` | `openssl rand -hex 32` — encrypts SMTP passwords at rest |
+| `NEXT_PUBLIC_CHATGPT_EXTENSION_ID` | id of the bundled extension (`phieeciapeplplficoclmjenfbmbdcke`); override only if you replace its manifest key |
+| `PROPOSAL_LANGUAGE` / `AUTO_ENRICH_LEADS` | prompt language; `AUTO_ENRICH_LEADS` is **deprecated and ignored**: ingest always stores, and a person clicks Generate |
+| `PROPOSAL_COMPANY` | **legacy**; the PPD and email never print a company. Kept only so old env files parse |
+| `PROPOSAL_WEBSITE` | fallback website when no sender profile exists. Profile fields win |
+| `PROPOSAL_PREPARED_BY` | fallback writer name when no sender profile exists |
+| `PROPOSAL_TITLE` | fallback role when no sender profile exists |
+| `PROPOSAL_RATE` | optional fallback rate; empty means the writer proposes an indicative USD range |
 | `PDF_PROVIDER` / `PDFME_TEMPLATE_PATH` | `pdfme` \| `none` |
 | `EMAIL_TRACKING` / `LINK_TRACKING` | open pixel and `/c/` link rewrites; both default on, both forced off by `EMAIL_PROVIDER=log` |
 | `TRACKING_DOMAIN` | public HTTPS origin a recipient can reach; defaults to `NEXT_PUBLIC_APP_URL`, and a loopback/HTTP value is reported by `npm run check:tracking` |
 | `TRACKING_RETENTION_DAYS` | how long raw open/click rows survive the purge (default 365; counters are rebuilt after it) |
 | `CRON_SECRET` | `openssl rand -hex 32` — bearer token for `POST /api/maintenance/purge` |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` / `EMAIL_REPLY_TO` + `RESEND_API_KEY` or `SMTP_*` | fallback env-based sending; per-account SMTP wins when `senderAccountId` is given |
+| `REQUIRE_SESSION` | development only: `true` exercises the login gate. Production always requires Supabase Auth |
+
+Production gates the dashboard behind Supabase Auth. Create/invite the people who
+will use it in **Supabase → Authentication → Users** before deploying; the login
+page sends a magic link. Development stays open unless `REQUIRE_SESSION=true`.
 
 ```bash
 npm run dev        # http://localhost:3000
@@ -744,8 +743,8 @@ curl -s -X POST http://localhost:3000/api/sender-accounts/<id>/test -H "x-api-ke
 curl -s -X POST "http://localhost:3000/api/leads" \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   --data-binary @lead.json
-# → lead + contacts stored, nothing generated: AUTO_ENRICH_LEADS is off, so the
-#   model is only called when a person asks. ?auto=true writes the PPD inline.
+# → lead + contacts stored, nothing generated: AUTO_ENRICH_LEADS is ignored and
+#   ?auto=true is ignored too. Generation starts only from the lead page.
 #   A second post of the same job_id / job link answers duplicate + matchedBy and
 #   adds nothing (npm test covers all six shapes; check with two identical posts).
 
@@ -771,15 +770,18 @@ curl -s -X DELETE http://localhost:3000/api/leads \
 # kept on purpose: public.contacts you promoted, email_logs delivery proof,
 # sender accounts, prompt overrides. One id? DELETE /api/leads/<leadId> → 204.
 
-# ── STEP 1 · the document only ────────────────────────────────────────────
+# ── STEP 1 · prepare the document prompt ─────────────────────────────────
 curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   -d '{"toEmail":"client@example.com"}'        # or {"contactId":"<uuid from the payload>"}
 # omit both → the lead's primary email; no email on the lead at all → a
-# recipient-less PPD is still written from job_information.job_description
-# → ppd JSON, words/tokens/cost, pdf_status: "pending", no draft, no PDF
-# this is the click the dashboard shows as "1 · Generate PPD": ingest never
-# calls it for you, and nothing is billed until someone does
+# recipient-less PPD is still prepared from job_information.job_description
+# → 201 { job, next }; no model API is called here
+# the extension/drawer runs the prompt, then posts the raw answer:
+curl -s -X POST http://localhost:3000/api/chatgpt/jobs/<jobId>/complete \
+  -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
+  -d '{"text":"…the complete ChatGPT answer…"}'
+# → parsed ppd JSON, pdf_status: "pending", no draft, no PDF
 
 # ── STEP 2 · review it (dashboard tab "Edit PPD JSON", or PATCH here) ─────
 curl -s -X PATCH http://localhost:3000/api/proposals/<proposalId> \
@@ -791,11 +793,11 @@ curl -s -X PATCH http://localhost:3000/api/proposals/<proposalId> \
 curl -s -o preview.pdf "http://localhost:3000/api/leads/<leadId>/pdf?render=true&download=true" \
   -H "x-api-key: $API_MASTER_KEY"
 
-# ── STEP 3 · the email, written from the reviewed document ────────────────
+# ── STEP 3 · prepare the email prompt, then complete it ───────────────────
 curl -s -X POST http://localhost:3000/api/leads/<leadId>/generate-email \
   -H "content-type: application/json" -H "x-api-key: $API_MASTER_KEY" \
   -d '{"toEmail":"client@example.com","cc":["account@yourdomain.com"]}'
-# → subject + plain-text body + a draft addressed to ANY mailbox you name
+# → 201 { job, next }; completing it opens a draft addressed to ANY mailbox
 
 # ── STEP 4 · send: the PDF is compiled here and attached ──────────────────
 curl -s -X POST http://localhost:3000/api/drafts/<draftId>/send -H "x-api-key: $API_MASTER_KEY"
@@ -823,10 +825,11 @@ free-text address · both prompts inline) · **Email draft card** (to/cc/subject
 /body, "render PDF + send") · **Contacts** · **Email log** · **Senders** ·
 **Settings → Prompts** · **API** (curl reference).
 
-### The two prompts
+### The three prompts
 
 `GET/PUT /api/prompts` and `/settings/prompts` expose `ppd_document` (writes the
-block PPD) and `email_draft` (writes subject/body from the reviewed PPD). Both
+block PPD), `email_draft` (writes subject/body from the reviewed PPD) and
+`follow_up` (writes the next message on an existing thread). All three
 are stored in `prompt_templates` — a row only exists once you edit it, so a
 reset falls back to the code default in
 `src/server/services/prompts/proposal.prompt.ts`. Every prompt is a `{{variable}}`
@@ -868,15 +871,12 @@ vercel --prod        # or push to GitHub → Import Project
 | `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
-| "I can't generate" — every click fails on quota | Each provider has its own ceiling: Puter's account allowance, Groq's ~8k TPM / ~200k TPD, Gemini's daily free quota. `/settings/ai` shows the *effective* chain and `GET /api/health` reports it; **Probe it** spends one 64-token call to prove the first credential works. If all configured legs fail, the error names every attempt, so the fix is visible without server logs. Nothing about the prompt, PPD contract or review flow changes between providers. |
-| `Puter: PUTER_AUTH_TOKEN is wrong or revoked` | The token is a login token, not an API key: it expires when you revoke it in the Puter dashboard. Run `puter login` again and paste it on `/settings/models` (or into `PUTER_AUTH_TOKEN`). (`token_auth_failed` on the wire.) |
-| `Puter: the account has spent its monthly allowance` | Real, and on that account, not yours. The chain now **falls through automatically** to Groq, then Gemini, recording each failure in `attempts`; top up at puter.com/dashboard#billing if Puter should stay first. If every leg fails, the 502 names each provider's reason. |
-| `No AI provider configured — … Set PUTER_AUTH_TOKEN, GROQ_API_KEY or GEMINI_API_KEY` | None of the three has a key from either source. Save one on `/settings/models`, or set the env var and restart. `AI_PROVIDER=none` also disables generation on purpose. |
-| `AI settings need supabase/migrations/0006_ai_settings.sql` | `/settings/models` saved a value but the table is absent. Apply 0006 (it is additive and safe to re-run). Until then the env/default chain still generates; only saving is blocked. |
+| The ChatGPT drawer says **Extension not connected** | Load `chatgpt-extension/` unpacked in the same browser profile, reload it, and check that `NEXT_PUBLIC_CHATGPT_EXTENSION_ID` matches the extension id. If you deployed on another domain, add that exact origin to `externally_connectable`. |
+| The extension is connected, but the job sits at **queued** | No signed-in ChatGPT tab was found, or the tab is showing a login/human check. Open chatgpt.com, finish the check, then press **Run** in the drawer; the prompt is saved server-side. |
+| ChatGPT answered but the PPD did not appear | The server rejected a non-JSON or incomplete answer. The drawer returns the job to **running** and the toast names the parse error; paste a corrected JSON answer with the manual-paste box, or press **Run** again. |
+| `chatgpt_jobs` table missing / `0008` or `0009` error | Apply `supabase/migrations/0008_chatgpt_session_followups.sql`, then `0009_chatgpt_completion_claim.sql`; PPD, email and follow-up preparation all write there, and finalisation needs the `completing` state. |
 | `lead_list_view_missing` in the logs, or pipeline filters feel slow on a large table | Migration **0007** is not applied. The list deliberately degrades instead of failing: date, sort and pagination use the old query, and a pipeline filter reads a bounded window and filters in memory. Apply 0007 for the correlated counts and the `created_at` index. |
-| `Gemini model "…" was not found` / `Gemini free-tier quota is exhausted` | The model id belongs to another provider or is retired, or the per-model daily free quota is spent. Pick a suggested model on `/settings/models`; a 429 on the last leg is a real end-of-chain failure, not something to retry in a loop. |
 | The same Upwork job appears twice in `/leads` | Pre-`src/lib/job-ref.ts` behaviour: dedupe compared `job_id` and the raw URL string, so one scrape with `~02…` in a link and another with `job_id` alone produced two rows. Now both are matched in canonical form, in either direction. Merge by hand: open the newer lead, note the older id, `DELETE /api/leads {"ids":[<newer>]}`. |
-| `Groq returned 429 … tokens per day (TPD): Limit 200000, Used 199672, Requested …` | The free tier's **daily** budget is spent (≈200k tokens ≈ 35–40 documents a day, one PPD running 4–5k). It resets at midnight UTC, so the client **stops retrying** on a TPD answer and says so — waiting would burn the same tokens. Keep Puter first so a Groq TPD day falls through, upgrade the Groq tier, lower `GROQ_MAX_TOKENS`, or leave `AUTO_ENRICH_LEADS` off and generate in batches. A per-minute 429 is different: that one is retried up to three times, honouring `Retry-After`. |
 | `pdf_unavailable` (409) from `/api/leads/:id/pdf` | `PDF_PROVIDER=none`, or no proposal generated yet — retry `?render=true`. |
 | A deleted row reappears in the list a second later | `GET /api/leads` sends `Cache-Control: private, max-age=10`, so a refetch after a mutation replayed the old page. `apiFetch`/`apiFetchBlob` now pass `cache: "no-store"` — keep it if you add another client-side cache. |
 | Crash at import: *“'@pdfme/common' does not provide an export named 'createDynamicLayoutSplitRange'”* | pdfme version skew. Keep `@pdfme/common`, `@pdfme/generator`, `@pdfme/schemas` on the **same exact version** (pinned `6.2.8`, no caret). |
@@ -900,35 +900,24 @@ the same config in production answers `403` until you set a key.
   `email_logs` rows survive on purpose: the delivery record is evidence, not the
   lead's property.
 
-* The Groq key you pasted into chat should be **rotated** — treat it as public.
-* SMTP passwords and provider API keys are `v1:iv:tag:ciphertext` AES-256-GCM;
-  without `APP_ENCRYPTION_KEY` they cannot be saved or decrypted (changing the key
-  invalidates stored secrets — re-save the sender accounts and the keys on
-  `/settings/models`). The `ai_settings` table is service-role-only, and
-  `GET /api/ai/settings` returns `configured` / `keySource`, never the key.
-* A stored AI key is decrypted only inside `ai-settings.repo.ts`, lives in memory
-  for the duration of one generation call, and is never serialised into a
-  response, a log line or a client component.
+* SMTP passwords are `v1:iv:tag:ciphertext` AES-256-GCM; without
+  `APP_ENCRYPTION_KEY` they cannot be saved or decrypted (changing the key
+  invalidates stored secrets — re-save the sender accounts).
 * `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS and is only read from `src/server/**`;
   RLS stays enabled on every table with no public policies.
-* `PUTER_AUTH_TOKEN` is a **login token, not a scoped API key**: it can read the
-  Puter account's cloud, so it belongs in the server environment only (never a
-  `NEXT_PUBLIC_*` name, never a client bundle) and is revoked in the Puter
-  dashboard rather than rotated in code. It is read through the effective config
-  and sent only from `src/server/services/ai/puter.ts`, in the body of one POST to
-  `PUTER_API_ORIGIN` — which defaults to `https://api.puter.com` and should stay
-  that way: an attacker-controlled origin would receive the token. A token saved
-  on `/settings/models` is encrypted at rest like the other provider keys.
-* Generation cost lands on whichever provider answered, which is why the chain is
-  ordered explicitly and why the result carries `attempts` / `fellBackFrom`. A
-  Puter fallback spends the Puter account; a Groq fallback spends the Groq key; a
-  Gemini fallback spends the Google quota. `AI_FALLBACK_PROVIDER=none` disables
-  the ladder when that accounting must be strict.
+* **The ChatGPT session belongs to the user, not the server.** The extension only
+  accepts commands from the origins in `externally_connectable`, never exposes the
+  session cookie, and sends prompt text plus the answer over a runtime port. Keep
+  the allowed-origin list exact; do not widen it to `https://*.vercel.app/*`.
+* The extension types into the user's own ChatGPT tab. Prompts and answers pass
+  through ChatGPT under that account's data policy — do not send material the
+  workspace is not allowed to put there.
 * Email bodies, PPDs and raw payloads contain personal data — keep the bucket
   private, and add retention if your jurisdiction needs it.
-* Generation is untrusted input → LLM → stored text: the prompt forbids inventing
-  prices/facts, and `sanitizeProposal()` caps lengths; still, **a human reviews the
-  draft before `POST /api/drafts/:id/send`**. Nothing sends automatically.
+* Generation is untrusted input → ChatGPT → stored text: the prompt forbids
+  inventing prices/facts, and `sanitizePpd()`/`sanitizeEmail()` cap lengths; still,
+  **a human reviews the draft before `POST /api/drafts/:id/send`**. Nothing sends
+  automatically.
 * **The tracking URLs are the only intentionally public endpoints**, so they carry the
   least information that still works: tokens are 24 random bytes (`crypto.randomUUID`
   grade, 184 bits) and unguessable; an unknown token is answered exactly like a known one;
@@ -942,16 +931,15 @@ the same config in production answers `403` until you set a key.
 
 ## 13. Next steps
 
-* [ ] Replace the sample `deliverables`/`pricing` wording with your real service catalogue
-* [ ] Add `job_description` to the scraper payload so proposals get the full text
-* [ ] Batch generation: now that ingest is manual, a "generate these 10 leads" action on `/leads`
-      would want a queue (Inngest/QStash) rather than 10 sequential 120-second function calls
-* [ ] Per-lead model choice: `POST /api/leads/:id/generate` already accepts `{"model": "…"}`, so the
-      workspace could offer a model picker without any schema change
+* [ ] Batch generation: a "generate these 10 leads" action on `/leads` would want a queue
+      (Inngest/QStash) so one browser does not have to run ten prompts back to back
 * [ ] Reply detection: IMAP polling or inbound webhook → the `reply` outcome is already modelled in
       `tracking_events`, so this becomes a writer rather than a schema change
 * [ ] Follow-up nudges driven by the tracking data (opened 3× in 48 h and no reply → nudge queue)
-* [ ] Flip `REQUIRE_SESSION = true` in `src/lib/supabase/middleware.ts` once auth users exist —
-      `/o/*` and `/c/*` are already in `PUBLIC_PATHS`, so gating the dashboard will not break tracking
-* [ ] Per-user accounts: `email_logs` has no owner column yet, so every authenticated user sees every
-      message; add `owner_id` + RLS before inviting a second person
+* [x] Production gates the dashboard behind Supabase Auth automatically; development stays open.
+      Set `REQUIRE_SESSION=true` to exercise the gate locally. `/o/*` and `/c/*` stay public so
+      tracking links keep working
+* [ ] Per-user/tenant ownership: leads, proposals, prompt templates and sender profiles are currently
+      a shared workspace. The server uses the service-role client, so RLS does not isolate rows between
+      signed-in people. Add `owner_id`/`workspace_id` + policies before inviting independent users;
+      a shared team that trusts every member can keep the current model

@@ -1,7 +1,7 @@
 import type { NormalizedContact, NormalizedLead, ProposalPpd } from "@/types/lead";
 
 /**
- * The two Groq prompts, as **editable templates**.
+ * The PPD, email and follow-up prompts, as **editable templates**.
  *
  * `ppd_document`  → writes only the Professional Proposal Document (JSON)
  * `email_draft`   → writes only the outreach email, from the PPD a human has
@@ -17,7 +17,7 @@ import type { NormalizedContact, NormalizedLead, ProposalPpd } from "@/types/lea
  * drop the job description from a prompt.
  */
 
-export type PromptKey = "ppd_document" | "email_draft";
+export type PromptKey = "ppd_document" | "email_draft" | "follow_up";
 
 export interface PromptTemplateText {
   key: PromptKey;
@@ -26,22 +26,31 @@ export interface PromptTemplateText {
   system: string;
   user: string;
   temperature: number;
-  /** null ⇒ GROQ_MAX_TOKENS. */
+  /** Legacy field; the ChatGPT session has no completion cap. */
   maxTokens: number | null;
-  /** null ⇒ GROQ_REASONING_EFFORT (the client may still tune it down). */
+  /** Legacy field; ChatGPT chooses its own thinking level. */
   reasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | null;
 }
 
 export interface ProposalBrand {
+  /** App-shell label only. Proposal prompts never print this. */
   company: string;
   website: string;
   preparedBy: string;
-  /** PROPOSAL_TITLE — the writer's role, printed under the name. */
+  /** The writer's role, printed under the name in the PDF. */
   title: string;
-  /** "Luan Le · Senior Software Engineer" — what the PDF and document show. */
+  /** "Luan Le · Senior Software Engineer" — byline used by older surfaces. */
   preparedLine: string;
   senderEmail: string;
-  /** Empty → the model proposes an indicative range; env wins either way. */
+  phone: string;
+  whatsapp: string;
+  linkedin: string;
+  location: string;
+  /** Relevant professional experience, written by the user in Settings. */
+  experience: string;
+  /** Comma/newline-separated skills from Settings. */
+  skills: string;
+  /** Empty → the model proposes an indicative range. */
   rate: string;
   /** Canonical email sign-off, appended by the server, never by the model. */
   signature: string[];
@@ -50,15 +59,25 @@ export interface ProposalBrand {
 export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "language", description: "PROPOSAL_LANGUAGE, e.g. English" },
   { name: "today", description: "ISO date the generation runs on" },
-  { name: "valid_until", description: "today + 14 days" },
-  { name: "company", description: "PROPOSAL_COMPANY (ours)" },
-  { name: "website", description: "PROPOSAL_WEBSITE (ours)" },
-  { name: "prepared_by", description: "PROPOSAL_PREPARED_BY (ours)" },
-  { name: "presenter_title", description: "PROPOSAL_TITLE — your role, e.g. Senior Software Engineer" },
+  { name: "today_long", description: "the same date written out, e.g. 25 November 2026" },
+  { name: "valid_until", description: "today + 14 days (ISO)" },
+  { name: "valid_until_long", description: "today + 14 days, written out" },
+  { name: "company", description: "legacy app-shell label — the proposal prompts do not print it" },
+  { name: "website", description: "your website from the selected sender profile" },
+  { name: "prepared_by", description: "your full name from the selected sender profile" },
+  { name: "presenter_title", description: "your role, e.g. Senior Software Engineer" },
+  { name: "presenter_role", description: "alias of presenter_title" },
   { name: "prepared_line", description: "name · role — the byline the PDF prints" },
-  { name: "signature", description: "our canonical email sign-off block" },
-  { name: "sender_email", description: "EMAIL_FROM address" },
-  { name: "rate", description: "PROPOSAL_RATE if configured, else an instruction to pick an indicative range" },
+  { name: "sender_email", description: "email address on the selected sender profile" },
+  { name: "sender_phone", description: "phone from the selected sender profile" },
+  { name: "sender_whatsapp", description: "WhatsApp number or link from the profile" },
+  { name: "sender_linkedin", description: "LinkedIn URL from the profile" },
+  { name: "sender_location", description: "city/timezone from the profile" },
+  { name: "sender_contact", description: "one-line contact block (email, phone, LinkedIn, site)" },
+  { name: "experience_summary", description: "your real experience summary from Settings — use only this, never invent" },
+  { name: "skills", description: "your skills list from Settings" },
+  { name: "signature", description: "canonical email sign-off block, appended by the server" },
+  { name: "rate", description: "your configured rate, else an instruction to propose an indicative range" },
   { name: "job_title", description: "leads.job_title" },
   { name: "job_reference", description: "leads.job_id" },
   { name: "job_url", description: "leads.job_url" },
@@ -70,6 +89,8 @@ export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "overall_confidence", description: "research confidence of the payload" },
   { name: "job_description", description: "job_information.job_description — the post text, the primary source of facts (clipped to 3,600 chars)" },
   { name: "job_description_chars", description: "how many characters of post body we actually have" },
+  { name: "job_questions", description: "direct questions found in the post, one per line; answer every one" },
+  { name: "job_question_count", description: "how many direct questions the post contains" },
   { name: "research_notes", description: "researcher evidence: company-page notes, LinkedIn notes, contact rationale, key-person evidence, skills" },
   { name: "budget_range", description: "any budget/pay fields found anywhere in the payload" },
   { name: "client_profile", description: "upwork_client keys (name, location, history flags)" },
@@ -86,47 +107,84 @@ export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "ppd_outline", description: "section titles of the reviewed PPD" },
   { name: "ppd_summary", description: "first sentence of each PPD paragraph/bullet" },
   { name: "ppd_words", description: "word count of the reviewed PPD" },
+  { name: "email_sequence", description: "1 = first email, 2+ = follow-up number (follow-up prompt only)" },
+  { name: "previous_emails", description: "the earlier emails on this thread, newest first (follow-up prompt only)" },
+  { name: "previous_email_count", description: "how many emails have already gone to this contact" },
+  { name: "last_subject", description: "subject of the message being followed up (follow-up prompt only)" },
+  { name: "last_sent_at", description: "ISO date the previous email was sent" },
+  { name: "days_since_last_email", description: "whole days since the previous send" },
+  { name: "thread_subject", description: "the subject this follow-up should reply under" },
 ];
 
 export const DEFAULT_PROMPTS: Record<PromptKey, PromptTemplateText> = {
   ppd_document: {
     key: "ppd_document",
     label: "PPD document",
-    note: "Writes the proposal document only. No email, no PDF — the PDF is compiled later, at send time.",
-    temperature: 0.45,
+    note: "Writes the proposal document only. No company branding: your name and contact details are stamped from Settings. The PDF is compiled separately.",
+    temperature: 0.4,
     maxTokens: null,
     reasoningEffort: null,
-    system: `You are {{prepared_line}} at {{company}} ({{website}}), a small studio replying to an Upwork
-job post. You write one Professional Proposal Document (PPD) and return it as JSON. You sign your own
-work: every recommendation in the document is yours to make, and you make it.
+    system: `You are {{prepared_by}} ({{presenter_title}}), an independent professional replying to an
+Upwork job post. You write one Professional Proposal Document (PPD) as JSON. You speak in the first
+person and you make the calls: scope, sequence, assumptions and an indicative price.
 
-FACTS
-- The post text is the evidence. Every concrete claim about the CLIENT must be traceable to it, to the
-  job title, or to the research notes.
-- Write in clear, professional {{language}}. No hype, no clichés, no bullet spam, no adjectives the job post did not earn.
-- Never invent client facts: their name, their metrics, their past projects, their team, their awards.
-- YOU DECIDE the plan: timeline, milestone split, revision rounds, file formats, tooling, and an indicative
-  USD range that fits the scope. Pick what a senior engineer would pick for this brief and commit to it.
-  A proposal that hedges on every number reads like it was written by nobody.
-- NO SQUARE BRACKETS, NO PLACEHOLDERS, NO BLANKS. Never write a bracketed fill-in token (the kind that
-  says "to confirm", "your name" or "start date"), never "TBD", never "N/A", never an empty line. When something genuinely cannot be known from the post, state your assumption in plain
-  prose and how it gets settled — "we would confirm the pallet dimensions at kickoff" — or turn it into a
-  question in the Questions section. That is what a senior writer does with an unknown.
-- Pricing: one indicative USD range, phrased as indicative and confirmed after a short scoping call.
-- References/case studies: you have none verified. Return an empty "items" array for the references block
-  and put nothing in any other section that implies delivered client work. A fabricated reference ends accounts.
-- Never reveal that the client was researched, scraped, or found via LinkedIn or Upwork search.
-- Do not output our company name, website, byline, job title or job reference — our system injects those
-  from its own records, so the signature and header can never be wrong.
+NON-NEGOTIABLE
+- Never write a company name, studio name, agency name, "we are a team", "our company", a logo
+  reference, a byline, a website footer or a signature block. The document belongs to you as a person;
+  the system prints your name, role and contact details from your profile.
+- Never write square-bracket placeholders ("[Name]", "[Date]", "TBD", "N/A") or empty fields. If a
+  fact is genuinely unknown, state a plain-language assumption and how it will be confirmed.
+- Never invent client facts, metrics, past projects, awards, team size, employers, case studies or
+  client references. Do not claim work you have not done.
+- Never reveal that the client was researched, scraped, found through LinkedIn or found through
+  Upwork search.
+- Pricing: one indicative USD range, clearly described as indicative and confirmed after a short
+  scoping call. No hourly/daily figures unless the post asks for them.
+- The post is the evidence. Follow the post text over the job title. Name the actual deliverables,
+  platforms, volumes, formats and deadlines it mentions.
 
-DOCUMENT
-- 10 sections, ~1,200–1,500 words of visible text. Measured against our renderer that lays out to 4–6 A4 pages.
-- Sections carry "blocks": typed content blocks. Use only the seven block types in the brief; never invent one, never nest blocks.
-- Write for scanning: plain-English section titles, paragraphs 55–80 words, bullets 18–32 words, workflow step titles start with a verb.
-- Be specific to this job post: name the deliverables, the platforms and techniques the post mentions, and the client's stated problem.
+SHAPE
+- 450–700 words of visible text. Hard ceiling: the finished PDF must fit on TWO A4 pages.
+- 4–6 sections, in this order, dropping any section that has nothing real to say:
+  1. Project understanding — one paragraph, 70–110 words, the problem and what success looks like.
+  2. Proposed approach — 4–5 bullets or 4 numbered steps, each 18–30 words, naming the real stack.
+  3. Scope & deliverables — 4–6 bullets, each a concrete artefact the client receives.
+  4. Timeline & investment — a keyValueTable with 3–4 rows (working basis, first milestone, indicative
+     investment, client inputs needed).
+  5. Questions from your brief — only when the post asks questions; otherwise "Working assumptions".
+     Answer every question below directly, in the client's order. One bullet per question, 20–45 words.
+     Never dodge, never restate the question as the answer.
+  6. Next steps — 3 short numbered steps, the first of which is a 15-minute call.
+- Paragraphs 55–90 words; bullets 18–30 words. Plain English, no hype, no adjective spam, no emoji.
+- Title: sentence case, at most 60 characters, specific to the job. Subtitle: one concrete line, at
+  most 120 characters.
+- "prepared_for" is the client name or "Hiring team — <company>". If neither is known, "Hiring team".
+- Do not output prepared_by, role, email, phone, WhatsApp, LinkedIn, website, location, date,
+  valid_until, job_title, job_reference or closing — the system stamps them.
 
 OUTPUT
-- Exactly ONE JSON object with a single top-level key "ppd". No commentary, no markdown fences, no trailing text.`,
+Exactly ONE JSON object with a single top-level key "ppd". No commentary, no markdown fences.
+{
+  "ppd": {
+    "document_title": string,
+    "subtitle": string,
+    "prepared_for": string,
+    "rate": string,
+    "sections": [
+      { "id": "understanding", "title": "Project understanding", "blocks": [ <block> ] }
+    ]
+  }
+}
+
+BLOCK TYPES — these five only; never invent one and never nest blocks:
+{ "type": "paragraph", "items": [string] }                                  // 1–2 items
+{ "type": "bullets", "items": [string] }                                    // 3–6 items
+{ "type": "numberedSteps", "items": [{ "title": string, "description": string }] } // 3–5 steps
+{ "type": "keyValueTable", "rows": [{ "label": string, "value": string }] } // 3–4 rows
+{ "type": "note", "text": string }                                          // one short note at most
+
+LENGTH CHECK before answering: 450–700 words, 4–6 sections. If it is longer, cut adjectives and
+repetition, not specifics. Never add a references block.`,
     user: `Write the proposal document for this lead.
 
 BRIEF
@@ -139,145 +197,241 @@ BRIEF
 - Upwork client display name: {{client_name}}
 - Client location: {{client_location}}
 - Research confidence: {{overall_confidence}}
+
 THE POST TEXT — job_information.job_description ({{job_description_chars}} chars). This is the
-primary source of facts: name the deliverables, tools, volumes, deadlines and formats it
-mentions, and if the title and the text disagree, follow the text.
+primary source of facts. If the title and text disagree, follow the text.
 {{job_description}}
 
-WHAT OUR RESEARCHER FOUND (secondary detail — never say where it came from)
+DIRECT QUESTIONS IN THE POST ({{job_question_count}}) — answer every one explicitly, in this order:
+{{job_questions}}
+
+SECONDARY RESEARCH (never say where it came from):
 {{research_notes}}
 
-UPWORK CLIENT ACCOUNT METADATA (internal; never quote the account name as the company)
+CLIENT METADATA (internal; never quote the Upwork account name as the client's company):
 {{client_profile}}
 
 BUDGET SIGNALS
 {{budget_range}}
 
-KEY PEOPLE (research guesses — treat as unverified, never state them as fact)
+KEY PEOPLE (unverified research guesses — never state them as fact)
 {{key_people}}
 
-WHO WE ARE WRITING TO
-- Name: {{recipient_name}}
-- Role: {{recipient_role}}
-- Company: {{recipient_company}}
-- Email: {{recipient_email}}
-- Found in: {{recipient_source}} — basis: {{recipient_basis}}
-- Other emails for the same lead (do NOT address or mention them): {{other_emails}}
-
-WHO IS WRITING THIS (real, use it as your own voice — but do not repeat the fields
-themselves in the JSON; our system stamps them onto the document)
-- {{prepared_line}}, {{company}} — {{website}} — {{sender_email}}
+WHO IS WRITING (do not repeat these fields in the JSON — the system stamps them)
+- {{prepared_by}} · {{presenter_title}}
+- {{sender_email}} · {{sender_phone}} · {{sender_whatsapp}}
+- {{sender_linkedin}} · {{website}} · {{sender_location}}
 - Today: {{today}} · Valid until: {{valid_until}}
 - Rate to quote: {{rate}}
 
-DO NOT LEAVE HOLES
-- Zero square brackets in the JSON. Choose a number, a format, a date offset ("within 10 business days
-  of the kickoff call") instead of writing "TBD" or a bracketed blank.
-- Anything you cannot ground in the post becomes an explicit assumption or a Question — never a blank.
+REAL EXPERIENCE FROM THE WRITER'S PROFILE (use it for judgement; do not turn it into a CV or a
+claim of prior work with this client):
+{{experience_summary}}
+Skills: {{skills}}
 
-RETURN JSON IN EXACTLY THIS SHAPE
-{
-  "ppd": {
-    "document_title": string,           // <= 60 chars, e.g. "PROJECT CAPABILITY & PROPOSED WORKFLOW"
-    "subtitle": string,                 // <= 160 chars, one line naming the actual scope
-    "prepared_for": string,             // <= 100 chars, e.g. "Hiring team — Acme Robotics"
-    "engagement": string,               // <= 160 chars, e.g. "Fixed-scope pilot, then per-asset production"
-    "rate": string,                     // <= 120 chars, indicative range + "confirmed after a scoping call"
-    "sections": [
-      { "id": "understanding", "title": "Project understanding", "blocks": [ <block> ] }
-    ],
-    "closing": string                   // <= 200 chars, one grateful sentence
-  }
-}
+WHO RECEIVES IT
+- {{recipient_name}} · {{recipient_role}} · {{recipient_company}}
+- Email: {{recipient_email}} (source: {{recipient_source}})
 
-BLOCK TYPES — these seven only. Never add another key to a block.
-{ "type": "paragraph",      "items": [string] }                                  // 1–4 items, 55–80 words each
-{ "type": "bullets",        "items": [string] }                                  // 3–6 items, 18–32 words each
-{ "type": "numberedSteps",  "items": [{ "title": string, "description": string }] } // title <= 60 chars, description 35–50 words
-{ "type": "capabilityMatrix","items": [{ "requirement": string, "approach": string }] } // requirement <= 60 chars, approach 20–35 words
-{ "type": "keyValueTable",  "rows":    [{ "label": string, "value": string }] }  // label <= 30 chars, value 15–35 words
-{ "type": "references",     "items":   [] }                                      // ALWAYS empty — we hold no verified reference
-{ "type": "note",           "text": string }                                     // <= 260 chars, used for the disclaimer
-
-REQUIRED SECTION ORDER — counts are minimums, not suggestions (titles may be reworded, the sequence may not)
-1.  "understanding"   paragraph × 3 items of 55–80 words   (~200 words)  what the job asks for, and the two or three things that actually decide success here.
-2.  "approach"        bullets × 5 items of 18–32 words     (~110 words)  how we would solve it, naming the specific stack/techniques from the post.
-3.  "skills"          capabilityMatrix × 6 rows             (~210 words)  every requirement stated in the post appears, each with a concrete approach you are committing to.
-4.  "workflow"        numberedSteps × 6 steps               (~280 words)  discovery to handover.
-5.  "deliverables"    bullets × 6 items                     (~120 words)  concrete artefacts the client receives.
-6.  "quality"         paragraph × 2 items of 55–80 words    (~140 words)  how we check work, plus the failure modes we test for.
-7.  "terms"           keyValueTable × 4 rows                (~90 words)   working basis, initial step, what we need from the client, turnaround.
-8.  "questions"       bullets × 4 items                     (~90 words)   answers that would confirm scope.
-9.  "references"      references block with "items": []
-10. "note"            note                                  (~30 words)   "This document describes a proposed execution plan, not a claim of previously delivered work with any particular vendor."
-
-LENGTH CHECK before you answer: 10 sections, ~1,200–1,500 words. If a section is short, add real specifics from the job post — not adjectives. Never drop a required section, and never add a reference.`,
+REMINDERS
+- First person ("I"), no company references, no signature, no contact footer, no date fields.
+- 450–700 words, 4–6 sections, must fit two A4 pages.
+- Answer the direct questions above; if the post asks none, use a "Working assumptions" section with
+  2–3 concrete assumptions instead.
+- Return exactly { "ppd": { "document_title", "subtitle", "prepared_for", "rate", "sections" } }.`,
   },
 
   email_draft: {
     key: "email_draft",
     label: "Email draft",
-    note: "Writes the short outreach email for the PPD above it. Runs after a human has reviewed/edited the PPD.",
-    temperature: 0.5,
-    maxTokens: 1500,
-    reasoningEffort: "low",
-    system: `You are {{prepared_line}} at {{company}} ({{website}}) writing a short, human Upwork outreach
-email in {{language}} to a real person. You will send it from your own mailbox, so accuracy beats volume.
+    note: "Writes the outreach email after a human reviewed the PPD. Researches real similar products and must answer every question in the job post.",
+    temperature: 0.45,
+    maxTokens: null,
+    reasoningEffort: null,
+    system: `You are {{prepared_by}} ({{presenter_title}}), an independent professional writing a real,
+one-to-one Upwork outreach email in {{language}}. Accuracy beats volume: the reader can check every
+claim and every link.
 
-RULES
-- Plain text only: no markdown, no HTML, no bold, no headings, no emoji.
-- 90–160 words (about 700–1,200 characters), including the greeting and sign-off.
-- Subject <= 70 characters, specific to this job, never clickbait, no "Re:" prefix needed.
-- Say nothing that is not already established in the reviewed proposal document below. No new numbers, no invented experience, no promises about dates.
-- Open by naming one concrete detail from the post text — the deliverable, the tool, the volume or the deadline — so it reads as an answer to their actual ask rather than a generic pitch. Quote at most a short phrase, never the whole post.
+RESEARCH FIRST
+- Use web search to find 1–2 REAL, currently available products or apps that solve a requirement in
+  this specific job post. They must be directly relevant to the client's problem, not generic tools.
+- Acceptable links: the product's own official website, its official docs page, apps.apple.com, or
+  play.google.com. A direct product page is ideal.
+- Forbidden: blog posts, listicles, "best tools" articles, review/aggregator sites, Reddit/Quora,
+  YouTube, social posts, agencies, affiliate or referral links, URL shorteners, search-result pages,
+  and anything you have not verified. Never invent a URL or a product.
+- If you cannot verify even one relevant product, return an empty "similar_products" array and do
+  not pretend. A missing example is better than a fake link.
+- You may use the writer's real experience below. Never invent employers, clients, metrics, years,
+  awards or results. Pick only the experience that matches this post.
+
+CONTENT RULES
+- Plain text only: no markdown, no HTML, no bold, no headings, no emoji, no tables.
+- 160–250 words including greeting and bullets, not including the sign-off the server appends.
+- Subject ≤ 70 characters, specific to this job, no clickbait, no "Re:".
+- Open with one concrete detail from the post (deliverable, tool, volume or deadline) that proves it
+  was read. Quote at most a short phrase.
+- Then show the relevant experience in 1–2 sentences: what you have actually built and the part that
+  maps to this job.
+- Then include the researched similar product(s): name, direct URL and one sentence on why it is
+  relevant. Put each on its own bullet line starting with "• ".
+- Answer EVERY direct question from the post explicitly. Keep the client's order. A yes/no question
+  gets a clear yes or no first, then one sentence of support. Never dodge or answer a different
+  question.
+- Mention that the full proposal is attached as a PDF.
+- One ask only: a 15-minute call this week. Then stop.
+- Do not write a greeting placeholder, a sign-off, your name, or a company. The system appends the
+  canonical signature from Settings.
 - Never mention research, scraping, LinkedIn, email finding, or that you located them outside Upwork.
-- Exactly one ask: a 15-minute call this week.
-- Stop after the ask. Our system appends the sign-off ("Best regards," / name / role · company / site),
-  so do not write a name, a sign-off, or any square-bracketed placeholder of your own.
-- Mention that the full proposal is attached as a PDF (our system attaches it when the email is sent).
+- Never write square brackets, "TBD" or "N/A".
 
 OUTPUT
-- Exactly ONE JSON object: { "email": { "subject": string, "content": string } }. No commentary, no fences.`,
-    user: `Write the outreach email for this lead. It must match the proposal document a human has already reviewed.
+Exactly ONE JSON object, no commentary, no fences:
+{
+  "email": {
+    "subject": string,
+    "content": string,
+    "similar_products": [
+      { "name": string, "url": string, "why": string }
+    ]
+  }
+}
+Put the same links inline in "content" and list them in "similar_products" for validation. The server
+removes links from blogs, listicles, review sites, social media, affiliate/referral URLs and
+shorteners. "why" is one short sentence (max 160 chars).`,
+    user: `Write the outreach email for this lead. It must match the proposal a human already reviewed.
 
 RECIPIENT
-- Name: {{recipient_name}} · Role: {{recipient_role}} · Company: {{recipient_company}}
+- {{recipient_name}} · {{recipient_role}} · {{recipient_company}}
 - Sending to: {{recipient_email}} (source: {{recipient_source}})
-- Other emails on this lead (do NOT address or mention them): {{other_emails}}
+- Other addresses on this lead (do NOT address or mention): {{other_emails}}
 
 THE JOB
 - Title: {{job_title}} (reference {{job_reference}}, location {{job_location}})
 - Industry: {{industry}}
 - Client display name: {{client_name}} · Company named in the post: {{company_mentioned}}
-- Post text (job_information.job_description):
+- Budget signals: {{budget_range}}
+- Post text:
 {{job_description}}
 
-THE REVIEWED PROPOSAL THEY WILL RECEIVE ATTACHED
-- Document: {{ppd_document_title}} — {{ppd_subtitle}}
+DIRECT QUESTIONS THE EMAIL MUST ANSWER ({{job_question_count}}), in this order:
+{{job_questions}}
+
+THE WRITER'S REAL PROFILE (only source for experience)
+- {{prepared_by}} · {{presenter_title}}
+- Contact: {{sender_contact}}
+- Experience:
+{{experience_summary}}
+- Skills: {{skills}}
+
+THE REVIEWED PROPOSAL THEY WILL RECEIVE AS A PDF
+- {{ppd_document_title}} — {{ppd_subtitle}}
 - Sections: {{ppd_outline}}
-- Rate line: {{rate}} · Valid until: {{valid_until}} · Prepared by: {{prepared_by}}
-- Summary of what the document commits to:
+- Rate line: {{rate}} · Valid until: {{valid_until}}
+- What it commits to:
 {{ppd_summary}}
 
-STRUCTURE (follow it, keep it under 160 words)
-1. Greeting: "Hi {{recipient_name}}," when a name is known, otherwise "Hello,".
-2. One concrete observation about the job that proves the post was read.
-3. What we would do first, in one or two sentences.
-4. Three short capability lines, each on its own line starting with "• ".
-5. "Full proposal attached as a PDF."
-6. The ask: a 15-minute call this week. Stop there — our system appends:
+THE SIGN-OFF THE SERVER APPENDS (do not repeat it)
+{{signature}}
+
+STRUCTURE
+1. "Hi {{recipient_name}}," (or "Hello," when no name is known).
+2. One concrete observation from the post.
+3. One or two sentences of relevant, real experience from the profile above.
+4. One or two researched products with direct links, each as a "• " bullet.
+5. Explicit answers to the questions above, in order. If there are none, skip this part.
+6. "Full proposal attached as a PDF."
+7. One ask: a 15-minute call this week. Stop there.
+
+Before returning, check: every link is a real official product/app-store URL; every question is
+answered; no invented experience; no company name; no sign-off; 160–250 words.
+
+Return { "email": { "subject": string, "content": string, "similar_products": [...] } }.`,
+  },
+
+  follow_up: {
+    key: "follow_up",
+    label: "Follow-up email",
+    note: "Writes the next touch on an existing thread. Runs only after an earlier email to the same contact has actually been sent.",
+    temperature: 0.45,
+    maxTokens: null,
+    reasoningEffort: null,
+    system: `You are {{prepared_by}} ({{presenter_title}}), writing follow-up number {{email_sequence}}
+on a real email thread in {{language}}. Continue the conversation; do not restart the pitch.
+
+RULES
+- Plain text only: no markdown, no HTML, no bold, no headings, no emoji.
+- 55–110 words, shorter than the first email. No "just following up", no "bumping this", no scolding.
+- Refer naturally to the earlier note. Add exactly ONE new, useful thing: a concrete first step, a
+  relevant detail from the post, a suggested time, or a direct answer to a question still open.
+- Use only the writer's real experience and the reviewed proposal. Never invent clients, metrics,
+  employers or links.
+- Never mention research, scraping, LinkedIn, email finding, or that you located them outside Upwork.
+- Do not include a sign-off, name or company; the system appends the canonical signature.
+- One ask: a short call or a yes/no reply. Keep the thread subject; the system sets it.
+- Never write square brackets, "TBD" or "N/A".
+
+OUTPUT
+Exactly ONE JSON object: { "email": { "subject": string, "content": string } }. No commentary, no fences.`,
+    user: `Write follow-up number {{email_sequence}} for this thread.
+
+RECIPIENT
+- {{recipient_name}} · {{recipient_role}} · {{recipient_company}}
+- Sending to: {{recipient_email}}
+
+THE JOB
+- Title: {{job_title}} (reference {{job_reference}})
+- Post text:
+{{job_description}}
+
+DIRECT QUESTIONS STILL WORTH ADDRESSING ({{job_question_count}}):
+{{job_questions}}
+
+THE REVIEWED PROPOSAL ALREADY SHARED
+- {{ppd_document_title}} — {{ppd_subtitle}}
+- What it commits to:
+{{ppd_summary}}
+
+EARLIER EMAILS ON THIS THREAD (newest first, {{previous_email_count}} total)
+{{previous_emails}}
+
+TIMING
+- Previous email sent: {{last_sent_at}} ({{days_since_last_email}} day(s) ago)
+- Subject to keep: {{thread_subject}}
+
+WHO IS WRITING
+- {{prepared_by}} · {{presenter_title}}
+- Real experience (do not invent beyond this):
+{{experience_summary}}
+- Skills: {{skills}}
+
+WHAT TO WRITE
+1. Greeting: "Hi {{recipient_name}}," (or "Hello," when no name is known).
+2. One sentence tying this note to the earlier message without apologising.
+3. One new concrete idea or next step from the post and proposal; answer an open question if one
+   is still unanswered above.
+4. One short ask. Stop there — the server appends:
 {{signature}}
 
 Return { "email": { "subject": string, "content": string } }.`,
   },
 };
 
-export const PROMPT_KEYS: PromptKey[] = ["ppd_document", "email_draft"];
+export const PROMPT_KEYS: PromptKey[] = ["ppd_document", "email_draft", "follow_up"];
 
 /**
  * Everything a template can reference, pre-rendered to plain strings so the
  * template file stays purely textual and safe to edit in a browser.
  */
+export interface FollowUpHistory {
+  sequence: number;
+  previousEmails: Array<{ subject: string; body: string; sentAt: string; sequence: number }>;
+  lastSubject: string;
+  lastSentAt: string;
+  daysSinceLastEmail: number;
+  threadSubject: string;
+}
+
 export function buildPromptVars(args: {
   lead: NormalizedLead;
   recipient: NormalizedContact | null;
@@ -285,8 +439,9 @@ export function buildPromptVars(args: {
   today: string;
   language: string;
   ppd?: ProposalPpd | null;
+  history?: FollowUpHistory | null;
 }): Record<string, string> {
-  const { lead, recipient, brand, today, language, ppd } = args;
+  const { lead, recipient, brand, today, language, ppd, history } = args;
   const otherEmails = lead.contacts
     .filter((c) => c.isEmail && c.normalizedValue !== recipient?.normalizedValue)
     .map((c) => c.normalizedValue ?? c.contactValue);
@@ -295,17 +450,42 @@ export function buildPromptVars(args: {
     ? (recipient.normalizedValue ?? recipient.contactValue)
     : "(no address on file — the email step will need one)";
 
+  const validUntil = addDays(today, 14);
+  const questions = extractQuestions(lead.jobDescription);
+  const contactLine = [
+    brand.senderEmail,
+    brand.phone ? `phone ${brand.phone}` : "",
+    brand.whatsapp ? `WhatsApp ${brand.whatsapp}` : "",
+    brand.linkedin,
+    brand.website,
+    brand.location,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const vars: Record<string, string> = {
     language,
     today,
-    valid_until: addDays(today, 14),
+    today_long: formatLongDate(today),
+    valid_until: validUntil,
+    valid_until_long: formatLongDate(validUntil),
     company: brand.company,
-    website: brand.website || "[website not configured]",
-    prepared_by: brand.preparedBy,
+    website: brand.website || "(not provided)",
+    prepared_by: brand.preparedBy || "(name not configured)",
     presenter_title: brand.title || "(role not configured)",
-    prepared_line: brand.preparedLine || brand.preparedBy || brand.company,
+    presenter_role: brand.title || "(role not configured)",
+    prepared_line: brand.preparedLine || brand.preparedBy || "(name not configured)",
     signature: brand.signature?.length ? indent(brand.signature.join("\n")) : "  Best regards,",
     sender_email: brand.senderEmail,
+    sender_phone: brand.phone || "(not provided)",
+    sender_whatsapp: brand.whatsapp || "(not provided)",
+    sender_linkedin: brand.linkedin || "(not provided)",
+    sender_location: brand.location || "(not provided)",
+    sender_contact: contactLine || "(not provided)",
+    experience_summary: indent(
+      brand.experience ||
+        "(not provided — do not invent experience; rely only on the reviewed proposal and the post)",
+    ),
+    skills: brand.skills || "(not provided)",
     rate: brand.rate
       ? `${brand.rate} (use this wording, do not change the numbers)`
       : "not configured — propose an indicative USD range for this scope yourself and note it is " +
@@ -327,6 +507,10 @@ export function buildPromptVars(args: {
           "every detail you cannot ground into an assumption or a Question)",
     ),
     job_description_chars: String((lead.jobDescription ?? "").length),
+    job_questions: questions.length
+      ? indent(questions.map((question, index) => `${index + 1}. ${question}`).join("\n"))
+      : "  (none — the post contains no direct questions)",
+    job_question_count: String(questions.length),
     research_notes: bulletBlock(payloadNotes(lead.rawPayload), 900),
     budget_range: bulletBlock(payloadBudget(lead.rawPayload), 260),
     client_profile: bulletBlock(payloadClientProfile(lead.rawPayload), 400),
@@ -358,6 +542,26 @@ export function buildPromptVars(args: {
     vars.ppd_summary = "";
     vars.ppd_words = "0";
   }
+
+  vars.email_sequence = String(history?.sequence ?? 1);
+  vars.previous_email_count = String(history?.previousEmails.length ?? 0);
+  vars.last_subject = history?.lastSubject || "(no earlier subject)";
+  vars.last_sent_at = history?.lastSentAt || "(not sent yet)";
+  vars.days_since_last_email = String(history?.daysSinceLastEmail ?? 0);
+  vars.thread_subject = history?.threadSubject || "(new thread)";
+  vars.previous_emails = indent(
+    clip(
+      history?.previousEmails.length
+        ? history.previousEmails
+            .map(
+              (email) =>
+                `#${email.sequence} · sent ${email.sentAt}\nSubject: ${email.subject}\n${email.body}`
+            )
+            .join("\n\n---\n\n")
+        : "(no earlier email \u2014 this is the first touch)",
+      6000,
+    ),
+  );
 
   return vars;
 }
@@ -413,6 +617,41 @@ function addDays(iso: string, days: number) {
   const date = new Date(`${iso}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function formatLongDate(iso: string) {
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+/**
+ * Pull the direct questions out of the post so both the PPD and the email can
+ * answer them in order, instead of the model quietly skipping one.
+ */
+export function extractQuestions(value: string | null | undefined, max = 8): string[] {
+  if (!value) return [];
+  const seen = new Set<string>();
+  const questions: string[] = [];
+  const sentences = value
+    .replace(/\r/g, "\n")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.replace(/^[\s>*#•\-–—\d.)]+/, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  for (const sentence of sentences) {
+    if (!sentence.endsWith("?") || sentence.length < 8 || sentence.length > 320) continue;
+    const key = sentence.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    questions.push(sentence);
+    if (questions.length >= max) break;
+  }
+  return questions;
 }
 
 /* ── payload research extraction ───────────────────────────────────────────

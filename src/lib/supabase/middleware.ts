@@ -8,9 +8,9 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
 /**
  * Keeps the Supabase auth cookies fresh on every request.
  *
- * It deliberately does NOT redirect on its own: the dashboard reads through our
- * own /api routes (service role), so it still works while you are wiring auth.
- * Flip `REQUIRE_SESSION` on to gate every non-public route behind /login.
+ * Production gates every non-public route behind /login. Development stays open
+ * so a fresh clone can be wired up before the first auth user exists; set
+ * `REQUIRE_SESSION=true` to test the gate locally.
  *
  * `/o/<token>.gif` and `/c/<token>` are in PUBLIC_PATHS because a mail client
  * has no session: the token in the URL is the only credential, and it is
@@ -18,16 +18,14 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * pixel route never reaches here — `/c/<token>` does, and must not bounce a
  * client's click to a login page.
  */
-const REQUIRE_SESSION = false;
+const REQUIRE_SESSION =
+  process.env.NODE_ENV === "production" || process.env.REQUIRE_SESSION === "true";
 
 const PUBLIC_PATHS = ["/login", "/auth", "/api/health", "/api/email/send", "/o", "/c"];
 
 /** Exported so the public surface stays testable when `REQUIRE_SESSION` flips. */
 export function isPublic(pathname: string) {
-  return (
-    pathname === "/" ||
-    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
-  );
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export async function updateSession(request: NextRequest) {

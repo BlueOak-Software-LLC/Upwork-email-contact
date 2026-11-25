@@ -4,7 +4,7 @@ import { validateDestination } from "@/server/services/tracking/urls";
  * Which URLs in a message become tracked links.
  *
  * BlueOak Track has an authoring UI where a human names each link; Upwork
- * drafts are written by Groq as plain text and reviewed as text, so the
+ * drafts are written as plain text and reviewed as text, so the
  * destinations are discovered instead: every `http(s)` URL that appears in the
  * body, bare or inside an `href`.
  *

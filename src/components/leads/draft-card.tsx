@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useEditDraft, useSendDraft, useSenderAccounts } from "@/lib/api/outreach-hooks";
+import { useChatGptSession } from "@/components/chatgpt/session-provider";
 import { summarizeDraftActivity, useDraftActivity } from "@/lib/api/tracking-hooks";
 import type { EmailDraftRow, LeadContactRow } from "@/types/lead";
 import { PdfViewerModal } from "./pdf-viewer-modal";
@@ -28,15 +29,26 @@ export function DraftCard({
   leadId,
   draft,
   contacts,
+  canFollowUp = true,
 }: {
   leadId: string;
   draft: EmailDraftRow;
   contacts: LeadContactRow[];
+  /** False when a later draft in this thread already exists (or is being written). */
+  canFollowUp?: boolean;
 }) {
   const send = useSendDraft(leadId);
   const edit = useEditDraft(leadId);
   const accounts = useSenderAccounts();
   const toast = useToast();
+  const { enqueue, jobs } = useChatGptSession();
+  const [followUpPending, setFollowUpPending] = useState(false);
+  const followUpActive = jobs.some(
+    (job) =>
+      job.kind === "follow_up" &&
+      job.contactId === draft.lead_contact_id &&
+      (job.status === "queued" || job.status === "running" || job.status === "completing"),
+  );
 
   // What the recipients did, once the draft has actually gone out.
   const activity = useDraftActivity(draft.id, draft.status === "sent");
@@ -48,7 +60,9 @@ export function DraftCard({
   const [toEmail, setToEmail] = useState(draft.to_email);
   const [cc, setCc] = useState((draft.cc ?? []).join(", "));
   const [senderAccountId, setSenderAccountId] = useState(draft.sender_account_id ?? "");
-  const [attachPdf, setAttachPdf] = useState(true);
+  // A follow-up continues the thread; do not re-attach the same proposal PDF
+  // unless the sender explicitly asks for it.
+  const [attachPdf, setAttachPdf] = useState(draft.purpose !== "follow_up");
   const [pdfOpen, setPdfOpen] = useState(false);
 
   // Adopt the newest server copy whenever we are not mid-edit, so a save (or a
@@ -103,8 +117,13 @@ export function DraftCard({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-sm font-medium">
-            Email draft
+            {draft.sequence > 1 ? `Follow-up ${draft.sequence - 1}` : "First email" }
             <StatusBadge status={draft.status} />
+            {draft.sequence > 1 ? (
+              <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">
+                touch {draft.sequence}
+              </span>
+            ) : null}
             {sent && activityLine ? (
               <Link
                 href={`/emails/${activity.data?.[0]?.logId ?? ""}`}
@@ -151,6 +170,40 @@ export function DraftCard({
             {draft.proposal_id ? (
               <Button size="sm" variant="ghost" onClick={() => setPdfOpen(true)}>
                 Preview PDF
+              </Button>
+            ) : null}
+            {sent && draft.proposal_id ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={followUpPending || followUpActive}
+                disabled={followUpActive || !canFollowUp}
+                title={
+                  !canFollowUp
+                    ? "A newer follow-up already exists for this thread"
+                    : followUpActive
+                      ? "A follow-up is already being written for this lead"
+                      : undefined
+                }
+                onClick={async () => {
+                  setFollowUpPending(true);
+                  try {
+                    await enqueue({
+                      leadId,
+                      kind: "follow_up",
+                      proposalId: draft.proposal_id,
+                      contactId: draft.lead_contact_id,
+                      toEmail: draft.to_email,
+                      previousDraftId: draft.id,
+                    });
+                  } catch {
+                    // The provider already showed the error toast.
+                  } finally {
+                    setFollowUpPending(false);
+                  }
+                }}
+              >
+                Write follow-up
               </Button>
             ) : null}
             <Button

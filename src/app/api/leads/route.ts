@@ -15,7 +15,7 @@ import { removeLeads } from "@/server/services/lead-delete.service";
 import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
-/** Generation is not part of ingest any more, but ?auto=true still runs it here. */
+/** Generation is not part of ingest any more; ?auto=true is accepted but ignored. */
 export const maxDuration = 120;
 
 async function readBody(request: NextRequest) {
@@ -51,7 +51,7 @@ export const GET = withApi(async (request: NextRequest) => {
  * so a scraper can re-post freely.
  *
  * Query flags:
- *   auto=true       explicit opt-in to generate on arrival (default is manual)
+ *   auto=true       legacy flag, ignored — generation is always manual
  *   dry=true        store only, never generate
  *   regenerate=true force a new proposal version
  *   refresh=true    overwrite the matched lead instead of reporting a duplicate

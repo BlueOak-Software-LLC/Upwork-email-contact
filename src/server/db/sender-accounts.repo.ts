@@ -5,7 +5,7 @@ import type { SenderAccountRow } from "@/types/lead";
 import { ApiError } from "@/server/http/errors";
 
 export const SENDER_PUBLIC_COLUMNS =
-  "id,label,from_email,display_name,reply_to,signature,smtp_host,smtp_port,smtp_secure,smtp_user,daily_limit,sent_count,status,is_default,last_verified_at,last_error,created_at,updated_at";
+  "id,label,from_email,display_name,reply_to,signature,role_title,phone,whatsapp,linkedin_url,website,location,experience_summary,skills,smtp_host,smtp_port,smtp_secure,smtp_user,daily_limit,sent_count,status,is_default,last_verified_at,last_error,created_at,updated_at";
 
 export interface SenderAccountDto {
   id: string;
@@ -14,6 +14,14 @@ export interface SenderAccountDto {
   display_name: string | null;
   reply_to: string | null;
   signature: string | null;
+  role_title: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  linkedin_url: string | null;
+  website: string | null;
+  location: string | null;
+  experience_summary: string | null;
+  skills: string | null;
   smtp_host: string;
   smtp_port: number;
   smtp_secure: boolean;
@@ -49,6 +57,14 @@ export interface UpsertSenderInput {
   displayName?: string | null;
   replyTo?: string | null;
   signature?: string | null;
+  roleTitle?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  linkedinUrl?: string | null;
+  website?: string | null;
+  location?: string | null;
+  experienceSummary?: string | null;
+  skills?: string | null;
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
@@ -95,6 +111,14 @@ export const senderAccountsRepo = {
         display_name: input.displayName ?? null,
         reply_to: input.replyTo?.toLowerCase() ?? null,
         signature: input.signature ?? null,
+        role_title: input.roleTitle ?? null,
+        phone: input.phone ?? null,
+        whatsapp: input.whatsapp ?? null,
+        linkedin_url: normalizeUrl(input.linkedinUrl),
+        website: normalizeUrl(input.website),
+        location: input.location ?? null,
+        experience_summary: input.experienceSummary ?? null,
+        skills: input.skills ?? null,
         smtp_host: input.smtpHost,
         smtp_port: input.smtpPort,
         smtp_secure: input.smtpSecure,
@@ -124,6 +148,14 @@ export const senderAccountsRepo = {
     if (input.displayName !== undefined) patch.display_name = input.displayName;
     if (input.replyTo !== undefined) patch.reply_to = input.replyTo?.toLowerCase() ?? null;
     if (input.signature !== undefined) patch.signature = input.signature;
+    if (input.roleTitle !== undefined) patch.role_title = input.roleTitle;
+    if (input.phone !== undefined) patch.phone = input.phone;
+    if (input.whatsapp !== undefined) patch.whatsapp = input.whatsapp;
+    if (input.linkedinUrl !== undefined) patch.linkedin_url = normalizeUrl(input.linkedinUrl);
+    if (input.website !== undefined) patch.website = normalizeUrl(input.website);
+    if (input.location !== undefined) patch.location = input.location;
+    if (input.experienceSummary !== undefined) patch.experience_summary = input.experienceSummary;
+    if (input.skills !== undefined) patch.skills = input.skills;
     if (input.smtpHost !== undefined) patch.smtp_host = input.smtpHost;
     if (input.smtpPort !== undefined) patch.smtp_port = input.smtpPort;
     if (input.smtpSecure !== undefined) patch.smtp_secure = input.smtpSecure;
@@ -132,9 +164,9 @@ export const senderAccountsRepo = {
     if (input.smtpPassword) {
       patch.smtp_password_cipher = encryptSecret(input.smtpPassword);
     }
-    if (input.isDefault) {
-      patch.is_default = true;
-      await clearDefault(supabase);
+    if (input.isDefault !== undefined) {
+      patch.is_default = input.isDefault;
+      if (input.isDefault) await clearDefault(supabase);
     }
 
     const { data, error } = await supabase
@@ -264,6 +296,15 @@ async function clearDefault(supabase: ReturnType<typeof getAdminClient>) {
 type PublicSenderRow = Omit<SenderAccountRow, "smtp_password_cipher"> & {
   smtp_password_cipher?: string | null;
 };
+
+/** People type "linkedin.com/in/name"; store a usable absolute URL. */
+function normalizeUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(trimmed)) return `https://${trimmed}`;
+  return trimmed;
+}
 
 function toDto(row: PublicSenderRow): SenderAccountDto {
   const { smtp_password_cipher: _cipher, ...rest } = row as SenderAccountRow;

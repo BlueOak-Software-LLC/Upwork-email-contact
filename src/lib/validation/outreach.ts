@@ -83,8 +83,6 @@ const ccList = z
   .max(10)
   .transform((values) => [...new Set(values)]);
 
-export const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high"]).optional();
-
 /** Step 1 — the PPD document only. No email, no PDF. */
 export const generateProposalSchema = z.object({
   /** Which contact to write for; defaults to the lead's primary email. */
@@ -95,16 +93,6 @@ export const generateProposalSchema = z.object({
    */
   toEmail: recipientEmail.optional(),
   regenerate: z.boolean().default(true),
-  /**
-   * Override `GROQ_MODEL` for this one call — handy when Groq retires a model
-   * and you want to test a replacement before changing the environment.
-   */
-  model: z.string().trim().min(1).max(120).optional(),
-  /**
-   * How much hidden thinking GPT-OSS may spend. Measured on this pipeline:
-   * "low" ≈ 6 s / $0.0013 / terser prose, default ≈ 19 s / $0.005 / longer doc.
-   */
-  reasoningEffort: reasoningEffortSchema,
 });
 
 /** Step 2 — the outreach email for a reviewed PPD, plus the draft it opens. */
@@ -118,11 +106,40 @@ export const generateEmailSchema = z.object({
   senderAccountId: z.string().uuid().nullish(),
   /** false → only write subject/body onto the proposal, open no draft. */
   createDraft: z.boolean().default(true),
-  model: z.string().trim().min(1).max(120).optional(),
-  reasoningEffort: reasoningEffortSchema,
+});
+
+/** The app → ChatGPT-session job. No model API is called. */
+export const createChatGptJobSchema = z.object({
+  leadId: z.string().uuid(),
+  kind: z.enum(["ppd_document", "email_draft", "follow_up"]),
+  proposalId: z.string().uuid().nullish(),
+  contactId: z.string().uuid().nullish(),
+  toEmail: recipientEmail.nullish(),
+  cc: ccList.nullish(),
+  senderAccountId: z.string().uuid().nullish(),
+  regenerate: z.boolean().optional(),
+  previousDraftId: z.string().uuid().nullish(),
+});
+
+export const completeChatGptJobSchema = z.object({
+  responseText: z.string().trim().min(2).max(200_000),
+});
+
+export const failChatGptJobSchema = z.object({
+  error: z.string().trim().min(1).max(4_000),
 });
 
 export const smtpPort = z.coerce.number().int().min(1).max(65535);
+
+const profileUrl = z
+  .string()
+  .trim()
+  .max(300)
+  .nullish()
+  .refine(
+    (value) => !value || /^https?:\/\//i.test(value) || /^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(value),
+    "Use a full URL, e.g. https://linkedin.com/in/your-name",
+  );
 
 export const createSenderAccountSchema = z.object({
   label: z.string().trim().min(1).max(80),
@@ -130,6 +147,14 @@ export const createSenderAccountSchema = z.object({
   displayName: z.string().trim().max(120).nullish(),
   replyTo: z.string().trim().toLowerCase().email().max(320).nullish(),
   signature: z.string().trim().max(2000).nullish(),
+  roleTitle: z.string().trim().max(120).nullish(),
+  phone: z.string().trim().max(60).nullish(),
+  whatsapp: z.string().trim().max(160).nullish(),
+  linkedinUrl: profileUrl,
+  website: profileUrl,
+  location: z.string().trim().max(120).nullish(),
+  experienceSummary: z.string().trim().max(4000).nullish(),
+  skills: z.string().trim().max(1500).nullish(),
   smtpHost: z.string().trim().min(1).max(200),
   smtpPort: smtpPort.default(587),
   smtpSecure: z.boolean().default(false),
@@ -142,6 +167,15 @@ export const createSenderAccountSchema = z.object({
 export const updateSenderAccountSchema = createSenderAccountSchema
   .extend({ smtpPassword: z.string().min(1).max(500).optional() })
   .partial()
+  // `.partial()` keeps a Zod default on these four fields, so a PATCH with only
+  // profile data would silently reset SMTP/limits/default. Replace them with
+  // plain optionals: omitted really means "leave the stored value alone".
+  .extend({
+    smtpPort: smtpPort.optional(),
+    smtpSecure: z.boolean().optional(),
+    dailyLimit: z.coerce.number().int().min(1).max(2000).optional(),
+    isDefault: z.boolean().optional(),
+  })
   .refine((v) => Object.keys(v).length > 0, { message: "No fields to update" });
 
 export const editDraftSchema = z
@@ -176,7 +210,7 @@ export const editProposalSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: "No fields to update" });
 
-/** A brand-new draft that skips Groq entirely (write it yourself). */
+/** A brand-new draft that skips ChatGPT entirely (write it yourself). */
 export const manualDraftSchema = z.object({
   toEmail: recipientEmail,
   cc: ccList.optional(),
@@ -187,7 +221,7 @@ export const manualDraftSchema = z.object({
 });
 
 export const savePromptSchema = z.object({
-  key: z.enum(["ppd_document", "email_draft"]),
+  key: z.enum(["ppd_document", "email_draft", "follow_up"]),
   label: z.string().trim().max(80).optional(),
   systemText: z.string().trim().min(10).max(20_000),
   userTemplate: z.string().trim().min(10).max(60_000),
@@ -218,4 +252,6 @@ export type GenerateEmailInput = z.infer<typeof generateEmailSchema>;
 export type EditProposalInput = z.infer<typeof editProposalSchema>;
 export type ManualDraftInput = z.infer<typeof manualDraftSchema>;
 export type SavePromptInput = z.infer<typeof savePromptSchema>;
+export type CreateChatGptJobInput = z.infer<typeof createChatGptJobSchema>;
+export type CompleteChatGptJobInput = z.infer<typeof completeChatGptJobSchema>;
 export type DeleteLeadsInput = z.infer<typeof deleteLeadsSchema>;

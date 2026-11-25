@@ -14,15 +14,21 @@ import { cn } from "@/lib/utils";
  * The parent owns the draft object, so the reviewer can move between Read /
  * Edit / JSON with one unsaved copy, and nothing is persisted until Save.
  *
- * Identity fields (`company`, `website`, `prepared_by`, `job_title`,
- * `job_reference`) are locked here on purpose — the server re-applies them from
- * `sanitizeEditedPpd()` even if a client sent something else, so the UI refuses
- * to imply they are editable.
+ * Identity fields are locked here on purpose — they come from the sender
+ * profile, and `sanitizeEditedPpd()` re-applies them even if a client sent
+ * something else, so the UI refuses to imply they are editable.
  */
 export const LOCKED_FIELDS: ReadonlyArray<keyof ProposalPpd> = [
-  "company",
-  "website",
   "prepared_by",
+  "prepared_role",
+  "sender_email",
+  "sender_phone",
+  "sender_whatsapp",
+  "sender_linkedin",
+  "sender_website",
+  "sender_location",
+  "date",
+  "valid_until",
   "job_title",
   "job_reference",
 ];
@@ -271,14 +277,14 @@ export function PpdEditor({
 
       {lockedMeta.length ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-line bg-canvas px-3 py-2 text-[11px] text-muted">
-          <span className="font-medium text-ink">🔒 Fixed by the server</span>
+          <span className="font-medium text-ink">🔒 From your sender profile</span>
           {lockedMeta.map(([key, value]) => (
             <span key={key as string} className="truncate">
               {String(key).replace(/_/g, " ")}: <span className="text-ink/80">{String(value)}</span>
             </span>
           ))}
           <span className="text-muted/70">
-            — edit <code>PROPOSAL_*</code> env vars, not the document
+            — edit <code>Settings → Senders &amp; profile</code>, not the document
           </span>
         </div>
       ) : null}

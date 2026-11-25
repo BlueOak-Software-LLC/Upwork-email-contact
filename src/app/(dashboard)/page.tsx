@@ -477,7 +477,7 @@ function SetupRequired() {
         <li>
           Copy <code className="rounded bg-surface-2 px-1">.env.example</code> to{" "}
           <code className="rounded bg-surface-2 px-1">.env.local</code> — project URL, anon key,
-          service-role key, <code>APP_ENCRYPTION_KEY</code>, <code>GROQ_API_KEY</code>.
+          service-role key and <code>APP_ENCRYPTION_KEY</code>.
         </li>
         <li>
           Restart <code className="rounded bg-surface-2 px-1">npm run dev</code>, then{" "}

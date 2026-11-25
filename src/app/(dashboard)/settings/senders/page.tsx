@@ -1,7 +1,7 @@
 import { SendersView } from "@/components/settings/senders-view";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Senders" };
+export const metadata = { title: "Senders & profile" };
 
 export default function SendersPage() {
   return (

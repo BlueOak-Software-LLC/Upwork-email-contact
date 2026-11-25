@@ -1,5 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
-import { groqConfig } from "@/lib/env-extras";
 import { logger } from "@/lib/logger";
 import type {
   PpdBlock,
@@ -12,23 +12,23 @@ import { ApiError } from "@/server/http/errors";
 /**
  * The model is asked for the PPD block contract, but we never trust it:
  * every field is coerced, clipped, and given a placeholder when missing, and
- * *our own* identity (company, website, sender) is overwritten from the
- * environment so the model can never invent branding or a reply address.
+ * the writer's identity (name, role, contact details, date) is overwritten from
+ * the selected sender profile so the model can never invent a signature.
  *
- * Caps mirror what `lib/pdfme/compiler.ts` lays out cleanly on a 4–6 page A4
- * document. Exceeding them is not an error — the compiler paginates — but a
- * runaway response is clipped so a bad generation can't produce a 40-page PDF.
+ * Caps mirror what `lib/pdfme/compiler.ts` lays out cleanly on two A4 pages.
+ * Exceeding them is not an error — the compiler clips at the page-2 footer —
+ * but a runaway response is trimmed so it cannot crowd out the actual scope.
  */
 
 const MAX = {
-  sections: 14,
-  blocksPerSection: 10,
-  itemsPerBlock: 20,
+  sections: 6,
+  blocksPerSection: 6,
+  itemsPerBlock: 12,
   heading: 90,
-  paragraphItem: 1400,
-  bulletItem: 400,
+  paragraphItem: 900,
+  bulletItem: 320,
   stepTitle: 120,
-  stepDescription: 900,
+  stepDescription: 700,
   requirement: 140,
   approach: 600,
   label: 80,
@@ -40,17 +40,17 @@ const MAX = {
   preparedFor: 160,
   rate: 160,
   engagement: 260,
-  closing: 500,
+  closing: 260,
   emailSubject: 120,
-  /** Prompt targets 1,500–2,000 characters (~400–650 output tokens). */
-  emailContent: 2600,
+  /** 160–250 words plus two links, measured in characters. */
+  emailContent: 3000,
 } as const;
 
 /**
- * Calibrated against `lib/pdfme/compiler.ts` on this pipeline:
- * 565 words → 3 pages, 950 → 4, 1,134 → 4, 4,243 → 12.
+ * Calibrated against `lib/pdfme/compiler.ts` on this pipeline: a 560-word
+ * document fills about 1.5 A4 pages; the compiler hard-stops at two.
  */
-export const DOC_WORD_TARGET = { min: 700, ideal: 950, max: 2600 } as const;
+export const DOC_WORD_TARGET = { min: 400, ideal: 560, max: 760 } as const;
 
 /**
  * Nothing in a client-facing document is a hole for a human to fill. When a
@@ -59,6 +59,9 @@ export const DOC_WORD_TARGET = { min: 700, ideal: 950, max: 2600 } as const;
  */
 const UNCONFIRMED_PHRASE = "to be confirmed on the kickoff call";
 const RATE_FALLBACK = "indicative — confirmed after a short scoping call";
+/** Used when the model writes a company hole into its closing paragraph. */
+export const DEFAULT_PPD_CLOSING =
+  "Thank you for considering this proposal. I would be glad to walk through the plan and confirm the details on a short call.";
 const BRACKET_TOKEN = /\[([^\]\n]{0,90})\]/g;
 
 /** Curated meanings for the placeholder tokens models reach for most. */
@@ -75,18 +78,15 @@ const BRACKET_MEANINGS: Array<[RegExp, string]> = [
 ];
 
 /**
- * Our sign-off block doubles as the identity used to rewrite stray brackets,
- * so the email step needs no extra plumbing: "Best regards," / name /
- * "role · company" / site.
+ * The sign-off block doubles as the identity used to rewrite stray brackets,
+ * so the email step needs no extra plumbing: "Best regards," / name / role /
+ * site. There is deliberately no company component.
  */
 function identityFromSignature(signature: string[]) {
   const [name = "", role = "", maybeSite = ""] = signature.slice(1);
-  const [title, company] = role.includes("·")
-    ? role.split("·").map((part) => part.trim())
-    : ["", role.trim()];
+  const title = (role.includes("·") ? role.split("·")[0] ?? role : role).trim();
   return {
     name: name || title,
-    company: company || title,
     website: /^https?:\/\//i.test(maybeSite) ? maybeSite : "",
     email: maybeSite.includes("@") ? maybeSite : "",
     title,
@@ -121,18 +121,24 @@ export function findBracketTokens(value: unknown, limit = 4): { count: number; s
   return { count: matches.length, samples: [...seen] };
 }
 
-/** Identity used while rewriting stray brackets — set once per sanitize pass. */
-let bracketIdentity = {
-  name: "",
-  company: "",
-  website: "",
-  email: "",
-  title: "",
-};
-
-export function setBracketIdentity(identity: Partial<typeof bracketIdentity>) {
-  bracketIdentity = { ...bracketIdentity, ...identity };
+interface BracketIdentity {
+  name: string;
+  website: string;
+  email: string;
+  title: string;
 }
+
+const EMPTY_IDENTITY: BracketIdentity = { name: "", website: "", email: "", title: "" };
+
+/**
+ * Per-request identity used while rewriting stray brackets.
+ *
+ * This deliberately is not a module-level object: two people generating a PPD
+ * at the same time would otherwise race and one document could receive the
+ * other person's name or contact details. AsyncLocalStorage gives each
+ * sanitize call its own copy without threading it through every helper.
+ */
+const bracketIdentity = new AsyncLocalStorage<BracketIdentity>();
 
 /**
  * Remove `[something]` tokens from model output.
@@ -145,6 +151,7 @@ export function setBracketIdentity(identity: Partial<typeof bracketIdentity>) {
  */
 function deBracket(value: string): string {
   if (!value.includes("[")) return value;
+  const identity = bracketIdentity.getStore() ?? EMPTY_IDENTITY;
   const out = value.replace(BRACKET_TOKEN, (token, inner: string) => {
     const phrase = String(inner).replace(/\s+/g, " ").trim();
     // Never insert a phrase the sentence already says, or "…[YOUR PRICING]
@@ -155,15 +162,16 @@ function deBracket(value: string): string {
     for (const [pattern, replacement] of BRACKET_MEANINGS) {
       if (!pattern.test(phrase)) continue;
       if (replacement === "__NAME__") {
-        const name = bracketIdentity.name || bracketIdentity.company || "the team";
-        return substitute(name);
+        return substitute(identity.name || "the writer");
       }
-      if (replacement === "__COMPANY__") return substitute(bracketIdentity.company || "our studio");
+      // A company placeholder is a hole we cannot fill honestly: no company
+      // name is ever printed. Say the detail is settled on the call instead.
+      if (replacement === "__COMPANY__") return UNCONFIRMED_PHRASE;
       if (replacement === "__WEBSITE__") {
-        return bracketIdentity.website ? substitute(bracketIdentity.website) : UNCONFIRMED_PHRASE;
+        return identity.website ? substitute(identity.website) : UNCONFIRMED_PHRASE;
       }
       if (replacement === "__EMAIL__") {
-        return bracketIdentity.email ? substitute(bracketIdentity.email) : UNCONFIRMED_PHRASE;
+        return identity.email ? substitute(identity.email) : UNCONFIRMED_PHRASE;
       }
       return substitute(replacement);
     }
@@ -215,12 +223,21 @@ const pick = (source: Record<string, unknown>, keys: string[]): unknown => {
  * Built by `proposal.service.ts` from env + the stored lead.
  */
 export interface ProposalContext {
-  company: string;
+  /** Legacy field; kept so old callers type-check. The document never prints it. */
+  company?: string;
   website: string;
   preparedBy: string;
-  /** PROPOSAL_DEFAULT_RATE wins over anything the model invented. */
-  rate?: string;
+  preparedRole?: string;
   senderEmail: string;
+  senderPhone?: string;
+  senderWhatsapp?: string;
+  senderLinkedin?: string;
+  senderLocation?: string;
+  /** Human date printed under DATE, e.g. “25 November 2026”. */
+  date?: string;
+  validUntil?: string;
+  /** A configured rate wins over anything the model invented. */
+  rate?: string;
   jobTitle: string | null;
   jobReference: string | null;
   recipientName: string | null;
@@ -236,17 +253,30 @@ export interface ProposalContext {
   verifiedReferences?: Array<{ name: string; url: string }>;
 }
 
+/** A closing paragraph with a company slot cannot be made grammatical safely. */
+function companyHole(value: unknown): boolean {
+  return typeof value === "string" &&
+    (/\[\s*(?:company|studio|agency)(?:\s+name)?\s*\]/i.test(value) ||
+      /\bour\s+(?:company|studio|agency)\b/i.test(value));
+}
+
 /**
  * Model output → the PPD block contract. Our own identity always comes from
  * `ctx` (env + lead), never from the model.
  */
 export function sanitizePpd(raw: unknown, ctx: ProposalContext): ProposalPpd {
-  setBracketIdentity({
-    name: ctx.preparedBy,
-    company: ctx.company,
-    website: ctx.website,
-    email: ctx.senderEmail,
-  });
+  return bracketIdentity.run(
+    {
+      name: ctx.preparedBy,
+      website: ctx.website,
+      email: ctx.senderEmail,
+      title: ctx.preparedRole ?? "",
+    },
+    () => sanitizePpdInner(raw, ctx),
+  );
+}
+
+function sanitizePpdInner(raw: unknown, ctx: ProposalContext): ProposalPpd {
   const obj = record(raw);
   const ppdRaw = record(
     pick(obj, ["ppd", "proposal", "document", "professional_proposal"]) ?? obj,
@@ -258,16 +288,23 @@ export function sanitizePpd(raw: unknown, ctx: ProposalContext): ProposalPpd {
   }
 
   const ppd: ProposalPpd = {
-    // ↓ environment-authoritative, model output ignored on purpose
-    company: ctx.company,
+    // ↓ sender profile-authoritative, model output ignored on purpose
     prepared_by: ctx.preparedBy,
-    website: ctx.website,
+    prepared_role: ctx.preparedRole ?? "",
+    sender_email: ctx.senderEmail,
+    sender_phone: ctx.senderPhone ?? "",
+    sender_whatsapp: ctx.senderWhatsapp ?? "",
+    sender_linkedin: ctx.senderLinkedin ?? "",
+    sender_website: ctx.website,
+    sender_location: ctx.senderLocation ?? "",
+    date: ctx.date || ctx.today,
+    valid_until: ctx.validUntil ?? "",
     job_title: ctx.jobTitle || flat(ppdRaw.job_title, MAX.heading),
     job_reference: ctx.jobReference || flat(ppdRaw.job_reference, 80),
     rate: ctx.rate?.trim() || flat(ppdRaw.rate, MAX.rate) || RATE_FALLBACK,
     // ↓ model-authored with fallbacks
     document_title:
-      flat(ppdRaw.document_title, MAX.title) || "PROJECT CAPABILITY & PROPOSED WORKFLOW",
+      flat(ppdRaw.document_title, MAX.title) || "Project proposal",
     subtitle:
       flat(ppdRaw.subtitle ?? ppdRaw.proposal_subtitle, MAX.subtitle) ||
       "A practical implementation plan based on your job post.",
@@ -277,26 +314,41 @@ export function sanitizePpd(raw: unknown, ctx: ProposalContext): ProposalPpd {
         .filter(Boolean)
         .join(" · ") ||
       "Hiring team",
-    engagement: flat(ppdRaw.engagement, MAX.engagement) || "Discovery and milestones to be confirmed",
+    engagement: flat(ppdRaw.engagement, MAX.engagement) || "",
     sections: sections.length ? sections : fallbackSections(),
-    closing:
-      flat(ppdRaw.closing, MAX.closing) ||
-      "Thank you for considering this proposal.",
+    closing: companyHole(ppdRaw.closing)
+      ? DEFAULT_PPD_CLOSING
+      : flat(ppdRaw.closing, MAX.closing) || DEFAULT_PPD_CLOSING,
   };
 
   return ppd;
 }
 
-/** What the email step may need when it runs as its own Groq call. */
+/** A link the model found; validated before it can appear in a client email. */
+export interface SimilarProduct {
+  name: string;
+  url: string;
+  why: string;
+}
+
+/** What the email step may need when it runs as its own ChatGPT job. */
 export interface EmailContext {
   jobTitle: string;
   /** The reviewed document: used for fallback copy only. */
   ppd?: ProposalPpd | null;
   /**
-   * Our own sign-off, appended after the model stops writing. The name, role,
-   * company and site in a client email are never the model's to invent.
+   * Our own sign-off, appended after the model stops writing. The name, role
+   * and contact details in a client email are never the model's to invent.
    */
   signature?: string[];
+  sender?: {
+    preparedBy: string;
+    title: string;
+    senderEmail: string;
+    website: string;
+  };
+  jobDescription?: string;
+  jobQuestions?: string[];
 }
 
 /** Closing lines a model likes to author, which we replace with the real ones. */
@@ -330,9 +382,27 @@ function withSignature(content: string, signature: string[]): string {
 }
 
 /** Model output → the outreach email (plain text, short subject). */
-export function sanitizeEmail(raw: unknown, ctx: EmailContext): { subject: string; content: string } {
+export function sanitizeEmail(
+  raw: unknown,
+  ctx: EmailContext,
+): { subject: string; content: string; similarProducts: SimilarProduct[] } {
   const signature = ctx.signature?.filter(Boolean) ?? [];
-  setBracketIdentity(identityFromSignature(signature));
+  const identity = ctx.sender
+    ? {
+        name: ctx.sender.preparedBy,
+        title: ctx.sender.title,
+        website: ctx.sender.website,
+        email: ctx.sender.senderEmail,
+      }
+    : identityFromSignature(signature);
+  return bracketIdentity.run(identity, () => sanitizeEmailInner(raw, ctx, signature));
+}
+
+function sanitizeEmailInner(
+  raw: unknown,
+  ctx: EmailContext,
+  signature: string[],
+): { subject: string; content: string; similarProducts: SimilarProduct[] } {
   const obj = record(raw);
   const emailRaw = record(pick(obj, ["email", "outreach_email", "email_draft"]) ?? obj);
   const ppd = ctx.ppd ?? null;
@@ -349,24 +419,147 @@ export function sanitizeEmail(raw: unknown, ctx: EmailContext): { subject: strin
         .filter(Boolean)
         .slice(0, 2)
         .join("\n\n")}\n\nFull proposal attached as a PDF. Are you open to a quick 15-minute call this week?`
-    : `We would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
+    : `I would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
 
-  const budget = Math.max(400, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
-  const content = withSignature(
-    stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, budget)) ||
-      fallbackBody,
-    signature,
+  const products = sanitizeSimilarProducts(
+    pick(emailRaw, ["similar_products", "similarProducts", "products", "references"]),
   );
+  const budget = Math.max(600, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
+  let body =
+    stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, budget)) ||
+    fallbackBody;
+  body = stripDisallowedUrls(body);
+
+  // The model is asked to put links inline and repeat them in a structured
+  // list. Append any validated link that did not survive the inline pass, so a
+  // good product is never lost and a fabricated one is never added.
+  const missing = products.filter((product) => !body.includes(product.url));
+  if (missing.length) {
+    body += `\n\nA couple of products that fit what you described:\n${missing
+      .map((product) => `• ${product.name} — ${product.url}${product.why ? ` (${product.why})` : ""}`)
+      .join("\n")}`;
+  }
+
+  const content = withSignature(body, signature);
 
   const parsed = z
     .object({ subject: z.string().min(1), content: z.string().min(1) })
     .safeParse({ subject, content });
   if (!parsed.success) {
-    throw ApiError.upstream("Groq response had no usable email subject/body");
+    throw ApiError.upstream("The ChatGPT answer had no usable email subject/body");
   }
-  return parsed.data;
+  return { ...parsed.data, similarProducts: products };
 }
 
+/* ───────────────────────── product-link validation ───────────────────────── */
+
+/**
+ * A client will click these. Only an official product site, its docs, or an
+ * app-store listing is allowed; blogs, listicles, review farms, social posts,
+ * affiliate links and shorteners are stripped even if the model insists.
+ */
+const BLOCKED_HOSTS = [
+  "medium.com",
+  "dev.to",
+  "hashnode.com",
+  "substack.com",
+  "blogspot.com",
+  "wordpress.com",
+  "reddit.com",
+  "quora.com",
+  "youtube.com",
+  "youtu.be",
+  "facebook.com",
+  "instagram.com",
+  "twitter.com",
+  "x.com",
+  "tiktok.com",
+  "pinterest.com",
+  "linkedin.com",
+  "g2.com",
+  "capterra.com",
+  "getapp.com",
+  "softwareadvice.com",
+  "trustradius.com",
+  "trustpilot.com",
+  "producthunt.com",
+  "clutch.co",
+  "upwork.com",
+  "fiverr.com",
+  "amazon.com",
+  "ebay.com",
+  "wikipedia.org",
+  "google.com",
+  "bing.com",
+  "bit.ly",
+  "tinyurl.com",
+  "t.co",
+];
+
+const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "buff.ly"]);
+const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?)(\/|$)/i;
+
+function isAllowedProductUrl(value: string): boolean {
+  const cleaned = value.trim().replace(/[),.;:!?]+$/, "");
+  if (!cleaned) return false;
+  const withScheme = /^https?:\/\//i.test(cleaned)
+    ? cleaned
+    : /^www\./i.test(cleaned)
+      ? `https://${cleaned}`
+      : cleaned;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (!host.includes(".")) return false;
+  // App stores are first-class product links, even though google.com itself
+  // is blocked as a search/aggregator host below.
+  if (host === "play.google.com") return url.pathname.startsWith("/store/apps/details");
+  if (host === "apps.apple.com") return /^\/(?:[a-z]{2}\/)?app\//i.test(url.pathname);
+  if (SHORTENERS.has(host)) return false;
+  if (BLOCKED_HOSTS.some((blocked) => host === blocked || host.endsWith(`.${blocked}`))) {
+    return false;
+  }
+  if (BLOCKED_PATH.test(url.pathname)) return false;
+  if (/[/?&](ref|referrer|affiliate|aff|partner|via|campaign)=/i.test(url.search)) return false;
+  if (/[?&]utm_/i.test(url.search)) return false;
+  return true;
+}
+
+/** Drop disallowed URLs, then clean the punctuation they leave behind. */
+function stripDisallowedUrls(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => (isAllowedProductUrl(url) ? url : ""))
+    .replace(/\(\s*\)/g, "")
+    .replace(/[ \t]+([,.;:!?])/g, "$1")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*[•\-–—]\s*$/gm, "")
+    .trim();
+}
+
+function sanitizeSimilarProducts(value: unknown): SimilarProduct[] {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+  const products: SimilarProduct[] = [];
+  for (const entry of source) {
+    if (products.length >= 2) break;
+    const recordEntry = record(entry);
+    const name = flat(pick(recordEntry, ["name", "title", "product", "app"]), 120);
+    const url = flat(pick(recordEntry, ["url", "link", "href", "website", "site"]), MAX.url);
+    const why = flat(pick(recordEntry, ["why", "reason", "relevance", "description"]), 240);
+    if (!name || !url || !isAllowedProductUrl(url)) continue;
+    const key = url.toLowerCase().replace(/\/$/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    products.push({ name, url: url.replace(/[),.;:!?]+$/, ""), why });
+  }
+  return products;
+}
 /** One pass for a response that carries both halves (legacy single-call prompt). */
 export function sanitizeProposal(raw: unknown, ctx: ProposalContext): ProposalOutput {
   const ppd = sanitizePpd(raw, ctx);
@@ -407,7 +600,7 @@ function sanitizeSections(value: unknown, verifiedReferences: Array<{ name: stri
     sections.push({ id, title, blocks: finalBlocks });
   });
 
-  return dedupeIds(sections).slice(0, MAX.sections);
+  return dedupeIds(sections).slice(0, 6);
 }
 
 function dedupeIds(sections: PpdSection[]): PpdSection[] {
@@ -683,11 +876,19 @@ export function ppdWordCount(ppd: ProposalPpd): number {
 
 export function ppdPlainText(ppd: ProposalPpd): string {
   const parts: string[] = [
-    ppd.company,
     ppd.document_title,
     ppd.subtitle,
     ppd.prepared_for,
     ppd.prepared_by,
+    ppd.prepared_role,
+    ppd.sender_email,
+    ppd.sender_phone,
+    ppd.sender_whatsapp,
+    ppd.sender_linkedin,
+    ppd.sender_website,
+    ppd.sender_location,
+    ppd.date,
+    ppd.valid_until,
     ppd.rate,
     ppd.engagement,
     ppd.job_title,
@@ -727,13 +928,12 @@ function usageWarnings(
   usage: { prompt_tokens: number; completion_tokens: number } | null | undefined,
   budgetOverride?: number | null,
 ): string[] {
-  if (!usage) return [];
-  const budget = budgetOverride ?? groqConfig().maxTokens;
-  if (usage.completion_tokens < budget * 0.95) return [];
-  // GPT-OSS bills its hidden reasoning against the same completion cap, so a run
-  // that lands on it was almost certainly cut off mid-JSON.
+  if (!usage || !budgetOverride) return [];
+  if (usage.completion_tokens < budgetOverride * 0.95) return [];
+  // Only a legacy caller passes a token budget; the ChatGPT session has no
+  // completion cap, so this warning stays quiet on the current path.
   return [
-    `completion used ${usage.completion_tokens} of the ${budget}-token budget — the output may be truncated; raise max_tokens on this prompt or set reasoning_effort to low`,
+    `completion used ${usage.completion_tokens} of the ${budgetOverride}-token budget — the output may be truncated`,
   ];
 }
 
@@ -746,8 +946,8 @@ export function assertPpdShape(
   const problems: string[] = [];
   const words = ppdWordCount(ppd);
 
-  if (ppd.sections.length < 5) {
-    problems.push(`only ${ppd.sections.length} sections — expected 10 for a 4–6 page document`);
+  if (ppd.sections.length < 4) {
+    problems.push(`only ${ppd.sections.length} sections — the target is 4–6 for a two-page document`);
   }
   if (words < DOC_WORD_TARGET.min) {
     problems.push(`document is ~${words} words, below the ${DOC_WORD_TARGET.min}-word floor`);
@@ -781,8 +981,11 @@ export function assertEmailShape(
 
   if (!email.subject.trim()) problems.push("email.subject is empty");
   if (email.subject.length > 70) problems.push("email.subject is longer than 70 chars");
-  if (words < 70) problems.push("email.content is very short (<70 words)");
-  if (email.content.length > 1800) problems.push("email.content exceeds the 700–1,200 char target");
+  if (words < 90) problems.push("email.content is very short (<90 words)");
+  if (words > 340) problems.push("email.content is long (>340 words) — check it still reads as one message");
+  if (email.content.length >= MAX.emailContent) {
+    problems.push(`email.content hit the ${MAX.emailContent}-character cap`);
+  }
 
   const all = [...problems, ...usageWarnings(usage, maxTokensOverride)];
   if (all.length) logger.warn("email_low_quality", { problems: all });

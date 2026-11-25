@@ -1,9 +1,4 @@
 import { z } from "zod";
-import {
-  DEFAULT_PROVIDER_ORDER,
-  parseProviderOrder,
-  type AiProviderId,
-} from "@/lib/ai-models";
 
 /**
  * Server-only environment access.
@@ -42,101 +37,13 @@ const ServerEnvSchema = z.object({
   // Encrypts sender-account SMTP passwords before they are stored in Postgres
   APP_ENCRYPTION_KEY: z.string().min(16).optional(),
 
-  // ── Proposal generation: which AI answers the prompt ──────────────────────
-  // `auto` walks AI_PROVIDER_ORDER and answers with the first provider that has
-  // a credential: Puter, then Groq, then Gemini. A provider with no key is
-  // skipped entirely, so a deployment can configure one, two or all three.
-  AI_PROVIDER: z.enum(["auto", "puter", "groq", "gemini", "none"]).default("auto"),
-  /**
-   * What answers when the preferred provider fails — a spent allowance, a
-   * revoked token, a 429, a gateway outage, a refusal. `auto` keeps walking the
-   * ladder; `none` makes a failure stay a failure.
-   */
-  AI_FALLBACK_PROVIDER: z.enum(["auto", "puter", "groq", "gemini", "none"]).default("auto"),
-  /**
-   * The fallback ladder, in order. The requested default is Puter → Groq →
-   * Gemini, and any provider without a credential is skipped rather than
-   * attempted. Editable without a code change.
-   */
-  AI_PROVIDER_ORDER: z.string().default("puter,groq,gemini"),
-  /**
-   * Wall clock for the whole generation, including a fallback attempt. Two
-   * frontier calls in a row must still fit inside the route's `maxDuration`,
-   * so the chain gets a shared deadline rather than each leg its own.
-   */
-  AI_MAX_TOTAL_MS: z.coerce.number().int().min(20_000).max(300_000).default(110_000),
-  /** A leg with less time left than this is skipped rather than half-tried. */
-  AI_MIN_ATTEMPT_MS: z.coerce.number().int().min(5_000).max(60_000).default(20_000),
-  /**
-   * A Puter auth token (`puter login` prints it; the CLI also reads
-   * PUTER_AUTH_TOKEN). It belongs to a Puter account, and that account is
-   * billed for the usage — the User-Pays model, so this app holds no AI key of
-   * its own and Groq's free-tier ceiling stops being the limit on how many
-   * proposals you can write in a day.
-   */
-  PUTER_AUTH_TOKEN: z.string().min(8).optional(),
-  PUTER_API_ORIGIN: z.string().url().default("https://api.puter.com"),
-  /**
-   * Free Puter model: Nemotron 3 Ultra 550B on OpenRouter's `:free` tier. 1M
-   * context and 64K output fit a full PPD, and the model is large enough to be
-   * upper-middle quality — no per-token charge on the Puter account. The
-   * settings page can override this without a redeploy.
-   */
-  PUTER_MODEL: z.string().default("openrouter:nvidia/nemotron-3-ultra-550b-a55b:free"),
-  /** Second free model tried when the first refuses or is unavailable. */
-  PUTER_FALLBACK_MODEL: z.string().default("openrouter:nvidia/nemotron-3.5-lightning:free"),
-  /** Completion budget for either provider (was GROQ_MAX_TOKENS). */
-  AI_MAX_TOKENS: z.coerce.number().int().min(512).max(65_536).optional(),
-  /**
-   * Wall-clock budget for one generation call. Frontier writing models are
-   * slower than Groq's ASICs, and a 12k-token document takes real time — but
-   * this must stay under the route's `maxDuration` (120 s), or the platform
-   * kills the function and the lead keeps no reason why.
-   */
-  AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(115_000).default(105_000),
-
-  // Groq — proposal generation. `llama-3.3-70b-versatile` was retired upstream
-  // (404 model_not_found), so the default is a model verified against the API.
-  GROQ_API_KEY: z.string().optional(),
-  GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
-  // Retries share one abort timer: medium reasoning takes ~20 s per attempt on
-  // this model, so the budget has to cover a retry pair.
-  GROQ_TIMEOUT_MS: z.coerce.number().int().min(1000).default(90_000),
-  /**
-   * Completion budget for the ONE call that returns both the PPD and the email.
-   * GPT-OSS bills its *reasoning* against this same cap — a measured run spent
-   * 6,296 of 8,000 tokens thinking before writing ~950 words — so the default
-   * leaves real headroom (Groq allows up to 65,536 for gpt-oss-120b).
-   */
-  GROQ_MAX_TOKENS: z.coerce.number().int().min(512).max(65_536).default(12_000),
-  /**
-   * Your organization's tokens-per-minute allowance for GROQ_MODEL. A request
-   * whose prompt + completion budget exceeds it is rejected with HTTP 413, so we
-   * clamp the completion budget to fit. Free/developer tiers are commonly 8k.
-   */
-  GROQ_TOKENS_PER_MINUTE: z.coerce.number().int().min(1024).default(8_000),
-  /**
-   * `reasoning_effort` for GPT-OSS. Measured here: "low" ≈ 6 s / $0.0013 but a
-   * 500-word document, "medium" ≈ 22 s / $0.0021 with fuller prose, unset
-   * (model default) burned 6,296 reasoning tokens and hit the cap. "medium" is
-   * the balance. Leave empty for models that do not accept the parameter.
-   */
-  GROQ_REASONING_EFFORT: z
-    .enum(["none", "minimal", "low", "medium", "high"])
-    .default("medium"),
-  /** List price per million tokens (GPT-OSS 120B): used for cost logging only. */
-  GROQ_PRICE_INPUT_PER_M: z.coerce.number().min(0).default(0.15),
-  GROQ_PRICE_OUTPUT_PER_M: z.coerce.number().min(0).default(0.6),
-
-  // Gemini — the last fallback. Free-tier `gemini-3.8-flash`; nothing is called
-  // when GEMINI_API_KEY is absent, so this is safe to leave unset.
-  GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default("gemini-3.8-flash"),
-  GEMINI_TIMEOUT_MS: z.coerce.number().int().min(1000).default(90_000),
+  // Prompts are rendered on the server but written in the signed-in ChatGPT
+  // tab. The server holds no model credential.
   PROPOSAL_LANGUAGE: z.string().default("English"),
   /**
-   * Branding stamped onto every PPD. These win over whatever the model wrote,
-   * so the LLM is never allowed to state our own company details.
+   * Fallback identity for a fresh install. The real writer identity comes from
+   * Settings → Senders & profile; `PROPOSAL_COMPANY` is parsed for old env files
+   * and is never printed on a PPD, PDF or email.
    */
   PROPOSAL_COMPANY: z.string().max(120).default(""),
   PROPOSAL_WEBSITE: z.string().max(200).default(""),
@@ -240,7 +147,7 @@ let cached: ServerEnv | null = null;
 export function getServerEnv(): ServerEnv {
   if (cached) return cached;
 
-  // Blank values in `.env.local` (``API_MASTER_KEY=``, ``GROQ_API_KEY=`` …) mean
+  // Blank values in `.env.local` (``API_MASTER_KEY=`` …) mean
   // "not configured yet", not "a empty string" — drop them before validating,
   // otherwise optional fields fail their own constraints and the whole app 500s.
   const envSource = Object.fromEntries(
@@ -306,24 +213,8 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
       "AUTO_ENRICH_LEADS is ignored: ingest never generates a PPD automatically. Click Generate PPD on the lead (or send ?auto=true explicitly). You can remove the variable.",
     );
   }
-  if (env.GROQ_MAX_TOKENS < 8000) {
-    envWarnings.push(
-      `GROQ_MAX_TOKENS=${env.GROQ_MAX_TOKENS} is tight: GPT-OSS bills reasoning against the same cap, so a 4–6 page document can run out mid-JSON.`,
-    );
-  }
-  if (env.PDF_PROVIDER === "pdfme" && !env.PROPOSAL_COMPANY) {
-    envWarnings.push(
-      "PROPOSAL_COMPANY is unset: proposal PDFs fall back to the EMAIL_FROM display name for the header and footer branding.",
-    );
-  }
-  const ai = aiResolution(env);
-  if (ai.provider === "none" && ai.requested !== "none") {
-    envWarnings.push(
-      `No AI credential in the environment (${ai.reason}): leads are still stored, and "Generate PPD" needs a key in .env.local or saved on /settings/models (stored keys are read at request time).`,
-    );
-  } else if (ai.provider === "puter" && env.PUTER_FALLBACK_MODEL === env.PUTER_MODEL) {
-    envWarnings.push("PUTER_FALLBACK_MODEL equals PUTER_MODEL: a refusal has nowhere to go.");
-  }
+  // No PROPOSAL_COMPANY warning: the PPD and email are signed by a person from
+  // Settings → Senders & profile, and deliberately never print a company.
   pushTrackingDiagnostics(env);
   return {
     ...env,
@@ -381,92 +272,3 @@ export const publicEnv = {
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
 } as const;
-
-/** Which provider will actually answer the next generation call, and why. */
-export type AiProviderName = AiProviderId | "none";
-
-export interface AiResolution {
-  provider: AiProviderName;
-  /** What `AI_PROVIDER` asked for (`auto` resolved to the provider below). */
-  requested: "auto" | AiProviderId | "none";
-  model: string;
-  /** Set when the request could not be honoured, for the settings UI to show. */
-  reason: string | null;
-  /** Completion budget shared by the whole chain. */
-  maxTokens: number;
-}
-
-/** Env-only credential check. The DB-backed resolver in `services/ai/config` supersedes it. */
-function envHasCredential(env: ServerEnv, provider: AiProviderId): boolean {
-  if (provider === "puter") return Boolean(env.PUTER_AUTH_TOKEN);
-  if (provider === "groq") return Boolean(env.GROQ_API_KEY);
-  return Boolean(env.GEMINI_API_KEY);
-}
-
-function envModelOf(env: ServerEnv, provider: AiProviderId): string {
-  if (provider === "puter") return env.PUTER_MODEL;
-  if (provider === "groq") return env.GROQ_MODEL;
-  return env.GEMINI_MODEL;
-}
-
-/**
- * The single env-level answer to "what writes proposals here".
- *
- * `auto` walks `AI_PROVIDER_ORDER` (default Puter → Groq → Gemini) and picks the
- * first provider with a credential. This function can only see environment
- * variables; keys saved on /settings/models live in Postgres, so the async
- * `aiStatus()` in `services/ai` is the authoritative runtime view. Keeping this
- * one env-only means startup diagnostics stay synchronous.
- */
-export function aiResolution(env = getServerEnv()): AiResolution {
-  const maxTokens = env.AI_MAX_TOKENS ?? env.GROQ_MAX_TOKENS;
-  const order = parseProviderOrder(env.AI_PROVIDER_ORDER || DEFAULT_PROVIDER_ORDER);
-
-  const pick = (provider: AiProviderName, reason: string | null): AiResolution => ({
-    provider,
-    requested: env.AI_PROVIDER,
-    model: provider === "none" ? "" : envModelOf(env, provider),
-    reason,
-    maxTokens,
-  });
-
-  if (env.AI_PROVIDER === "none") {
-    return pick("none", "AI_PROVIDER=none — generation is disabled");
-  }
-
-  let candidates: AiProviderId[] =
-    env.AI_PROVIDER === "auto"
-      ? order
-      : [env.AI_PROVIDER, ...order.filter((provider) => provider !== env.AI_PROVIDER)];
-
-  if (env.AI_FALLBACK_PROVIDER === "none") {
-    candidates = candidates.slice(0, 1);
-  } else if (env.AI_FALLBACK_PROVIDER !== "auto") {
-    const fallback = env.AI_FALLBACK_PROVIDER;
-    candidates = [candidates[0]!, ...(candidates[0] === fallback ? [] : [fallback])];
-  }
-
-  const requested = candidates[0];
-  const provider = candidates.find((candidate) => envHasCredential(env, candidate));
-
-  if (!provider) {
-    const envVar = requested === "puter" ? "PUTER_AUTH_TOKEN" : requested === "groq" ? "GROQ_API_KEY" : "GEMINI_API_KEY";
-    return pick(
-      "none",
-      requested && candidates.length === 1 && env.AI_PROVIDER !== "auto"
-        ? `${envVar} is not set`
-        : "No AI provider has a credential — set PUTER_AUTH_TOKEN, GROQ_API_KEY or GEMINI_API_KEY",
-    );
-  }
-
-  if (provider === requested) return pick(provider, null);
-
-  const missing =
-    requested === "puter" ? "PUTER_AUTH_TOKEN" : requested === "groq" ? "GROQ_API_KEY" : "GEMINI_API_KEY";
-  return pick(provider, `${missing} is not set — ${provider} answers instead`);
-}
-
-/** True when some provider can answer a generation call right now. */
-export function aiConfigured(env = getServerEnv()) {
-  return aiResolution(env).provider !== "none";
-}

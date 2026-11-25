@@ -197,10 +197,9 @@ describe("GET /c/<token>", () => {
 
 describe("public surface (middleware)", () => {
   /**
-   * `REQUIRE_SESSION` is false today, so a redirect would never fire. When it is
-   * flipped, these paths are the difference between tracking working and every
-   * recipient being bounced to a login page they cannot reach from an email
-   * client — so the invariant is asserted before it is load-bearing.
+   * These paths are the difference between tracking working and every recipient
+   * being bounced to a login page they cannot reach from an email client. The
+   * root `/` is the dashboard overview and must stay gated with the rest.
    */
   it.each(["/o/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v.gif", "/c/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v", "/api/health", "/api/email/send"])(
     "%s stays reachable without a session",
@@ -209,7 +208,7 @@ describe("public surface (middleware)", () => {
     },
   );
 
-  it.each(["/emails", "/leads", "/api/tracking/stats", "/api/maintenance/purge", "/settings/tracking"])(
+  it.each(["/", "/emails", "/leads", "/api/tracking/stats", "/api/maintenance/purge", "/settings/tracking"])(
     "%s is gated once auth is switched on",
     (path) => {
       expect(isPublic(path)).toBe(false);

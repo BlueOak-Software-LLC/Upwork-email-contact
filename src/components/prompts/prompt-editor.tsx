@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { usePrompts, useResetPrompt, useSavePrompt, type PromptDto } from "@/lib/api/outreach-hooks";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { Field, Textarea } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /**
- * Edit one prompt pair (system + `{{variable}}` user template) and its
- * model knobs. Used inline on the lead page and on /settings/prompts.
+ * Edit one prompt pair (system + `{{variable}}` user template). Used inline
+ * on the lead page and on /settings/prompts. The ChatGPT tab decides model and
+ * thinking settings, so there are no token or reasoning knobs here.
  *
  * Slots that have no value (a typo like `{{job_descritpion}}`) are highlighted
  * from `used`/`variables` returned by GET /api/prompts, and stay literally in
@@ -30,18 +31,12 @@ export function PromptEditor({
   const [open, setOpen] = useState(defaultOpen);
   const [system, setSystem] = useState("");
   const [user, setUser] = useState("");
-  const [temperature, setTemperature] = useState("0.45");
-  const [maxTokens, setMaxTokens] = useState("");
-  const [effort, setEffort] = useState("");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!definition || dirty) return;
     setSystem(definition.system);
     setUser(definition.user);
-    setTemperature(String(definition.temperature));
-    setMaxTokens(definition.maxTokens ? String(definition.maxTokens) : "");
-    setEffort(definition.reasoningEffort ?? "");
   }, [definition, dirty]);
 
   const known = new Set((library.data?.variables ?? []).map((v) => v.name));
@@ -76,9 +71,6 @@ export function PromptEditor({
       el.setSelectionRange(start + token.length, start + token.length);
     });
   };
-
-  const recommended = promptKey === "ppd_document" ? 6_000 : 2_000;
-  const budgetLow = maxTokens.trim() !== "" && Number(maxTokens) < recommended;
 
   const pending = save.isPending || reset.isPending;
 
@@ -145,67 +137,6 @@ export function PromptEditor({
             />
           </Field>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Temperature">
-              <Input
-                type="number"
-                step="0.05"
-                min="0"
-                max="2"
-                value={temperature}
-                onChange={(e) => {
-                  setTemperature(e.target.value);
-                  setDirty(true);
-                }}
-              />
-            </Field>
-            <Field
-              label="max_tokens"
-              hint={
-                budgetLow
-                  ? `empty = GROQ_MAX_TOKENS · this is the whole completion budget, reasoning included`
-                  : "empty = GROQ_MAX_TOKENS"
-              }
-            >
-              <Input
-                type="number"
-                value={maxTokens}
-                placeholder="12000"
-                aria-invalid={budgetLow || undefined}
-                onChange={(e) => {
-                  setMaxTokens(e.target.value);
-                  setDirty(true);
-                }}
-                className={budgetLow ? "border-warn/70" : undefined}
-              />
-            </Field>
-            <Field label="reasoning_effort" hint="empty = GROQ_REASONING_EFFORT">
-              <Select
-                value={effort}
-                onChange={(e) => {
-                  setEffort(e.target.value);
-                  setDirty(true);
-                }}
-              >
-                <option value="">(env default, auto-tuned)</option>
-                <option value="none">none — whole budget to the document</option>
-                <option value="minimal">minimal</option>
-                <option value="low">low — fast, cheap, terser</option>
-                <option value="medium">medium — balanced</option>
-                <option value="high">high — slowest, longest</option>
-              </Select>
-            </Field>
-          </div>
-
-          {budgetLow ? (
-            <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-              {maxTokens} completion tokens is under the ~{recommended.toLocaleString()} this step
-              needs. {promptKey === "ppd_document"
-                ? "A 700–1,000 word document costs roughly 4,000–6,000 tokens plus its reasoning, so a tight budget truncates the section list."
-                : "Short subjects and 90-word bodies cost roughly 1,200–1,800 tokens plus reasoning."}{" "}
-              The API will still warn when output is truncated.
-            </p>
-          ) : null}
 
           <details className="rounded-lg bg-canvas p-3">
             <summary className="cursor-pointer text-xs font-medium text-muted">
@@ -278,9 +209,6 @@ export function PromptEditor({
                     label: definition?.label ?? promptKey,
                     systemText: system,
                     userTemplate: user,
-                    temperature: Number(temperature) || 0.45,
-                    maxTokens: maxTokens.trim() ? Number(maxTokens) : null,
-                    reasoningEffort: (effort || null) as PromptDto["reasoningEffort"],
                     note: definition?.note ?? null,
                   },
                   { onSuccess: () => setDirty(false), onError: () => undefined },

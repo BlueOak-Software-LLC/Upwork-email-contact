@@ -53,6 +53,94 @@ type NoMatch = { [_ in never]: never };
 export interface Database {
   public: {
     Tables: {
+      chatgpt_jobs: {
+        Row: {
+          id: string;
+          lead_id: string;
+          proposal_id: string | null;
+          contact_id: string | null;
+          kind: "ppd_document" | "email_draft" | "follow_up";
+          status: "queued" | "running" | "completing" | "completed" | "failed" | "cancelled";
+          prompt_key: string;
+          prompt_label: string;
+          prompt_system: string;
+          prompt_user: string;
+          prompt_meta: Json;
+          context: Json;
+          response_text: string | null;
+          error: string | null;
+          created_by: string;
+          started_at: string | null;
+          completed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          lead_id: string;
+          proposal_id?: string | null;
+          contact_id?: string | null;
+          kind: "ppd_document" | "email_draft" | "follow_up";
+          status?: "queued" | "running" | "completing" | "completed" | "failed" | "cancelled";
+          prompt_key: string;
+          prompt_label: string;
+          prompt_system: string;
+          prompt_user: string;
+          prompt_meta?: Json;
+          context?: Json;
+          response_text?: string | null;
+          error?: string | null;
+          created_by?: string;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          lead_id?: string;
+          proposal_id?: string | null;
+          contact_id?: string | null;
+          kind?: "ppd_document" | "email_draft" | "follow_up";
+          status?: "queued" | "running" | "completing" | "completed" | "failed" | "cancelled";
+          prompt_key?: string;
+          prompt_label?: string;
+          prompt_system?: string;
+          prompt_user?: string;
+          prompt_meta?: Json;
+          context?: Json;
+          response_text?: string | null;
+          error?: string | null;
+          created_by?: string;
+          started_at?: string | null;
+          completed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "chatgpt_jobs_lead_id_fkey";
+            columns: ["lead_id"];
+            isOneToOne: false;
+            referencedRelation: "leads";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chatgpt_jobs_proposal_id_fkey";
+            columns: ["proposal_id"];
+            isOneToOne: false;
+            referencedRelation: "proposals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chatgpt_jobs_contact_id_fkey";
+            columns: ["contact_id"];
+            isOneToOne: false;
+            referencedRelation: "lead_contacts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       contacts: {
         Row: {
           id: string;
@@ -306,6 +394,14 @@ export interface Database {
           display_name: string | null;
           reply_to: string | null;
           signature: string | null;
+          role_title: string | null;
+          phone: string | null;
+          whatsapp: string | null;
+          linkedin_url: string | null;
+          website: string | null;
+          location: string | null;
+          experience_summary: string | null;
+          skills: string | null;
           smtp_host: string;
           smtp_port: number;
           smtp_secure: boolean;
@@ -327,6 +423,14 @@ export interface Database {
           display_name?: string | null;
           reply_to?: string | null;
           signature?: string | null;
+          role_title?: string | null;
+          phone?: string | null;
+          whatsapp?: string | null;
+          linkedin_url?: string | null;
+          website?: string | null;
+          location?: string | null;
+          experience_summary?: string | null;
+          skills?: string | null;
           smtp_host: string;
           smtp_port?: number;
           smtp_secure?: boolean;
@@ -348,6 +452,14 @@ export interface Database {
           display_name?: string | null;
           reply_to?: string | null;
           signature?: string | null;
+          role_title?: string | null;
+          phone?: string | null;
+          whatsapp?: string | null;
+          linkedin_url?: string | null;
+          website?: string | null;
+          location?: string | null;
+          experience_summary?: string | null;
+          skills?: string | null;
           smtp_host?: string;
           smtp_port?: number;
           smtp_secure?: boolean;
@@ -593,6 +705,10 @@ export interface Database {
           status: DraftStatus;
           /** 'lead_contact' = an address from the payload, 'custom' = typed by a human. */
           recipient_source: "lead_contact" | "custom";
+          /** 1 = first contact, 2+ = follow-up. */
+          sequence: number;
+          parent_draft_id: string | null;
+          purpose: "initial" | "follow_up" | "manual";
           scheduled_at: string | null;
           sent_at: string | null;
           error: string | null;
@@ -613,6 +729,9 @@ export interface Database {
           attachments?: Json;
           status?: DraftStatus;
           recipient_source?: "lead_contact" | "custom";
+          sequence?: number;
+          parent_draft_id?: string | null;
+          purpose?: "initial" | "follow_up" | "manual";
           scheduled_at?: string | null;
           sent_at?: string | null;
           error?: string | null;
@@ -636,6 +755,9 @@ export interface Database {
           sent_at?: string | null;
           error?: string | null;
           recipient_source?: "lead_contact" | "custom";
+          sequence?: number;
+          parent_draft_id?: string | null;
+          purpose?: "initial" | "follow_up" | "manual";
         };
         Relationships: [
           {
@@ -669,7 +791,7 @@ export interface Database {
         ];
       };
       /**
-       * Human-edited Groq prompt pairs (0003). A row exists only after an edit;
+       * Human-edited prompt pairs (0003). A row exists only after an edit;
        * otherwise `server/services/prompts` uses the code default, and
        * "Reset to default" deletes the row.
        */
@@ -709,38 +831,7 @@ export interface Database {
         };
         Relationships: [];
       };
-      /**
-       * public.ai_settings (0006). One row per provider, only for values the
-       * operator changed in the UI — absence means "use env or the built-in
-       * free default". The API key is stored encrypted (AES-256-GCM).
-       */
-      ai_settings: {
-        Row: {
-          provider: string;
-          api_key_cipher: string | null;
-          model: string | null;
-          fallback_model: string | null;
-          enabled: boolean;
-          updated_at: string;
-        };
-        Insert: {
-          provider: string;
-          api_key_cipher?: string | null;
-          model?: string | null;
-          fallback_model?: string | null;
-          enabled?: boolean;
-          updated_at?: string;
-        };
-        Update: {
-          provider?: string;
-          api_key_cipher?: string | null;
-          model?: string | null;
-          fallback_model?: string | null;
-          enabled?: boolean;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
+
     };
     Views: {
       /** public.contact_funnel (0001) */

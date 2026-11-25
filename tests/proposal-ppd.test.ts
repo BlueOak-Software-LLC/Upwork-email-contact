@@ -1,0 +1,231 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { PDFDocument } from "@pdfme/pdf-lib";
+import { generate } from "@pdfme/generator";
+import { line, rectangle, text } from "@pdfme/schemas";
+import { compileProposalPdfme } from "@/lib/pdfme/compiler";
+import {
+  DEFAULT_PPD_CLOSING,
+  DOC_WORD_TARGET,
+  sanitizeEmail,
+  sanitizePpd,
+  type ProposalContext,
+} from "@/server/services/proposal-sanitize";
+import { extractQuestions } from "@/server/services/prompts/proposal.prompt";
+import type { ProposalPpd } from "@/types/lead";
+
+const fontPath = (name: string) =>
+  fileURLToPath(new URL(`../public/fonts/${name}`, import.meta.url));
+
+function context(overrides: Partial<ProposalContext> = {}): ProposalContext {
+  return {
+    preparedBy: "Luan Le",
+    preparedRole: "Senior Software Engineer",
+    senderEmail: "luan@example.com",
+    senderPhone: "+84 90 123 4567",
+    senderWhatsapp: "https://wa.me/84901234567",
+    senderLinkedin: "https://www.linkedin.com/in/luanle",
+    website: "https://luanle.dev",
+    senderLocation: "Ho Chi Minh City, GMT+7",
+    date: "25 November 2026",
+    validUntil: "9 December 2026",
+    rate: "USD 4,800–6,200, indicative",
+    jobTitle: "Support workflow",
+    jobReference: "~01abc",
+    recipientName: "Hiring team",
+    recipientCompany: "Northstar",
+    clientName: "Northstar",
+    today: "2026-11-25",
+    verifiedReferences: [],
+    ...overrides,
+  };
+}
+
+function rawPpd(): Record<string, unknown> {
+  return {
+    document_title: "Customer support workflow proposal",
+    subtitle: "A practical plan for routing and CRM sync.",
+    prepared_for: "Hiring team · Northstar",
+    rate: "USD 1",
+    company: "Secret Agency LLC",
+    prepared_by: "Invented Person",
+    website: "https://secret-agency.example",
+    sections: [
+      {
+        id: "understanding",
+        title: "Project understanding",
+        blocks: [{ type: "paragraph", items: ["The queue is manual and slow."] }],
+      },
+      {
+        id: "approach",
+        title: "Proposed approach",
+        blocks: [{ type: "bullets", items: ["Map the queue", "Design the contract"] }],
+      },
+    ],
+    closing: "Thank you. At [COMPANY], we deliver.",
+  };
+}
+
+describe("sanitizePpd · sender identity", () => {
+  it("stamps the selected sender profile and never prints a company", () => {
+    const ppd = sanitizePpd(rawPpd(), context());
+    expect(ppd.prepared_by).toBe("Luan Le");
+    expect(ppd.prepared_role).toBe("Senior Software Engineer");
+    expect(ppd.sender_email).toBe("luan@example.com");
+    expect(ppd.sender_phone).toBe("+84 90 123 4567");
+    expect(ppd.sender_whatsapp).toContain("wa.me");
+    expect(ppd.sender_linkedin).toContain("linkedin.com");
+    expect(ppd.sender_website).toBe("https://luanle.dev");
+    expect(ppd.sender_location).toContain("Ho Chi Minh");
+    expect(ppd.date).toBe("25 November 2026");
+    expect(ppd.valid_until).toBe("9 December 2026");
+    expect(ppd.rate).toBe("USD 4,800–6,200, indicative");
+    expect(JSON.stringify(ppd)).not.toContain("Secret Agency");
+    expect(JSON.stringify(ppd)).not.toContain("Invented Person");
+    expect(JSON.stringify(ppd)).not.toContain("our studio");
+    expect(ppd.closing).toBe(DEFAULT_PPD_CLOSING);
+  });
+
+  it("keeps the document inside the two-page content budget", () => {
+    expect(DOC_WORD_TARGET.max).toBeLessThanOrEqual(900);
+    const sections = Array.from({ length: 8 }, (_, index) => ({
+      id: `section-${index}`,
+      title: `Section ${index + 1}`,
+      blocks: [
+        {
+          type: "paragraph",
+          items: [
+            "This paragraph explains the work in plain English and names the deliverables, the sequence and the acceptance criteria. ".repeat(8),
+          ],
+        },
+      ],
+    }));
+    const ppd = sanitizePpd({ sections, closing: "Thank you." }, context());
+    expect(ppd.sections.length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe("sanitizeEmail · product links", () => {
+  const emailContext = {
+    jobTitle: "Support workflow",
+    sender: {
+      preparedBy: "Luan Le",
+      title: "Senior Software Engineer",
+      senderEmail: "luan@example.com",
+      website: "https://luanle.dev",
+    },
+    signature: ["Best regards,", "Luan Le", "luan@example.com"],
+  };
+
+  it("removes blogs, review sites and affiliate URLs, keeping official product links", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content:
+            "Hi team,\n\nI built a similar routing layer. See https://medium.com/@x/blog-post and https://www.g2.com/products/linear/reviews. Linear (https://linear.app) fits the queue.",
+          similar_products: [
+            { name: "Linear", url: "https://linear.app", why: "Issue tracking" },
+            { name: "G2 list", url: "https://www.g2.com/products/linear/reviews", why: "Reviews" },
+          ],
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("https://linear.app");
+    expect(email.content).not.toContain("medium.com");
+    expect(email.content).not.toContain("g2.com");
+    expect(email.similarProducts).toHaveLength(1);
+  });
+
+  it("appends a validated product the model forgot to put inline", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content: "Hi team,\n\nI built a similar routing layer and would share the plan on a call.",
+          similar_products: [
+            { name: "Linear", url: "https://linear.app", why: "Issue tracking for support" },
+          ],
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("https://linear.app");
+    expect(email.similarProducts[0]?.name).toBe("Linear");
+  });
+});
+
+describe("extractQuestions", () => {
+  it("finds direct questions and answers them in order", () => {
+    expect(
+      extractQuestions("Can you start Monday? Do you have React experience?\nWhat is your rate?"),
+    ).toEqual([
+      "Can you start Monday?",
+      "Do you have React experience?",
+      "What is your rate?",
+    ]);
+  });
+});
+
+async function render(ppd: ProposalPpd) {
+  const compiled = compileProposalPdfme(ppd);
+  const bytes = await generate({
+    template: compiled.template,
+    inputs: compiled.inputs,
+    plugins: { text, line, rectangle },
+    options: {
+      font: {
+        SourceSans3: { data: readFileSync(fontPath("SourceSans3-Regular.ttf")), fallback: true },
+        SourceSans3Semibold: { data: readFileSync(fontPath("SourceSans3-Semibold.ttf")) },
+      },
+    },
+  });
+  return { compiled, pdf: await PDFDocument.load(bytes) };
+}
+
+describe("compileProposalPdfme · layout", () => {
+  it("renders the example as two A4 pages with Source Sans", async () => {
+    const example = JSON.parse(
+      readFileSync(fileURLToPath(new URL("../examples/ppd-example.json", import.meta.url)), "utf8"),
+    ) as ProposalPpd;
+    const { compiled, pdf } = await render(example);
+    expect(compiled.pages).toBeLessThanOrEqual(2);
+    expect(pdf.getPageCount()).toBeLessThanOrEqual(2);
+    expect(JSON.stringify(compiled.inputs)).not.toContain("Secret Agency");
+    const names = compiled.template.schemas
+      .flat()
+      .filter((field) => field.type === "text")
+      .map((field) => field.name)
+      .sort();
+    expect(Object.keys(compiled.inputs[0] ?? {}).sort()).toEqual(names);
+    expect(Object.values(compiled.inputs[0] ?? {})).toContain("Page 1 of 2");
+  }, 30000);
+
+  it("clips an over-long answer at page two instead of starting page three", async () => {
+    const sections = Array.from({ length: 8 }, (_, index) => ({
+      id: `section-${index}`,
+      title: `Section ${index + 1}`,
+      blocks: [
+        {
+          type: "paragraph",
+          items: [
+            "This paragraph explains the work in plain English and names the deliverables, the sequence and the acceptance criteria. ".repeat(12),
+          ],
+        },
+      ],
+    }));
+    const ppd = sanitizePpd({ sections, closing: "Thank you." }, context());
+    const { compiled, pdf } = await render(ppd);
+    expect(pdf.getPageCount()).toBe(2);
+    for (const page of compiled.template.schemas) {
+      for (const field of page) {
+        expect(field.position.y).toBeGreaterThanOrEqual(0);
+        expect(field.position.y + field.height).toBeLessThanOrEqual(297);
+        expect(field.position.x).toBeGreaterThanOrEqual(0);
+        expect(field.position.x + field.width).toBeLessThanOrEqual(210);
+      }
+    }
+  }, 30000);
+});

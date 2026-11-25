@@ -1,10 +1,12 @@
 import { draftsRepo, proposalsRepo } from "@/server/db/outreach.repo";
+import { emailLogsRepo } from "@/server/db/email-logs.repo";
 import { leadsRepo } from "@/server/db/leads.repo";
 import { senderAccountsRepo } from "@/server/db/sender-accounts.repo";
 import type { Database } from "@/types/database";
 import { ApiError } from "@/server/http/errors";
 import { logger } from "@/lib/logger";
 import { sendEmail } from "@/server/services/email.service";
+import { buildThreadHeaders } from "@/server/services/email-threading";
 import { renderProposalPdf } from "@/server/services/pdf.service";
 import { textToHtml } from "@/server/services/templates";
 import type { EmailDraftRow, ProposalRow } from "@/types/lead";
@@ -59,7 +61,15 @@ export async function createDraftForProposal({
   // Idempotent: re-running generation refreshes the existing draft instead of
   // creating a second one for the same proposal version.
   const existing = await leadsRepo.drafts(proposal.lead_id);
-  const already = existing.find((d) => d.proposal_id === proposal.id && d.status === "draft");
+  // Only refresh the FIRST email. A follow-up draft on the same proposal is a
+  // separate touch and must never be overwritten by re-running step 2.
+  const already = existing.find(
+    (d) =>
+      d.proposal_id === proposal.id &&
+      d.status === "draft" &&
+      (d.purpose ?? "initial") === "initial" &&
+      (d.sequence ?? 1) === 1,
+  );
   if (already) {
     return draftsRepo.update(already.id, {
       to_email: recipient,
@@ -88,12 +98,75 @@ export async function createDraftForProposal({
     attachments: [],
     status: "draft",
     recipientSource,
+    sequence: 1,
+    parentDraftId: null,
+    purpose: "initial",
     ...(cc ? { cc: cc as never } : {}),
   });
 
   if (lead.lead.status !== "sent") {
     await leadsRepo.setStatus(proposal.lead_id, "draft_created");
   }
+  return draft;
+}
+
+/**
+ * A follow-up is its own draft. The first email is never rewritten, so the
+ * thread keeps an auditable history of every touch and its parent.
+ */
+export async function createFollowUpDraft({
+  proposalId,
+  leadContactId,
+  toEmail,
+  subject,
+  bodyText,
+  cc,
+  recipientSource = "lead_contact",
+  senderAccountId,
+  parentDraftId,
+  sequence,
+}: {
+  proposalId: string;
+  leadContactId: string;
+  toEmail: string;
+  subject: string;
+  bodyText: string;
+  cc?: string[] | null;
+  recipientSource?: "lead_contact" | "custom";
+  senderAccountId?: string | null;
+  parentDraftId: string;
+  sequence: number;
+}): Promise<EmailDraftRow> {
+  const proposal = await proposalsRepo.byId(proposalId);
+  const accountId = senderAccountId ?? (await senderAccountsRepo.defaultAccountId());
+  const account = accountId ? await senderAccountsRepo.getPublic(accountId) : null;
+  const recipient = toEmail.trim().toLowerCase();
+  if (!recipient.includes("@")) {
+    throw ApiError.badRequest(`${toEmail} is not an email address`);
+  }
+
+  const body = withSignature(bodyText, account?.signature);
+  const draft = await draftsRepo.create({
+    leadId: proposal.lead_id,
+    leadContactId,
+    proposalId,
+    senderAccountId: accountId,
+    toEmail: recipient,
+    subject,
+    bodyText: body,
+    bodyHtml: textToHtml(body),
+    attachments: [],
+    status: "draft",
+    recipientSource,
+    sequence,
+    parentDraftId,
+    purpose: "follow_up",
+    ...(cc ? { cc: cc as never } : {}),
+  });
+
+  // A sent lead stays "sent"; the follow-up is a new draft on that thread.
+  const lead = await leadsRepo.byId(proposal.lead_id);
+  if (lead.status !== "sent") await leadsRepo.setStatus(proposal.lead_id, "draft_created");
   return draft;
 }
 
@@ -195,12 +268,42 @@ export async function editDraft(
 }
 
 /** Sends an existing draft over SMTP using the stored sender account. */
+/**
+ * A follow-up carries the previous message's RFC Message-ID in `In-Reply-To`
+ * (and the whole chain in `References`) so mail clients group it with the
+ * first email. Subject alone is not reliable: clients use these headers.
+ *
+ * Threading is a nicety, not a reason to fail a send, so a database read here
+ * degrades to a plain `Re:` message instead of blocking the mail.
+ */
+async function threadHeadersFor(draft: EmailDraftRow): Promise<Record<string, string>> {
+  if (draft.purpose !== "follow_up" || !draft.parent_draft_id) return {};
+  try {
+    const parentIds: string[] = [];
+    let parentId: string | null = draft.parent_draft_id;
+    for (let depth = 0; parentId && depth < 12; depth += 1) {
+      parentIds.push(parentId);
+      const parent = await draftsRepo.byId(parentId);
+      parentId = parent?.parent_draft_id ?? null;
+    }
+    return buildThreadHeaders(parentIds, await emailLogsRepo.sentMessageIds(parentIds));
+  } catch (error) {
+    logger.warn("draft_thread_headers_failed", {
+      draftId: draft.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
+}
+
 export async function sendDraft(
   draftId: string,
   opts: { senderAccountId?: string; attachPdf?: boolean } = {},
 ) {
-  const attachPdf = opts.attachPdf ?? true;
   const draft = await draftsRepo.byId(draftId);
+  // Follow-ups continue an existing thread; only the first email attaches the
+  // proposal PDF by default. An explicit attachPdf still wins for either.
+  const attachPdf = opts.attachPdf ?? draft.purpose !== "follow_up";
   if (draft.status === "sent") throw ApiError.conflict("Draft already sent");
   if (draft.status === "cancelled") throw ApiError.badRequest("Draft was cancelled");
 
@@ -248,6 +351,8 @@ export async function sendDraft(
       : [];
   }
 
+  const threadHeaders = await threadHeadersFor(draft);
+
   try {
     const results = await sendEmail(
       {
@@ -256,6 +361,7 @@ export async function sendDraft(
         text: draft.body_text,
         ...(draft.body_html ? { html: draft.body_html } : {}),
         senderAccountId: accountId,
+        ...(Object.keys(threadHeaders).length ? { headers: threadHeaders } : {}),
         ...(finalAttachments.length ? { attachments: finalAttachments } : {}),
         updateContact: false,
         skipLog: false,
@@ -284,8 +390,19 @@ export async function sendDraft(
 }
 
 function withSignature(content: string, signature?: string | null) {
-  if (!signature) return content;
-  return content.endsWith(signature) ? content : `${content.trimEnd()}\n\n${signature}`;
+  const normalized = content.replace(/\r\n/g, "\n").trimEnd();
+  if (!signature) return normalized;
+  // The sanitizer already appended the profile signature; only add it when the
+  // editor removed it. Compare the same trimmed form the sanitizer writes, so
+  // a trailing blank line in Settings cannot produce a second sign-off.
+  const signoff = signature
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+  if (!signoff) return normalized;
+  return normalized.endsWith(signoff) ? normalized : `${normalized}\n\n${signoff}`;
 }
 
 export type ProposalForRow = ProposalRow;

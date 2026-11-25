@@ -22,6 +22,10 @@ const MIGRATIONS = [
   "0004_job_description_ingestion.sql",
   "0005_email_tracking.sql",
   "0007_lead_list_view.sql",
+  "0008_chatgpt_session_followups.sql",
+  "0009_chatgpt_completion_claim.sql",
+  "0010_sender_profile.sql",
+  "0011_retire_ai_settings.sql",
 ];
 
 const PREAMBLE = `

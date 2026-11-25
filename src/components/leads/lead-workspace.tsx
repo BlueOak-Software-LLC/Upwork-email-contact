@@ -45,6 +45,14 @@ export function LeadWorkspace({ detail }: { detail: LeadDetailDto }) {
   }, [detail.proposals, contact]);
 
   const drafts = detail.drafts.filter((d) => (proposal ? d.proposal_id === proposal.id : true));
+  // Only the leaf of a thread may start another follow-up. Without this, every
+  // sent email in the history offered "Follow up" and a reviewer could branch
+  // the conversation from an older message.
+  const parentsWithActiveChild = new Set(
+    drafts
+      .filter((draft) => draft.parent_draft_id && draft.status !== "cancelled")
+      .map((draft) => draft.parent_draft_id as string),
+  );
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -58,7 +66,13 @@ export function LeadWorkspace({ detail }: { detail: LeadDetailDto }) {
         />
 
         {drafts.map((draft) => (
-          <DraftCard key={draft.id} leadId={detail.lead.id} draft={draft} contacts={detail.contacts} />
+          <DraftCard
+            key={draft.id}
+            leadId={detail.lead.id}
+            draft={draft}
+            contacts={detail.contacts}
+            canFollowUp={!parentsWithActiveChild.has(draft.id)}
+          />
         ))}
 
         <ManualDraftCard

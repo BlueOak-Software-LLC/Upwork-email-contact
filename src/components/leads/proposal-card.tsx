@@ -1,13 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  useGenerateEmailDraft,
-  useGenerateProposal,
-  useSaveProposal,
-  type EmailRun,
-  type PpdRun,
-} from "@/lib/api/outreach-hooks";
+import { useSaveProposal, useSenderAccounts } from "@/lib/api/outreach-hooks";
+import { useChatGptSession } from "@/components/chatgpt/session-provider";
 import { PromptEditor } from "@/components/prompts/prompt-editor";
 import { PpdEditor, ppdEditIssues, ppdWordCount } from "./ppd-editor";
 import { PdfViewerModal } from "./pdf-viewer-modal";
@@ -44,10 +39,11 @@ export function ProposalCard({
   contacts: LeadContactRow[];
   onContactChange: (id: string) => void;
 }) {
-  const generatePpd = useGenerateProposal(leadId);
-  const generateEmail = useGenerateEmailDraft(leadId);
   const savePpd = useSaveProposal(leadId);
+  const senderAccounts = useSenderAccounts();
+  const { enqueue, connection, jobs } = useChatGptSession();
   const toast = useToast();
+  const [generating, setGenerating] = useState<"ppd" | "email" | null>(null);
 
   const [tab, setTab] = useState<Tab>("read");
   const [recipientMode, setRecipientMode] = useState<"lead" | "custom">("lead");
@@ -55,8 +51,69 @@ export function ProposalCard({
   const [cc, setCc] = useState("");
   const [pdfOpen, setPdfOpen] = useState(false);
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const [senderAccountId, setSenderAccountId] = useState("");
+
+  const defaultSenderId = useMemo(() => {
+    const rows = senderAccounts.data ?? [];
+    return rows.find((row) => row.is_default)?.id ?? rows[0]?.id ?? "";
+  }, [senderAccounts.data]);
+
+  // A shared workspace has one server-side default, but each person should get
+  // their own identity on a new document. The browser remembers the profile that
+  // was explicitly picked here; a proposal that already has a signer still wins.
+  const preferredSenderId = useRef<string | null>(null);
+  useEffect(() => {
+    try {
+      preferredSenderId.current = window.localStorage.getItem(SENDER_PREF_KEY);
+    } catch {
+      /* private mode — fall back to the workspace default */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (senderAccountId) return;
+    const rows = senderAccounts.data ?? [];
+    const preferred = rows.find((row) => row.id === preferredSenderId.current)?.id;
+    const next = preferred || defaultSenderId;
+    if (next) setSenderAccountId(next);
+  }, [senderAccountId, defaultSenderId, senderAccounts.data]);
+
+  const pickSender = (id: string) => {
+    setSenderAccountId(id);
+    try {
+      window.localStorage.setItem(SENDER_PREF_KEY, id);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  };
 
   const serverPpd = (proposal?.ppd ?? null) as ProposalPpd | null;
+
+  // Reopening a lead should show the profile that actually signed the document,
+  // not whichever sender happens to be default today. Once the reviewer changes
+  // the picker for this proposal, the ref stops the polling query from resetting it.
+  const signedByProposal = useRef<string | null>(null);
+  useEffect(() => {
+    // Wait for the profile query: on first paint `data` is empty, and marking
+    // the proposal as handled then would skip the match once rows arrive.
+    if (!proposal || !senderAccounts.isSuccess) return;
+    if (signedByProposal.current === proposal.id) return;
+    const signed = (proposal.ppd ?? null) as ProposalPpd | null;
+    const rows = senderAccounts.data ?? [];
+    const email = signed?.sender_email?.trim().toLowerCase();
+    const name = signed?.prepared_by?.trim().toLowerCase();
+    const match =
+      (email ? rows.find((row) => row.from_email.toLowerCase() === email) : undefined) ??
+      (name ? rows.find((row) => row.display_name?.toLowerCase() === name) : undefined);
+    // A signed document shows its own signer. A fresh or unmatched one falls
+    // back to this browser's preferred profile, then the workspace default —
+    // otherwise moving to a new lead would keep the previous lead's signer.
+    const preferred = rows.find((row) => row.id === preferredSenderId.current)?.id;
+    const target = match?.id ?? preferred ?? defaultSenderId;
+    if (target) setSenderAccountId(target);
+    signedByProposal.current = proposal.id;
+  }, [proposal, senderAccounts.data, senderAccounts.isSuccess, defaultSenderId]);
+
   const proposalKey = proposal
     ? `${proposal.id}:${proposal.ppd_reviewed_at ?? proposal.created_at ?? ""}`
     : "none";
@@ -102,9 +159,17 @@ export function ProposalCard({
     writeLocal(leadId, proposal.id, effective);
   }, [dirty, effective, leadId, proposal]);
 
-  const ppdRun = generatePpd.data?.data as PpdRun | undefined;
-  const emailRun = generateEmail.data?.data as EmailRun | undefined;
-  const busy = generatePpd.isPending || savePpd.isPending || generateEmail.isPending;
+  const busy = savePpd.isPending || generating !== null;
+  const ppdRunning = jobs.some(
+    (job) =>
+      job.kind === "ppd_document" &&
+      (job.status === "queued" || job.status === "running" || job.status === "completing"),
+  );
+  const emailRunning = jobs.some(
+    (job) =>
+      job.kind === "email_draft" &&
+      (job.status === "queued" || job.status === "running" || job.status === "completing"),
+  );
 
   const recipientEmail =
     recipientMode === "custom"
@@ -146,21 +211,55 @@ export function ProposalCard({
     return () => window.removeEventListener("keydown", onKey);
   }, [dirty, save]);
 
-  const runPpd = (body: Record<string, unknown>) => {
-    generatePpd.mutate({ regenerate: true, ...body }, { onError: () => undefined });
+  const runPpd = async (body: Record<string, unknown>) => {
+    setGenerating("ppd");
+    try {
+      await enqueue({
+        leadId,
+        kind: "ppd_document",
+        regenerate: true,
+        ...body,
+      });
+    } catch {
+      // The provider already showed the error toast.
+    } finally {
+      setGenerating(null);
+    }
   };
 
   const onGenerateClick = () => {
-    const body =
+    const recipient =
       recipientMode === "custom"
         ? { toEmail: recipientEmail }
         : { ...(contact ? { contactId: contact.id } : {}) };
+    const body = { ...recipient, senderAccountId: senderAccountId || null };
     if (reviewed && !confirmRegenerate) {
       setConfirmRegenerate(true);
       return;
     }
     setConfirmRegenerate(false);
-    runPpd(body);
+    void runPpd(body);
+  };
+
+  const requestEmailDraft = async () => {
+    if (!proposal) return;
+    setGenerating("email");
+    try {
+      await enqueue({
+        leadId,
+        kind: "email_draft",
+        proposalId: proposal.id,
+        toEmail: recipientEmail || undefined,
+        senderAccountId: senderAccountId || null,
+        cc: cc.trim()
+          ? cc.split(",").map((value) => value.trim()).filter(Boolean)
+          : undefined,
+      });
+    } catch {
+      // The provider already showed the error toast.
+    } finally {
+      setGenerating(null);
+    }
   };
 
   return (
@@ -170,7 +269,7 @@ export function ProposalCard({
         <div className="space-y-1.5">
           <h3 className="text-sm font-medium">Professional Proposal Document</h3>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            <Step done={Boolean(serverPpd)} label="1 · PPD generated" title="POST /api/leads/:id/generate wrote this document" />
+            <Step done={Boolean(serverPpd)} label="1 · PPD generated" title="The prompt ran in your ChatGPT session; the server parsed and stored the answer" />
             <Step
               done={reviewed}
               label="2 · reviewed"
@@ -203,8 +302,8 @@ export function ProposalCard({
           ) : null}
           <Button
             size="sm"
-            loading={generatePpd.isPending}
-            disabled={busy || (recipientMode === "custom" && !recipientEmail.includes("@"))}
+            loading={generating === "ppd" || ppdRunning}
+            disabled={busy || ppdRunning || (recipientMode === "custom" && !recipientEmail.includes("@"))}
             onClick={onGenerateClick}
           >
             {serverPpd ? (confirmRegenerate ? "Confirm overwrite" : "Regenerate PPD") : "1 · Generate PPD"}
@@ -216,11 +315,11 @@ export function ProposalCard({
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
           <span>
             This document was reviewed
-            {dirty ? " and has unsaved edits" : ""}. Regenerating asks the model for a fresh
-            version and replaces the text you approved.
+            {dirty ? " and has unsaved edits" : ""}. Regenerating runs the prompt again in your
+            ChatGPT session and replaces the text you approved with a new version.
           </span>
           <span className="flex gap-2">
-            <Button size="sm" variant="danger" loading={generatePpd.isPending} onClick={onGenerateClick}>
+            <Button size="sm" variant="danger" loading={generating === "ppd"} onClick={onGenerateClick}>
               Regenerate anyway
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setConfirmRegenerate(false)}>
@@ -258,6 +357,33 @@ export function ProposalCard({
 
       {/* ── recipient (payload contact or a custom address) ────────────── */}
       <div className="grid gap-3 rounded-lg bg-canvas p-3 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <Field
+            label="Your profile"
+            hint="Supplies the name, role and contact block on this PPD and the email sign-off."
+          >
+            <select
+              aria-label="Sender profile"
+              className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm focus-ring"
+              value={senderAccountId}
+              onChange={(event) => pickSender(event.target.value)}
+            >
+              {(senderAccounts.data ?? []).map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.display_name || account.label}
+                  {account.role_title ? ` · ${account.role_title}` : ""}
+                  {account.is_default ? " · default" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {(senderAccounts.data ?? []).length === 0 ? (
+            <p className="mt-1 text-[11px] text-warn">
+              No sender profile yet — add one in Settings → Senders &amp; profile so the PPD
+              prints your real contact details.
+            </p>
+          ) : null}
+        </div>
         <Field
           label="Write for"
           hint={
@@ -490,7 +616,10 @@ export function ProposalCard({
             <div role="tabpanel" className="space-y-3">
               <PromptEditor promptKey="ppd_document" />
               <PromptEditor promptKey="email_draft" />
-              <LastPromptRun run={ppdRun ?? emailRun} />
+              <p className="rounded-lg bg-canvas p-3 text-[11px] text-muted">
+                Saving a prompt updates the next ChatGPT job for this workspace. The answer is
+                read back from the ChatGPT tab, then parsed and stored by the server.
+              </p>
             </div>
           ) : null}
         </>
@@ -505,14 +634,13 @@ export function ProposalCard({
           <Button
             className="mt-3"
             size="sm"
-            loading={generatePpd.isPending}
-            disabled={busy || (recipientMode === "custom" && !recipientEmail.includes("@"))}
+            loading={generating === "ppd" || ppdRunning}
+            disabled={busy || ppdRunning || (recipientMode === "custom" && !recipientEmail.includes("@"))}
             onClick={() =>
-              generatePpd.mutate(
+              void runPpd(
                 recipientMode === "custom"
                   ? { toEmail: recipientEmail }
                   : { ...(contact ? { contactId: contact.id } : {}) },
-                { onError: () => undefined },
               )
             }
           >
@@ -527,20 +655,9 @@ export function ProposalCard({
           <Button
             size="sm"
             variant="secondary"
-            loading={generateEmail.isPending}
-            disabled={busy || !reviewed || !recipientEmail.includes("@") || dirty}
-            onClick={() =>
-              generateEmail.mutate(
-                {
-                  proposalId: proposal.id,
-                  toEmail: recipientEmail || undefined,
-                  ...(cc.trim()
-                    ? { cc: cc.split(",").map((v) => v.trim()).filter(Boolean) }
-                    : {}),
-                },
-                { onError: () => undefined },
-              )
-            }
+            loading={generating === "email" || emailRunning}
+            disabled={busy || emailRunning || !reviewed || !recipientEmail.includes("@") || dirty}
+            onClick={() => void requestEmailDraft()}
             title={
               dirty
                 ? "Save the document first — the email is written from the reviewed text"
@@ -555,6 +672,12 @@ export function ProposalCard({
           <Button size="sm" variant="ghost" onClick={() => setPdfOpen(true)}>
             Preview PDF
           </Button>
+
+          {connection !== "connected" ? (
+            <span className="text-[11px] text-warn">
+              ChatGPT extension not connected — the prompt is prepared and kept for the drawer.
+            </span>
+          ) : null}
 
           {!reviewed || dirty ? (
             <span className="text-[11px] text-warn">
@@ -571,50 +694,7 @@ export function ProposalCard({
         </div>
       ) : null}
 
-      {/* ── run reports ───────────────────────────────────────────────── */}
-      {ppdRun ? (
-        <RunReport
-          title={`PPD v${ppdRun.proposal.version} ready`}
-          lines={[
-            `${ppdRun.documentWords} words · ${
-              ppdRun.recipient
-                ? `${ppdRun.recipient.email} (${ppdRun.recipient.source})`
-                : "no recipient (written from the post text)"
-            }`,
-            usageLine(ppdRun.usage, ppdRun.costUsd),
-            `prompt ${ppdRun.prompt.model} · temp ${ppdRun.prompt.temperature} · ${
-              ppdRun.prompt.maxTokens
-            } completion budget · ${ppdRun.prompt.reasoningEffort ?? "auto"} reasoning`,
-            "PDF not generated yet — it is compiled from this document on preview or send.",
-          ]}
-          prompt={ppdRun.prompt}
-        />
-      ) : null}
 
-      {emailRun ? (
-        <RunReport
-          title={emailRun.draft ? "Email draft ready" : "Email copy written to the proposal"}
-          tone={emailRun.draftError ? "warn" : "brand"}
-          lines={[
-            `subject: ${emailRun.email.subject}`,
-            `to ${emailRun.recipient.email} (${emailRun.recipient.source})${
-              emailRun.draft ? ` · draft ${emailRun.draft.id.slice(0, 8)}` : ""
-            }`,
-            usageLine(emailRun.usage, emailRun.costUsd),
-            emailRun.draftError ? `draft failed: ${emailRun.draftError}` : null,
-            "Sending the draft renders the PDF from the reviewed PPD and attaches it.",
-          ]}
-          prompt={emailRun.prompt}
-        />
-      ) : null}
-
-      {warnings(ppdRun, emailRun).length ? (
-        <ul className="list-disc space-y-0.5 pl-5 text-xs text-warn">
-          {warnings(ppdRun, emailRun).map((warning, index) => (
-            <li key={index}>{warning}</li>
-          ))}
-        </ul>
-      ) : null}
 
       {proposal?.error ? <p className="text-xs text-danger">{proposal.error}</p> : null}
 
@@ -757,88 +837,11 @@ function DropHints({ issues }: { issues: string[] }) {
   );
 }
 
-function usageLine(
-  usage: PpdRun["usage"],
-  cost: number | null,
-): string | null {
-  if (!usage) return null;
-  return `${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion${
-    usage.reasoning_tokens ? ` (${usage.reasoning_tokens} reasoning)` : ""
-  }${cost !== null ? ` · ~$${cost.toFixed(5)}` : ""}`;
-}
-
-function warnings(ppdRun?: PpdRun, emailRun?: EmailRun) {
-  return [...(ppdRun?.warnings ?? []), ...(emailRun?.warnings ?? [])];
-}
-
-function LastPromptRun({ run }: { run?: PpdRun | EmailRun }) {
-  if (!run) return null;
-  const prompt = run.prompt;
-  return (
-    <details className="rounded-lg border border-line p-3 text-xs">
-      <summary className="cursor-pointer font-medium text-muted">
-        Exact prompt sent on the last run — {prompt.label}
-      </summary>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted">
-        <span>{prompt.model}</span>
-        <span>· temp {prompt.temperature}</span>
-        <span>· max {prompt.maxTokens}</span>
-        <span>· {prompt.reasoningEffort ?? "default"} reasoning</span>
-        <span className="flex items-center gap-1">
-          <CopyButton value={prompt.system} size="icon" label="Copy system prompt" />
-          <CopyButton value={prompt.user} size="icon" label="Copy user prompt" />
-        </span>
-      </div>
-      {prompt.unknownVars.length ? (
-        <p className="mt-2 text-warn">
-          Slots left as typed (no value): {prompt.unknownVars.map((v) => `{{${v}}}`).join(", ")}
-        </p>
-      ) : null}
-      <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-canvas p-3 text-[11px] text-muted">
-        {prompt.system}
-        {"\n\n"}
-        {prompt.user}
-      </pre>
-    </details>
-  );
-}
-
-function RunReport({
-  title,
-  lines,
-  tone = "brand",
-  prompt,
-}: {
-  title: string;
-  lines: Array<string | null>;
-  tone?: "brand" | "warn";
-  prompt?: PpdRun["prompt"];
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border p-3 text-xs",
-        tone === "brand" ? "border-brand/35 bg-brand/8" : "border-warn/35 bg-warn/8",
-      )}
-    >
-      <p className={cn("font-medium", tone === "brand" ? "text-brand" : "text-warn")}>{title}</p>
-      <ul className="mt-1 space-y-0.5 text-muted">
-        {lines.filter(Boolean).map((line, index) => (
-          <li key={index}>{line}</li>
-        ))}
-      </ul>
-      {prompt ? (
-        <p className="mt-1 text-[11px] text-muted/70">
-          prompt {prompt.isDefault ? "is the code default" : "is a saved override"}
-        </p>
-      ) : null}
-    </div>
-  );
-}
 
 /* ───────────────────────── localStorage review buffer ─────────────────── */
 
 const bufferPrefix = "ppd-buffer:";
+const SENDER_PREF_KEY = "sender-profile:preferred";
 
 function readLocal(leadId: string, proposalId: string | null) {
   if (typeof window === "undefined" || !proposalId) return null;
@@ -876,20 +879,36 @@ function clearLocal(leadId: string, proposalId: string) {
 export function PpdDocument({ ppd }: { ppd: ProposalPpd }) {
   const meta = [
     ["Prepared for", ppd.prepared_for],
-    ["Prepared by", ppd.prepared_by],
+    ["Date", ppd.date],
+    ["Valid until", ppd.valid_until],
     ["Proposed rate", ppd.rate],
-    ["Engagement", ppd.engagement],
     ["Job reference", ppd.job_reference],
   ].filter(([, value]) => value);
+  const contact = [
+    ppd.sender_email,
+    ppd.sender_phone,
+    ppd.sender_whatsapp,
+    ppd.sender_linkedin,
+    ppd.sender_website,
+    ppd.sender_location,
+  ].filter(Boolean);
 
   return (
     <article className="space-y-5 rounded-lg bg-canvas p-5 text-sm leading-relaxed">
       <header>
-        <p className="text-[11px] font-medium uppercase tracking-wide text-brand">
-          {ppd.company} / Professional Proposal
-        </p>
-        <h4 className="mt-1 text-lg font-semibold">{ppd.document_title}</h4>
-        <p className="text-xs text-muted">{ppd.subtitle}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-brand">
+              Professional Proposal
+            </p>
+            <h4 className="mt-1 text-lg font-semibold">{ppd.document_title}</h4>
+            <p className="text-xs text-muted">{ppd.subtitle}</p>
+          </div>
+          <div className="text-right text-xs">
+            <p className="font-semibold text-ink">{ppd.prepared_by}</p>
+            {ppd.prepared_role ? <p className="text-muted">{ppd.prepared_role}</p> : null}
+          </div>
+        </div>
         {meta.length ? (
           <dl className="mt-3 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
             {meta.map(([label, value]) => (
@@ -910,8 +929,9 @@ export function PpdDocument({ ppd }: { ppd: ProposalPpd }) {
         <p>{ppd.closing}</p>
         <p className="mt-1">
           {ppd.prepared_by}
-          {ppd.website ? ` · ${ppd.website}` : ""}
+          {ppd.prepared_role ? ` · ${ppd.prepared_role}` : ""}
         </p>
+        {contact.length ? <p className="mt-0.5 break-words">{contact.join(" · ")}</p> : null}
       </footer>
     </article>
   );

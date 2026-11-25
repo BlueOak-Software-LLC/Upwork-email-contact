@@ -154,6 +154,10 @@ export const draftsRepo = {
     attachments?: Array<{ path: string; filename: string; contentType: string }>;
     status?: DraftStatus;
     recipientSource?: "lead_contact" | "custom";
+    /** 1 = first contact, 2+ = follow-up. */
+    sequence?: number;
+    parentDraftId?: string | null;
+    purpose?: "initial" | "follow_up" | "manual";
   }): Promise<EmailDraftRow> {
     const supabase = getAdminClient();
     let payload: Record<string, unknown> = {
@@ -169,6 +173,9 @@ export const draftsRepo = {
       attachments: (input.attachments ?? []) as never,
       status: input.status ?? "draft",
       recipient_source: input.recipientSource ?? "lead_contact",
+      sequence: input.sequence ?? 1,
+      parent_draft_id: input.parentDraftId ?? null,
+      purpose: input.purpose ?? "initial",
     };
 
     // `cc` and `recipient_source` arrive with migration 0003; a custom

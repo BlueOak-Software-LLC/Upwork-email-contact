@@ -1,9 +1,12 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { getAdminClient } from "@/lib/supabase/admin";
-import { pdfConfig, brandConfig } from "@/lib/env-extras";
+import { pdfConfig } from "@/lib/env-extras";
 import { logger } from "@/lib/logger";
 import { compileProposalPdfme, type PdfmeInputs } from "@/lib/pdfme/compiler";
 import type { PdfmeTemplate } from "@/lib/pdfme/template";
-import type { ProposalRow } from "@/types/lead";
+import { resolveSenderBrand } from "@/server/services/sender-profile.service";
+import type { ProposalPpd, ProposalRow } from "@/types/lead";
 
 export const PDF_BUCKET = "proposals";
 
@@ -34,17 +37,28 @@ export async function renderProposalPdf({
     return { path: null, status: "skipped" };
   }
 
-  // Identity is stamped from the environment at render time, not read back out
-  // of the stored document: a proposal generated before PROPOSAL_* was filled in
-  // would otherwise print "Kinhnghiemnuoiga" forever. The prose stays reviewed.
-  const brand = brandConfig();
+  // Identity is read from the stored document (it was stamped from the sender
+  // profile when the PPD was generated). Only fields missing from a legacy
+  // document fall back to the current default profile; nothing is overwritten,
+  // so a PPD approved by its author never changes name under them at send time.
+  const stored = (proposal.ppd ?? {}) as Partial<ProposalPpd>;
+  const profile = await resolveSenderBrand();
+  const today = new Date().toISOString().slice(0, 10);
   const compiled = compileProposalPdfme({
-    ...(proposal.ppd as object),
-    company: brand.raw.company || (proposal.ppd as { company?: string }).company || brand.company,
-    website: brand.raw.website || (proposal.ppd as { website?: string }).website || brand.website,
-    prepared_by: brand.preparedLine || (proposal.ppd as { prepared_by?: string }).prepared_by,
-  } as never);
-  const bytes = await runPdfme(compiled.template, compiled.inputs);
+    ...stored,
+    prepared_by: stored.prepared_by || profile.preparedBy,
+    prepared_role: stored.prepared_role || profile.title,
+    sender_email: stored.sender_email || profile.senderEmail,
+    sender_phone: stored.sender_phone || profile.phone,
+    sender_whatsapp: stored.sender_whatsapp || profile.whatsapp,
+    sender_linkedin: stored.sender_linkedin || profile.linkedin,
+    sender_website: stored.sender_website || profile.website,
+    sender_location: stored.sender_location || profile.location,
+    date: stored.date || today,
+    valid_until: stored.valid_until || "",
+    rate: stored.rate || profile.rate,
+  } as ProposalPpd);
+  const bytes = await runPdfme(compiled.template, compiled.inputs, await loadFonts());
   const path = `${proposal.lead_id}/${proposal.id}-v${proposal.version}.pdf`;
 
   const supabase = getAdminClient();
@@ -77,7 +91,11 @@ export async function renderProposalPdf({
  * pdfme v6 `@pdfme/generator` exposes `generate` (some builds name it
  * `renderPdf`); support both. `inputs` is one record per **document**.
  */
-async function runPdfme(template: PdfmeTemplate, inputs: PdfmeInputs): Promise<Uint8Array> {
+async function runPdfme(
+  template: PdfmeTemplate,
+  inputs: PdfmeInputs,
+  font: Record<string, { data: Uint8Array; fallback?: boolean; subset?: boolean }>,
+): Promise<Uint8Array> {
   const mod = (await import("@pdfme/generator")) as unknown as {
     renderPdf?: (opts: PdfmeOptions) => Promise<Uint8Array | ArrayBuffer>;
     generate?: (opts: PdfmeOptions) => Promise<Uint8Array | ArrayBuffer>;
@@ -90,13 +108,45 @@ async function runPdfme(template: PdfmeTemplate, inputs: PdfmeInputs): Promise<U
     );
   }
 
-  const out = await fn({ template, inputs });
+  const { text, line, rectangle } = await import("@pdfme/schemas");
+  const out = await fn({
+    template,
+    inputs,
+    plugins: { text, line, rectangle },
+    options: { font },
+  });
   return out instanceof Uint8Array ? out : new Uint8Array(out);
+}
+
+/**
+ * Source Sans 3 is readable at 9–10 pt and has a normal, non-designer feel.
+ * The files live in `public/fonts` (OFL) and are traced into the serverless
+ * bundle by `next.config.ts`; pdfme needs the bytes, not a CSS family name.
+ */
+let fontCache: Promise<Record<string, { data: Uint8Array; fallback?: boolean; subset?: boolean }>> | null =
+  null;
+
+function loadFonts() {
+  fontCache ??= loadFontFiles();
+  return fontCache;
+}
+
+async function loadFontFiles() {
+  const dir = path.join(process.cwd(), "public", "fonts");
+  const [regular, semibold] = await Promise.all([
+    readFile(path.join(dir, "SourceSans3-Regular.ttf")),
+    readFile(path.join(dir, "SourceSans3-Semibold.ttf")),
+  ]);
+  return {
+    SourceSans3: { data: new Uint8Array(regular), fallback: true, subset: true },
+    SourceSans3Semibold: { data: new Uint8Array(semibold), subset: true },
+  };
 }
 
 type PdfmeOptions = {
   template: PdfmeTemplate;
   inputs: PdfmeInputs;
+  plugins?: Record<string, unknown>;
   options?: Record<string, unknown>;
 };
 
