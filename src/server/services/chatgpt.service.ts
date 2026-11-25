@@ -451,7 +451,6 @@ export type CompleteJobResult = {
   email?: {
     subject: string;
     content: string;
-    similarProducts: Array<{ name: string; url: string; why: string }>;
   };
   draft?: EmailDraftRow | null;
   draftError?: string | null;

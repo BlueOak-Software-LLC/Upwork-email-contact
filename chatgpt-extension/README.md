@@ -24,9 +24,13 @@ replace the key and get a different ID.
 2. The background worker reuses one ChatGPT tab (opens it in the background if
    needed), injects `chatgpt-content.js`, and sends the prompt.
 3. The content script types into the composer, clicks Send, waits for the stop
-   control to disappear, and reads the answer. It tries ChatGPT’s own Copy
-   button, but the visible answer text is the source of truth: a blocked
-   clipboard can no longer hold up the handoff.
+   control to disappear, and then copies the answer. It focuses the ChatGPT tab,
+   clicks ChatGPT’s own Copy button, and reads the clipboard. The clipboard is
+   accepted only when it contains the JSON shape this job needs (a `ppd` object
+   with sections, or an `email` object with subject and content) and matches the
+   answer on the page. If it is stale, empty or unstructured, the script clicks
+   Copy again, up to three times; only then does it use structured JSON visible
+   in the page, and it fails with a clear message instead of saving plain text.
 4. The content script saves the answer under `upworkChatAnswer:<jobId>`, sends
    `CHATGPT_REPLY`, and waits for the worker’s acknowledgement. If the worker
    was asleep, the send is retried; if the page reloads first, the saved answer
@@ -72,8 +76,10 @@ The drawer shows one timestamped line per step, from both sides of the bridge:
   ChatGPT started generating.
 - **Wait** — generation started, characters are arriving, and the stop control
   disappeared.
-- **Answer / Copy** — the assistant turn was found, Copy was clicked, and whether
-  the clipboard or the visible text supplied the answer.
+- **Answer / Copy** — the assistant turn was found, the stop control is gone,
+  and each Copy click reports whether the clipboard held the expected JSON. A
+  retry says which attempt it is; a final fallback says the structured page JSON
+  was used.
 - **Handoff / Result** — the answer was saved, sent to the worker, stored by the
   dashboard, and acknowledged. A retry names its attempt number.
 

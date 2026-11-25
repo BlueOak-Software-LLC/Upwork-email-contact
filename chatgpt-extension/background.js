@@ -386,6 +386,7 @@ async function resumeCurrent() {
     const reply = await chrome.tabs.sendMessage(tab.id, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
+      kind: job.kind,
       prompt: job.prompt,
       system: job.system ?? "",
       createdAt: job.createdAt,
@@ -434,6 +435,7 @@ async function processQueue() {
     const reply = await chrome.tabs.sendMessage(tabId, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
+      kind: job.kind,
       prompt: job.prompt,
       system: job.system ?? "",
       createdAt: job.createdAt,
@@ -488,6 +490,7 @@ async function startJob(job, appTabId) {
   logEvent(job.jobId, "opening", "Queue: job received from the dashboard");
   state.queue.push({
     jobId: job.jobId,
+    kind: job.kind,
     prompt: job.prompt,
     system: job.system ?? "",
     createdAt: job.createdAt ?? Date.now(),
@@ -737,6 +740,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       startJob(
         {
           jobId: message.jobId,
+          kind: message.kind,
           prompt: message.prompt,
           system: message.system,
           createdAt: Date.now(),
@@ -807,6 +811,5 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 loadState();
-
 
 

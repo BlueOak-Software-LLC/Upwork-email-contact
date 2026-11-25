@@ -360,40 +360,6 @@
     return Boolean(findComposer());
   }
 
-  function answerLooksComplete(text) {
-    const trimmed = clean(text);
-    if (!trimmed) return false;
-    // An unclosed Markdown fence means the model is still writing.
-    const firstFence = trimmed.indexOf("```");
-    if (firstFence >= 0 && trimmed.lastIndexOf("```") === firstFence) return false;
-    // A JSON answer is complete when its braces balance, even if ChatGPT adds
-    // a closing sentence after it. The old endsWith("}") check treated that
-    // trailing sentence as "still writing" and waited for the stall timeout.
-    const start = trimmed.indexOf("{");
-    if (start >= 0) {
-      let depth = 0;
-      let inString = false;
-      let escaped = false;
-      for (let i = start; i < trimmed.length; i += 1) {
-        const ch = trimmed[i];
-        if (inString) {
-          if (escaped) escaped = false;
-          else if (ch === "\\") escaped = true;
-          else if (ch === '"') inString = false;
-          continue;
-        }
-        if (ch === '"') inString = true;
-        else if (ch === "{") depth += 1;
-        else if (ch === "}") {
-          depth -= 1;
-          if (depth === 0) return true;
-        }
-      }
-      return false;
-    }
-    return true;
-  }
-
   async function typePrompt(prompt) {
     const canonical = (value) => clean(value).replace(/\s+/g, " ").trim();
     const wanted = canonical(prompt);
@@ -581,6 +547,26 @@
     return find(STOP_FINDERS);
   }
 
+  // The answer is only safe to copy after ChatGPT's stop control disappears.
+  // waitForReply normally enforces that; this second guard covers a rerender
+  // that puts the control back just as the copy step starts.
+  async function waitForStopGone(jobId) {
+    if (!stopButton()) return true;
+    logStep(jobId, "copying", "Copy: the stop button is still visible; waiting before copying");
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await sleep(300);
+      if (!stopButton()) {
+        await sleep(700);
+        if (!stopButton()) {
+          logStep(jobId, "copying", "Copy: the stop button disappeared; the answer is finished");
+          return true;
+        }
+      }
+    }
+    return !stopButton();
+  }
+
   function copyControl(turn) {
     if (!turn) return null;
     const buttons = Array.from(turn.querySelectorAll('button, [role="button"], [data-testid="copy-turn-action-button"]'));
@@ -656,9 +642,88 @@
     });
   }
 
+  /** The dashboard's server expects one of these two shapes; anything else is a failed copy. */
+  function answerMatches(kind, parsed) {
+    if (!parsed || typeof parsed !== "object") return false;
+    const wantsPpd = kind === "ppd_document" || (!kind && parsed.ppd);
+    if (wantsPpd) {
+      const ppd = parsed.ppd;
+      if (ppd && typeof ppd === "object" && Array.isArray(ppd.sections) && ppd.sections.length) {
+        return true;
+      }
+    }
+    const wantsEmail = kind === "email_draft" || kind === "follow_up" || (!kind && parsed.email);
+    if (wantsEmail) {
+      const email = parsed.email;
+      if (
+        email &&
+        typeof email === "object" &&
+        typeof email.subject === "string" &&
+        email.subject.trim() &&
+        typeof email.content === "string" &&
+        email.content.trim()
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Read the first complete JSON object with the requested shape. */
+  function answerJson(text, accept) {
+    const source = clean(text);
+    if (!source) return null;
+    const candidates = [];
+    for (const match of source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+      candidates.push(match[1]);
+    }
+    candidates.push(source);
+    for (const candidate of candidates) {
+      const value = candidate.trim();
+      for (let start = value.indexOf("{"); start >= 0; start = value.indexOf("{", start + 1)) {
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = start; i < value.length; i += 1) {
+          const ch = value[i];
+          if (inString) {
+            if (escaped) escaped = false;
+            else if (ch === "\\") escaped = true;
+            else if (ch === '"') inString = false;
+            continue;
+          }
+          if (ch === '"') inString = true;
+          else if (ch === "{") depth += 1;
+          else if (ch === "}") {
+            depth -= 1;
+            if (depth === 0) {
+              try {
+                const parsed = JSON.parse(value.slice(start, i + 1));
+                if (!accept || accept(parsed)) return parsed;
+                break;
+              } catch {
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function structuredAnswer(kind, text) {
+    return answerJson(text, (parsed) => answerMatches(kind, parsed));
+  }
+
   /** Ignore an old clipboard entry when ChatGPT did not actually copy this turn. */
   function sameAnswer(copied, pageText) {
-    const normalize = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const normalize = (value) =>
+      clean(value)
+        .replace(/```[a-z]*\s*/gi, "")
+        .replace(/```/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "");
     const a = normalize(copied);
     const b = normalize(pageText);
     if (!a || !b) return false;
@@ -669,28 +734,6 @@
     return a.includes(probe(b)) || b.includes(probe(a));
   }
 
-  // If ChatGPT's own Copy control cannot write to the clipboard (Chrome denies
-  // async clipboard writes to a programmatic click), copy the rendered answer
-  // ourselves while the document is focused. This keeps the user's clipboard
-  // useful even when the page button silently does nothing.
-  function copyVisibleAnswer(text) {
-    try {
-      const area = document.createElement("textarea");
-      area.value = text;
-      area.setAttribute("readonly", "");
-      area.style.cssText = "position:fixed;top:-2000px;left:-2000px;opacity:0;";
-      (document.body || document.documentElement).appendChild(area);
-      area.focus({ preventScroll: true });
-      area.select();
-      area.setSelectionRange(0, text.length);
-      const copied = document.execCommand("copy");
-      area.remove();
-      return copied;
-    } catch {
-      return false;
-    }
-  }
-
   async function readCopiedClipboard() {
     const reply = await Promise.race([
       ask({ type: "CHATGPT_CLIPBOARD" }),
@@ -699,68 +742,104 @@
     return clean(reply?.text || "");
   }
 
-  async function readAnswer(jobId, node, pageText) {
+  async function readAnswer(jobId, kind, node, pageText) {
+    if (!(await waitForStopGone(jobId))) {
+      throw new Error("ChatGPT is still writing. Wait for the stop button to disappear, then run again.");
+    }
+    logStep(jobId, "copying", `Copy: expecting the ${kind || "structured"} JSON shape`);
+    const pageAnswer = structuredAnswer(kind, pageText);
+    const giveUp = () => {
+      if (pageAnswer) {
+        logStep(jobId, "copying", "Copy: using the structured JSON visible in the page");
+        return JSON.stringify(pageAnswer);
+      }
+      throw new Error(
+        "ChatGPT's answer did not contain the expected JSON. Wait for the stop button to disappear, click Copy again, then paste the answer below.",
+      );
+    };
     if (!node) {
-      logStep(jobId, "copying", "Copy: no assistant message node; using the visible answer");
-      return pageText;
+      logStep(jobId, "copying", "Copy: no assistant message node; checking the visible answer");
+      return giveUp();
     }
     const turn = node.closest('[data-testid^="conversation-turn"]') || node.closest("article") || node.parentElement;
-    const button = copyControl(turn);
-    if (!button) {
-      logStep(jobId, "copying", "Copy: no Copy control on this turn; using the visible answer");
-      return pageText;
+    if (!copyControl(turn)) {
+      logStep(jobId, "copying", "Copy: no Copy control on this turn; checking the visible answer");
+      return giveUp();
     }
-    if (button) {
+
+    logStep(
+      jobId,
+      "copying",
+      document.hasFocus()
+        ? "Copy focus: ChatGPT tab is already focused"
+        : "Copy focus: bringing the ChatGPT tab forward",
+    );
+    const focused = await focusChatForCopy(jobId);
+    logStep(
+      jobId,
+      "copying",
+      focused
+        ? "Copy focus: ChatGPT tab has focus"
+        : "Copy focus: ChatGPT tab did not report focus; trying Copy anyway",
+    );
+
+    // ChatGPT occasionally leaves the previous turn on the clipboard. Click
+    // Copy again when the clipboard does not hold the JSON shape this job
+    // needs, instead of overwriting it with rendered page text.
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      if (attempt > 1 && !document.hasFocus()) {
+        logStep(jobId, "copying", `Copy: refocusing the ChatGPT tab before attempt ${attempt}`);
+        await focusChatForCopy(jobId);
+        await sleep(300);
+      }
+      const button = copyControl(turn);
+      if (!button) break;
       try {
-        logStep(
-          jobId,
-          "copying",
-          document.hasFocus()
-            ? "Copy focus: ChatGPT tab is already focused"
-            : "Copy focus: bringing the ChatGPT tab forward",
-        );
-        const focused = await focusChatForCopy(jobId);
-        logStep(
-          jobId,
-          "copying",
-          focused
-            ? "Copy focus: ChatGPT tab has focus; clicking Copy"
-            : "Copy focus: ChatGPT tab did not report focus; trying Copy anyway",
-        );
         reveal(button);
         try {
           button.focus({ preventScroll: true });
         } catch {
           /* older Chrome ignores the options object */
         }
+        logStep(jobId, "copying", `Copy: clicking the Copy button (attempt ${attempt} of 3)`);
         button.click();
-        await sleep(900);
+      } catch {
+        logStep(jobId, "copying", `Copy: the Copy action failed (attempt ${attempt} of 3)`);
+        await sleep(500);
+        continue;
+      }
+
+      const deadline = Date.now() + 3000;
+      let sawText = false;
+      while (Date.now() < deadline) {
+        await sleep(300);
         const copied = await readCopiedClipboard();
-        if (copied && sameAnswer(copied, pageText)) {
-          logStep(jobId, "copying", "Copy: the clipboard now holds ChatGPT's answer");
+        if (!copied) continue;
+        sawText = true;
+        const structured = structuredAnswer(kind, copied);
+        if (!structured) continue;
+        const samePage = sameAnswer(copied, pageText);
+        const sameJson = pageAnswer && JSON.stringify(structured) === JSON.stringify(pageAnswer);
+        if (samePage || sameJson) {
+          logStep(jobId, "copying", `Copy: the clipboard holds the structured answer (attempt ${attempt})`);
           return copied;
         }
-        logStep(jobId, "copying", "Copy: ChatGPT's button did not write the answer; copying the visible text");
-        if (copyVisibleAnswer(pageText)) {
-          await sleep(250);
-          const fallback = await readCopiedClipboard();
-          if (fallback && sameAnswer(fallback, pageText)) {
-            logStep(jobId, "copying", "Copy: the visible answer is now on the clipboard");
-            return fallback;
-          }
-          logStep(jobId, "copying", "Copy: copied the visible answer to the clipboard");
-          return pageText;
-        }
-        logStep(jobId, "copying", "Copy: the clipboard was empty or different; using the visible answer");
-      } catch {
-        /* the visible text is the fallback */
-        logStep(jobId, "copying", "Copy: the Copy action failed; using the visible answer");
+        logStep(jobId, "copying", "Copy: the clipboard has JSON from a different turn; clicking Copy again");
+        break;
       }
+      logStep(
+        jobId,
+        "copying",
+        sawText
+          ? `Copy: the clipboard did not contain the expected JSON (attempt ${attempt} of 3); clicking Copy again`
+          : `Copy: the clipboard was empty (attempt ${attempt} of 3); clicking Copy again`,
+      );
+      await sleep(600);
     }
-    return pageText;
+    return giveUp();
   }
 
-  async function waitForReply(jobId, beforeCount, beforeLast, usersBefore) {
+  async function waitForReply(jobId, kind, beforeCount, beforeLast, usersBefore) {
     const startedAt = Date.now();
     let lastText = "";
     let lastChange = Date.now();
@@ -813,7 +892,7 @@
         // that as done truncated the PPD. Stable is only a fallback for builds
         // that do not render a stop control at all.
         const stable =
-          Date.now() - lastChange > STABLE_MS && answerLooksComplete(lastText);
+          Date.now() - lastChange > STABLE_MS && Boolean(structuredAnswer(kind, lastText));
         if (finished || stable) {
           logStep(jobId, "copying", `Answer finished (${lastText.length} characters)`);
           return { node: current.node, text: current.text };
@@ -844,7 +923,6 @@
     }
     throw new Error("ChatGPT did not finish within 20 minutes");
   }
-
 
   function isBlocked() {
     try {
@@ -1039,6 +1117,7 @@
 
       const result = await waitForReply(
         job.jobId,
+        job.kind,
         state.beforeCount ?? 0,
         state.beforeLast ?? "",
         state.usersBefore ?? 0,
@@ -1050,7 +1129,7 @@
         "Answer: captured " + result.text.length + " characters from the page",
       );
       tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
-      const answer = await readAnswer(job.jobId, result.node, result.text);
+      const answer = await readAnswer(job.jobId, job.kind, result.node, result.text);
       if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
       logStep(job.jobId, "copying", "Answer: ready to hand over (" + answer.length + " characters)");
@@ -1105,6 +1184,7 @@
     if (message?.type === "RUN_CHATGPT") {
       const job = {
         jobId: message.jobId,
+        kind: message.kind || "",
         prompt: message.prompt,
         system: message.system || "",
         createdAt: message.createdAt || Date.now(),
@@ -1132,6 +1212,5 @@
   } catch {
     /* no stored job */
   }
-
 
 })();

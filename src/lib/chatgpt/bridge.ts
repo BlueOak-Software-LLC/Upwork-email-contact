@@ -52,7 +52,13 @@ export type ExtensionMessage =
   | { type: "CANCELLED"; jobId: string };
 
 export type AppMessage =
-  | { type: "RUN"; jobId: string; prompt: string; system?: string }
+  | {
+      type: "RUN";
+      jobId: string;
+      kind?: "ppd_document" | "email_draft" | "follow_up";
+      prompt: string;
+      system?: string;
+    }
   | { type: "CANCEL"; jobId: string }
   | { type: "ACK"; jobId: string }
   | { type: "FOCUS_CHAT" };

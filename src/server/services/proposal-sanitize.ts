@@ -41,7 +41,7 @@ const MAX = {
   engagement: 260,
   closing: 260,
   emailSubject: 120,
-  /** 160–250 words plus two links, measured in characters. */
+  /** 180–380 words plus two links, measured in characters. */
   emailContent: 3000,
 } as const;
 
@@ -323,12 +323,6 @@ function sanitizePpdInner(raw: unknown, ctx: ProposalContext): ProposalPpd {
   return ppd;
 }
 
-/** A link the model found; validated before it can appear in a client email. */
-export interface SimilarProduct {
-  name: string;
-  url: string;
-  why: string;
-}
 
 /** What the email step may need when it runs as its own ChatGPT job. */
 export interface EmailContext {
@@ -384,7 +378,7 @@ function withSignature(content: string, signature: string[]): string {
 export function sanitizeEmail(
   raw: unknown,
   ctx: EmailContext,
-): { subject: string; content: string; similarProducts: SimilarProduct[] } {
+): { subject: string; content: string } {
   const signature = ctx.signature?.filter(Boolean) ?? [];
   const identity = ctx.sender
     ? {
@@ -401,14 +395,16 @@ function sanitizeEmailInner(
   raw: unknown,
   ctx: EmailContext,
   signature: string[],
-): { subject: string; content: string; similarProducts: SimilarProduct[] } {
+): { subject: string; content: string } {
   const obj = record(raw);
   const emailRaw = record(pick(obj, ["email", "outreach_email", "email_draft"]) ?? obj);
   const ppd = ctx.ppd ?? null;
 
   const subject =
-    clampSubject(stripMarkdown(flat(emailRaw.subject, MAX.emailSubject))) ||
-    clampSubject(`Re: ${ctx.jobTitle || "your job post"}`);
+    clampSubject(
+      stripMarkdown(flat(emailRaw.subject, MAX.emailSubject)).replace(/^re\s*:\s*/i, ""),
+    ) ||
+    clampSubject(ctx.jobTitle ? `${ctx.jobTitle} — proposal` : "Your project — proposal");
 
   const fallbackBody = ppd
     ? `${ppd.subtitle}\n\n${ppd.sections
@@ -420,24 +416,11 @@ function sanitizeEmailInner(
         .join("\n\n")}\n\nFull proposal attached as a PDF. Are you open to a quick 15-minute call this week?`
     : `I would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
 
-  const products = sanitizeSimilarProducts(
-    pick(emailRaw, ["similar_products", "similarProducts", "products", "references"]),
-  );
   const budget = Math.max(600, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
   let body =
     stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, budget)) ||
     fallbackBody;
   body = stripDisallowedUrls(body);
-
-  // The model is asked to put links inline and repeat them in a structured
-  // list. Append any validated link that did not survive the inline pass, so a
-  // good product is never lost and a fabricated one is never added.
-  const missing = products.filter((product) => !body.includes(product.url));
-  if (missing.length) {
-    body += `\n\nA couple of products that fit what you described:\n${missing
-      .map((product) => `• ${product.name} — ${product.url}${product.why ? ` (${product.why})` : ""}`)
-      .join("\n")}`;
-  }
 
   const content = withSignature(body, signature);
 
@@ -447,7 +430,7 @@ function sanitizeEmailInner(
   if (!parsed.success) {
     throw ApiError.upstream("The ChatGPT answer had no usable email subject/body");
   }
-  return { ...parsed.data, similarProducts: products };
+  return parsed.data;
 }
 
 /* ───────────────────────── product-link validation ───────────────────────── */
@@ -541,24 +524,6 @@ function stripDisallowedUrls(value: string): string {
     .trim();
 }
 
-function sanitizeSimilarProducts(value: unknown): SimilarProduct[] {
-  const source = Array.isArray(value) ? value : [];
-  const seen = new Set<string>();
-  const products: SimilarProduct[] = [];
-  for (const entry of source) {
-    if (products.length >= 2) break;
-    const recordEntry = record(entry);
-    const name = flat(pick(recordEntry, ["name", "title", "product", "app"]), 120);
-    const url = flat(pick(recordEntry, ["url", "link", "href", "website", "site"]), MAX.url);
-    const why = flat(pick(recordEntry, ["why", "reason", "relevance", "description"]), 240);
-    if (!name || !url || !isAllowedProductUrl(url)) continue;
-    const key = url.toLowerCase().replace(/\/$/, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    products.push({ name, url: url.replace(/[),.;:!?]+$/, ""), why });
-  }
-  return products;
-}
 /** One pass for a response that carries both halves (legacy single-call prompt). */
 export function sanitizeProposal(raw: unknown, ctx: ProposalContext): ProposalOutput {
   const ppd = sanitizePpd(raw, ctx);
@@ -981,7 +946,7 @@ export function assertEmailShape(
   if (!email.subject.trim()) problems.push("email.subject is empty");
   if (email.subject.length > 70) problems.push("email.subject is longer than 70 chars");
   if (words < 90) problems.push("email.content is very short (<90 words)");
-  if (words > 340) problems.push("email.content is long (>340 words) — check it still reads as one message");
+  if (words > 420) problems.push("email.content is long (>420 words) — check it still reads as one message");
   if (email.content.length >= MAX.emailContent) {
     problems.push(`email.content hit the ${MAX.emailContent}-character cap`);
   }

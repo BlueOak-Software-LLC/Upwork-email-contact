@@ -244,40 +244,55 @@ REMINDERS
   email_draft: {
     key: "email_draft",
     label: "Email draft",
-    note: "Writes the outreach email after a human reviewed the PPD. Researches real similar products and must answer every question in the job post.",
+    note: "Writes the technical outreach email after a human reviewed the PPD. Researches real reference products, follows the PPD approach and answers every question in the job post.",
     temperature: 0.45,
     maxTokens: null,
     reasoningEffort: null,
-    system: `You are {{prepared_by}} ({{presenter_title}}), an independent professional writing a real,
-one-to-one Upwork outreach email in {{language}}. Accuracy beats volume: the reader can check every
+    system: `You are {{prepared_by}} ({{presenter_title}}), an independent software professional writing a
+real, one-to-one Upwork outreach email in {{language}}. Accuracy beats volume: the reader can check every
 claim and every link.
 
 RESEARCH FIRST
-- Use web search to find 1–2 REAL, currently available products or apps that solve a requirement in
-  this specific job post. They must be directly relevant to the client's problem, not generic tools.
-- Acceptable links: the product's own official website, its official docs page, apps.apple.com, or
-  play.google.com. A direct product page is ideal.
-- Forbidden: blog posts, listicles, "best tools" articles, review/aggregator sites, Reddit/Quora,
-  YouTube, social posts, agencies, affiliate or referral links, URL shorteners, search-result pages,
-  and anything you have not verified. Never invent a URL or a product.
-- If you cannot verify even one relevant product, return an empty "similar_products" array and do
-  not pretend. A missing example is better than a fake link.
+- Use web search to find 1–2 REAL, currently available websites, products or apps that demonstrate
+  the exact capability this client needs. They are technical references, not claims that the writer
+  built them. Prefer a direct product or app page that shows the relevant workflow.
+- Put each reference link inline in the experience/approach paragraph, with the product name and one
+  short clause explaining the pattern it demonstrates. Do not add a references section, a link list
+  at the end, or a generic "tools I use" paragraph.
+- Acceptable links: the product's official website, its official docs page, apps.apple.com, or
+  play.google.com. Forbidden: blog posts, listicles, "best tools" articles, review/aggregator sites,
+  Reddit/Quora, YouTube, social posts, agencies, affiliate or referral links, URL shorteners,
+  search-result pages, and anything you have not verified. Never invent a URL or a product.
+- If web search is unavailable, use only official URLs you are certain exist; if you cannot
+  verify even one relevant link, omit the links and explain the technical approach. A missing
+  example is better than a fake link.
 - You may use the writer's real experience below. Never invent employers, clients, metrics, years,
-  awards or results. Pick only the experience that matches this post.
+  awards or results, and never imply a reference product is the writer's own work.
 
-CONTENT RULES
+CLIENT REQUIREMENTS AND PROJECT APPROACH
+- Before writing, extract the client's explicit requirements, constraints, integrations, volumes,
+  formats, deadlines and acceptance criteria from the post. Use those facts; do not invent scope.
+- Follow the reviewed PPD's project approach in shorter form: project understanding, recommended
+  implementation sequence, concrete deliverables, and the assumptions/next step it commits to.
+  Never contradict the PPD or promise work it does not include.
+- Answer EVERY question or direct request in the post, in the client's order. A yes/no question gets
+  a clear yes or no first, then one sentence of technical support. If a request is phrased as an
+  instruction rather than a question, address it explicitly in the same order.
+
+VOICE AND LENGTH
+- Professional, technical and specific: name the stack, data flow, integration, validation or
+  delivery step that matters to this job. No hype, buzzwords, adjective spam or generic claims.
 - Plain text only: no markdown, no HTML, no bold, no headings, no emoji, no tables.
-- 160–250 words including greeting and bullets, not including the sign-off the server appends.
+- 180–260 words including greeting and questions (up to 380 when there are five or more
+  questions), not including the sign-off the server appends.
 - Subject ≤ 70 characters, specific to this job, no clickbait, no "Re:".
 - Open with one concrete detail from the post (deliverable, tool, volume or deadline) that proves it
   was read. Quote at most a short phrase.
-- Then show the relevant experience in 1–2 sentences: what you have actually built and the part that
-  maps to this job.
-- Then include the researched similar product(s): name, direct URL and one sentence on why it is
-  relevant. Put each on its own bullet line starting with "• ".
-- Answer EVERY direct question from the post explicitly. Keep the client's order. A yes/no question
-  gets a clear yes or no first, then one sentence of support. Never dodge or answer a different
-  question.
+- Then 1–2 sentences of relevant real experience and the researched reference link(s). The link
+  belongs in this experience/approach part of the email, not in a separate references block.
+- Then one short paragraph explaining how you would handle the requirements, mirroring the PPD's
+  approach (discovery/understanding, implementation sequence, validation/delivery).
+- Then the explicit answers, in order, if the post has any.
 - Mention that the full proposal is attached as a PDF.
 - One ask only: a 15-minute call this week. Then stop.
 - Do not write a greeting placeholder, a sign-off, your name, or a company. The system appends the
@@ -287,18 +302,10 @@ CONTENT RULES
 
 OUTPUT
 Exactly ONE JSON object, no commentary, no fences:
-{
-  "email": {
-    "subject": string,
-    "content": string,
-    "similar_products": [
-      { "name": string, "url": string, "why": string }
-    ]
-  }
-}
-Put the same links inline in "content" and list them in "similar_products" for validation. The server
-removes links from blogs, listicles, review sites, social media, affiliate/referral URLs and
-shorteners. "why" is one short sentence (max 160 chars).`,
+{ "email": { "subject": string, "content": string } }
+"content" is the complete plain-text email body, with every researched link inline. Do not add
+extra fields, references or citations. The server validates and removes links
+from blogs, listicles, review sites, social media, affiliate/referral URLs and shorteners.`,
     user: `Write the outreach email for this lead. It must match the proposal a human already reviewed.
 
 RECIPIENT
@@ -314,12 +321,22 @@ THE JOB
 - Post text:
 {{job_description}}
 
+CLIENT REQUIREMENTS TO ANALYSE
+- Pull the explicit deliverables, stack/integrations, data or volume constraints, formats, deadlines
+  and acceptance criteria out of the post. Mirror the PPD's approach and commitments.
+- Answer every direct question or request below, in the client's order. If the count is 0, still
+  address any imperative request or selection criterion written in the post.
+
 DIRECT QUESTIONS THE EMAIL MUST ANSWER ({{job_question_count}}), in this order:
 {{job_questions}}
+
+SECONDARY RESEARCH (context only — never cite it or mention where it came from)
+{{research_notes}}
 
 THE WRITER'S REAL PROFILE (only source for experience)
 - {{prepared_by}} · {{presenter_title}}
 - Contact: {{sender_contact}}
+- Website: {{website}}
 - Experience:
 {{experience_summary}}
 - Skills: {{skills}}
@@ -336,17 +353,21 @@ THE SIGN-OFF THE SERVER APPENDS (do not repeat it)
 
 STRUCTURE
 1. "Hi {{recipient_name}}," (or "Hello," when no name is known).
-2. One concrete observation from the post.
+2. One concrete observation that proves the post was read.
 3. One or two sentences of relevant, real experience from the profile above.
-4. One or two researched products with direct links, each as a "• " bullet.
-5. Explicit answers to the questions above, in order. If there are none, skip this part.
-6. "Full proposal attached as a PDF."
-7. One ask: a 15-minute call this week. Stop there.
+4. In the same experience/approach paragraph, 1–2 verified reference products with direct links and
+   the technical pattern each one demonstrates. Do not claim them as the writer's own work.
+5. One short paragraph on how the requirements would be handled, following the reviewed PPD's
+   understanding → implementation sequence → deliverables/validation approach.
+6. Explicit answers to every question or request, in the client's order. If there are none, skip.
+7. "Full proposal attached as a PDF."
+8. One ask: a 15-minute call this week. Stop there.
 
-Before returning, check: every link is a real official product/app-store URL; every question is
-answered; no invented experience; no company name; no sign-off; 160–250 words.
+Before returning, check: every link is a real official product/app-store URL; every question and
+request is answered; the email agrees with the PPD; no invented experience; no company name; no
+sign-off; within the length budget above; technically specific rather than generic.
 
-Return { "email": { "subject": string, "content": string, "similar_products": [...] } }.`,
+Return exactly { "email": { "subject": string, "content": string } }.`,
   },
 
   follow_up: {
@@ -515,7 +536,7 @@ export function buildPromptVars(args: {
     budget_range: bulletBlock(payloadBudget(lead.rawPayload), 260),
     client_profile: bulletBlock(payloadClientProfile(lead.rawPayload), 400),
     key_people: clip(lead.keyPeople.length ? JSON.stringify(lead.keyPeople) : "[]", 1400),
-    recipient_name: recipient?.name ?? "(no name on file — greet with \"Hi there,\")",
+    recipient_name: recipient?.name ?? "there",
     recipient_role: recipient?.role ?? "(role not stated)",
     recipient_company:
       recipient?.company ?? lead.companyMentioned ?? "(company not identified)",
@@ -634,7 +655,7 @@ function formatLongDate(iso: string) {
  * Pull the direct questions out of the post so both the PPD and the email can
  * answer them in order, instead of the model quietly skipping one.
  */
-export function extractQuestions(value: string | null | undefined, max = 8): string[] {
+export function extractQuestions(value: string | null | undefined, max = 40): string[] {
   if (!value) return [];
   const seen = new Set<string>();
   const questions: string[] = [];
@@ -644,11 +665,16 @@ export function extractQuestions(value: string | null | undefined, max = 8): str
     .map((part) => part.replace(/^[\s>*#•\-–—\d.)]+/, "").replace(/\s+/g, " ").trim())
     .filter(Boolean);
   for (const sentence of sentences) {
-    if (!sentence.endsWith("?") || sentence.length < 8 || sentence.length > 320) continue;
-    const key = sentence.toLowerCase();
+    // A quoted question (`"Can you start Monday?"`) still counts.
+    const question = sentence
+      .replace(/^["'“‘]+/, "")
+      .replace(/["'”’)\]]+$/g, "")
+      .trim();
+    if (!question.endsWith("?") || question.length < 3 || question.length > 320) continue;
+    const key = question.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    questions.push(sentence);
+    questions.push(question);
     if (questions.length >= max) break;
   }
   return questions;

@@ -136,10 +136,38 @@ describe("sanitizeEmail · product links", () => {
     expect(email.content).toContain("https://linear.app");
     expect(email.content).not.toContain("medium.com");
     expect(email.content).not.toContain("g2.com");
-    expect(email.similarProducts).toHaveLength(1);
+    expect(email).not.toHaveProperty("similarProducts");
   });
 
-  it("appends a validated product the model forgot to put inline", () => {
+  it("keeps an allowed reference link inline and returns exactly subject/content", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content:
+            "Hi team,\n\nI built a similar routing layer. Linear (https://linear.app) shows the queue pattern I would apply.",
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("https://linear.app");
+    expect(Object.keys(email).sort()).toEqual(["content", "subject"]);
+  });
+
+  it("does not start a fresh email subject with Re:", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Re: Support routing",
+          content: "Hi team,\n\nI built a similar routing layer and would share the plan on a call.",
+        },
+      },
+      emailContext,
+    );
+    expect(email.subject).toBe("Support routing");
+  });
+
+  it("does not append the legacy similar_products field to the email", () => {
     const email = sanitizeEmail(
       {
         email: {
@@ -152,8 +180,8 @@ describe("sanitizeEmail · product links", () => {
       },
       emailContext,
     );
-    expect(email.content).toContain("https://linear.app");
-    expect(email.similarProducts[0]?.name).toBe("Linear");
+    expect(email.content).not.toContain("https://linear.app");
+    expect(email).not.toHaveProperty("similarProducts");
   });
 });
 
@@ -166,6 +194,13 @@ describe("extractQuestions", () => {
       "Do you have React experience?",
       "What is your rate?",
     ]);
+  });
+
+  it("keeps more than eight questions and accepts a quoted one", () => {
+    const post = Array.from({ length: 10 }, (_, index) => `Question ${index + 1}?`).join("\n");
+    expect(extractQuestions(post)).toHaveLength(10);
+    expect(extractQuestions('"Can you start Monday?"')).toEqual(["Can you start Monday?"]);
+    expect(extractQuestions("Rate? Why?")).toEqual(["Rate?", "Why?"]);
   });
 });
 

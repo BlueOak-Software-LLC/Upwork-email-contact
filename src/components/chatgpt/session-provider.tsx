@@ -244,6 +244,7 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
       bridge.port.postMessage({
         type: "RUN",
         jobId: job.id,
+        kind: job.kind,
         prompt: job.prompt,
         system: job.system,
       });

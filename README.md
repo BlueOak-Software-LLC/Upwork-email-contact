@@ -299,7 +299,10 @@ when embedded, and injected into **both** prompts — `ppd_document` (labelled
 "THE POST TEXT", the rule being that every claim about the client traces to it, the
 title or the research notes, while the plan itself — timeline, milestones, formats,
 indicative range — is the writer's to decide, with no bracketed placeholders) and
-`email_draft` (which must open by naming one concrete detail from it). It is also accepted at the top
+`email_draft` (which must open by naming one concrete detail from it, mirrors
+the reviewed PPD's approach, puts 1–2 verified reference links inline in the
+experience paragraph, answers every question, and returns exactly
+`{ "email": { "subject", "content" } }`). It is also accepted at the top
 level (`job_description`), as `job_information.description`, and as an array of
 paragraph strings or `{ "text": … }` blocks. A payload with no description is not
 an error: the prompt then says so explicitly and writes from title + industry +
@@ -482,7 +485,8 @@ are unchanged.
 2. The extension receives it over `chrome.runtime.connect(EXTENSION_ID)`, reuses
    the ChatGPT tab and conversation already open, types the prompt once, starts it,
    reports **waiting** immediately, and reads the completed assistant turn.
-   ChatGPT's Copy button is preferred, but the visible text is authoritative.
+   Copy is only taken after the stop control disappears and only when the
+   clipboard holds the JSON shape the job needs; otherwise Copy is clicked again.
 3. The content script saves the answer and retries until the worker acknowledges
    it; the dashboard then posts it to `/api/chatgpt/jobs/:id/complete`. That route
    parses JSON, applies `sanitizePpd`/`sanitizeEmail`, and writes the proposal or
@@ -505,7 +509,10 @@ passwords.
 **Prompt templates** live in `/settings/prompts`: `ppd_document`, `email_draft`
 and `follow_up`. They are global (any dashboard user can edit them), so treat
 that page as workspace configuration. Token/temperature fields still exist on
-old rows but the ChatGPT session ignores them.
+old rows but the ChatGPT session ignores them. A saved `email_draft` row wins
+over the code default: after upgrading, reset it on Settings → Prompts (or
+delete the row) to receive the new exact `subject`/`content` contract and the
+inline-reference instructions.
 
 **Console logs.** The server prints exactly two JSON lines in normal operation:
 `leads_received` (the lead payloads accepted by `POST /api/leads`) and
@@ -516,7 +523,12 @@ full trail while debugging. The `EMAIL_PROVIDER=log` dry run no longer prints th
 message body either — the row at `/emails` is the record.
 
 The default PPD prompt asks for 450–700 words in 4–6 sections, and explicitly
-forbids company branding, invented case studies and bracketed placeholders.
+forbids company branding, invented case studies and bracketed placeholders. The
+default email prompt asks for 180–260 technical words (up to 380 when there are
+five or more questions), uses web search only for real official product/app-store
+references (never presented as the writer's own work), puts those links inline
+in the experience/approach paragraph, and answers
+every question in the client's order before the single 15-minute-call ask.
 When the post contains direct questions, `extractQuestions()` sends them as
 `{{job_questions}}` and the prompt requires one direct answer per question.
 
@@ -851,7 +863,7 @@ free-text address · both prompts inline) · **Email draft card** (to/cc/subject
 ### The three prompts
 
 `GET/PUT /api/prompts` and `/settings/prompts` expose `ppd_document` (writes the
-block PPD), `email_draft` (writes subject/body from the reviewed PPD) and
+block PPD), `email_draft` (writes the technical subject/body from the reviewed PPD, with reference links inline and exactly `{ "email": { "subject", "content" } }`) and
 `follow_up` (writes the next message on an existing thread). All three
 are stored in `prompt_templates` — a row only exists once you edit it, so a
 reset falls back to the code default in
@@ -902,7 +914,7 @@ vercel --prod        # or push to GitHub → Import Project
 | **Run** opens a new ChatGPT chat instead of using the conversation on screen | Fixed in extension 1.0.5. The current conversation is reused; the **New chat** control is only checked as a readiness signal and is never clicked. |
 | The drawer says **The prompt is still in the message box…** | The tab was in the background, the composer was not the real one, or the send control was disabled. Extension 1.0.5 focuses the tab, scores the real composer, types once, then tries the send button, Enter and the form once each. It never types a second copy. If it still fails, click the composer once and press **Run** again; the message includes a `composer=… chars=… users=…` diagnostic line. |
 | The drawer stays on **typing the prompt** after ChatGPT has started answering | The content script sends `waiting` immediately after the prompt is accepted and every five seconds while the answer is generating. The drawer also shows a timestamped **Extension log** (`Queue`, `Open`, `Prompt`, `Input`, `Sent`, `Wait`, `Answer`, `Copy`, `Handoff`, `Result`, `Done`) under the job and in **Details**. |
-| ChatGPT answers but **Copy** gets nothing, or the answer arrives as plain text | Extension 1.0.6 treats the visible answer as the source of truth. It still tries ChatGPT’s Copy button and the focused-selection fallback, but a blocked clipboard now falls through immediately to the rendered text, so the result cannot hang on a clipboard permission. |
+| ChatGPT answers but **Copy** gets nothing, or the answer arrives as plain text | Extension 1.0.8 waits for the stop control to disappear, focuses the ChatGPT tab, then clicks Copy up to three times. A clipboard entry is accepted only when it parses to the expected structured answer (`ppd.sections` or `email.subject`/`email.content`) and matches the current turn. Structured JSON visible in the page is the last fallback; an unstructured answer fails with a message instead of saving prose. |
 | ChatGPT finished, but the dashboard never showed the PPD/draft | Extension 1.0.6 saves the answer under `upworkChatAnswer:<jobId>` and waits for the worker’s `CHATGPT_REPLY` acknowledgement before clearing the active job. A sleeping worker is retried; a page reload resends the saved answer instead of typing the prompt again. The drawer names the failed step (Handoff/Result) when it still cannot store it. |
 | The ChatGPT tab shows a dimmed composer and nothing is typed | The page had not finished rendering, was discarded, or is signed out. The content script now waits 25 seconds for a visible composer and then fails with a clear reason instead of hanging; the worker also reloads a discarded tab. Reload chatgpt.com, stay signed in, then press **Run**. |
 | ChatGPT answered but the PPD did not appear | The server rejected a non-JSON or incomplete answer. The drawer returns the job to **running** and the toast names the parse error; paste a corrected JSON answer with the manual-paste box, or press **Run** again. |
