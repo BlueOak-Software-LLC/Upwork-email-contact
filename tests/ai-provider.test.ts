@@ -447,10 +447,10 @@ describe("ingest defaults", () => {
     expect(env.aiConfigured()).toBe(true);
   });
 
-  it("warns when auto-enrich is switched back on", async () => {
+  it("warns that AUTO_ENRICH_LEADS no longer turns generation on", async () => {
     const { env } = await load({ AUTO_ENRICH_LEADS: "true", PUTER_AUTH_TOKEN: "secret-puter-token" });
     expect(env.getServerEnv().AUTO_ENRICH_LEADS).toBe(true);
-    expect(env.getEnvDiagnostics().join("\n")).toMatch(/spends tokens on a document nobody has read/);
+    expect(env.getEnvDiagnostics().join("\n")).toMatch(/AUTO_ENRICH_LEADS is ignored/);
   });
 });
 

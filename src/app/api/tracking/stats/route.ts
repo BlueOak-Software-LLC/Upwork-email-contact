@@ -9,7 +9,7 @@ import { getServerEnv, linkTrackingEnabled, trackingEnabled, trackingOrigin } fr
 
 export const dynamic = "force-dynamic";
 
-const querySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) });
+const querySchema = z.object({ days: z.coerce.number().int().min(1).max(365).default(7) });
 
 /**
  * GET /api/tracking/stats?days=7

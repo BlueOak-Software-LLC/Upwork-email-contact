@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ActivityChart } from "@/components/dashboard/activity-chart";
 import { MetricCard, SparkBars } from "@/components/dashboard/metric-card";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
@@ -6,6 +7,12 @@ import { getMetrics, getRecentContacts, getStaleSends, getTrackingOverview } fro
 import { leadsRepo } from "@/server/db/leads.repo";
 import { formatDate, relative, truncate } from "@/lib/utils";
 import { describeOpens, rate } from "@/lib/tracking";
+import {
+  ACTIVITY_PERIODS,
+  bucketActivity,
+  parseActivityPeriod,
+  type DailyActivity,
+} from "@/lib/activity";
 import type { Contact, DashboardMetrics } from "@/types/domain";
 
 type Tracking = Awaited<ReturnType<typeof getTrackingOverview>>;
@@ -16,23 +23,60 @@ export const metadata = { title: "Overview" };
 
 type LeadMetrics = NonNullable<Awaited<ReturnType<typeof leadsRepo.metrics>>>;
 
-export default async function OverviewPage() {
-  const [metrics, recent, leadMetrics, queue, tracking, stale] = await Promise.all([
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string }>;
+}) {
+  const params = await searchParams;
+  const period = parseActivityPeriod(params.period);
+  const windowDays = ACTIVITY_PERIODS[period].days;
+
+  const [metrics, recent, leadMetrics, queue, tracking, trackingWindow, stale] = await Promise.all([
     attempt<DashboardMetrics | null>(() => getMetrics(), null),
     attempt<Contact[]>(() => getRecentContacts(6), []),
-    attempt<LeadMetrics | null>(() => leadsRepo.metrics(), null),
+    attempt<LeadMetrics | null>(() => leadsRepo.metrics(windowDays), null),
     attempt<Awaited<ReturnType<typeof leadsRepo.queue>> | null>(() => leadsRepo.queue(), null),
-    attempt<Tracking>(() => getTrackingOverview(7), null),
+    attempt<Tracking>(() => getTrackingOverview(windowDays), null),
+    windowDays === 7
+      ? Promise.resolve(null)
+      : attempt<Tracking>(() => getTrackingOverview(7), null),
     attempt<Stale>(() => getStaleSends(7, 6), []),
   ]);
 
   if (!metrics) return <SetupRequired />;
 
+  // The cards stay on their 7-day window; the graph follows the period tabs.
+  const tracking7 = windowDays === 7 ? tracking : trackingWindow;
+
+  const activityByDay = new Map<string, DailyActivity>();
+  const activityFor = (date: string): DailyActivity => {
+    const existing = activityByDay.get(date);
+    if (existing) return existing;
+    const next: DailyActivity = { date, leads: 0, sent: 0, opens: 0, clicks: 0 };
+    activityByDay.set(date, next);
+    return next;
+  };
+  for (const point of leadMetrics?.series ?? []) activityFor(point.day).leads = point.count;
+  for (const point of tracking?.series ?? []) {
+    const day = activityFor(point.date);
+    day.sent = point.sent;
+    day.opens = point.opens;
+    day.clicks = point.clicks;
+  }
+  const activity = bucketActivity([...activityByDay.values()], period);
+
   return (
     <>
       {queue ? <AttentionQueue queue={queue} /> : null}
-      {tracking ? <TrackingNotice tracking={tracking} /> : null}
+      {tracking7 ? <TrackingNotice tracking={tracking7} /> : null}
       {stale.length ? <StaleSends rows={stale} /> : null}
+
+      <ActivityChart
+        period={period}
+        buckets={activity}
+        trackingAvailable={Boolean(tracking && !tracking.schemaMissing)}
+      />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <MetricCard
@@ -72,29 +116,33 @@ export default async function OverviewPage() {
 
         <MetricCard
           label="Opened (7d)"
-          value={tracking ? tracking.uniqueOpeners : "—"}
-          delta={tracking ? `${rate(tracking.uniqueOpeners, tracking.delivered)} of delivered` : undefined}
-          tone={tracking && tracking.uniqueOpeners > 0 ? "good" : "default"}
+          value={tracking7 ? tracking7.uniqueOpeners : "—"}
+          delta={
+            tracking7
+              ? `${rate(tracking7.uniqueOpeners, tracking7.delivered)} of delivered`
+              : undefined
+          }
+          tone={tracking7 && tracking7.uniqueOpeners > 0 ? "good" : "default"}
           hint={
-            tracking
-              ? `${tracking.opens} pixel requests · an open is a client fetching the image, not proof of reading`
+            tracking7
+              ? `${tracking7.opens} pixel requests · an open is a client fetching the image, not proof of reading`
               : "tracking columns are not readable — apply 0005_email_tracking.sql"
           }
         >
-          {tracking && tracking.series.length ? (
-            <SparkBars data={tracking.series.map((day) => ({ day: day.date, count: day.opens }))} />
+          {tracking7 && tracking7.series.length ? (
+            <SparkBars data={tracking7.series.map((day) => ({ day: day.date, count: day.opens }))} />
           ) : null}
         </MetricCard>
 
         <MetricCard
           label="Clicked (7d)"
-          value={tracking ? tracking.uniqueClickers : "—"}
+          value={tracking7 ? tracking7.uniqueClickers : "—"}
           delta={
-            tracking && tracking.clickThroughRate !== null
-              ? `${Math.round(tracking.clickThroughRate * 100)}% of delivered`
+            tracking7 && tracking7.clickThroughRate !== null
+              ? `${Math.round(tracking7.clickThroughRate * 100)}% of delivered`
               : undefined
           }
-          tone={tracking && tracking.uniqueClickers > 0 ? "good" : "default"}
+          tone={tracking7 && tracking7.uniqueClickers > 0 ? "good" : "default"}
           hint="Links rewritten to /c/<token>; the proposal PDF is never rewritten"
         />
 

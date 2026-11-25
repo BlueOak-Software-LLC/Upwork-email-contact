@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLeads, type LeadSummary } from "@/lib/api/outreach-hooks";
 import { IngestDialog } from "./ingest-dialog";
 import { DeleteLeadsDialog } from "./delete-leads-dialog";
@@ -14,7 +14,25 @@ import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { cn, truncate } from "@/lib/utils";
-import { LEAD_STATUSES } from "@/types/lead";
+import { LEAD_DATE_RANGES, leadDateRange, type LeadDateRangeKey } from "@/lib/date-ranges";
+import { paginationItems } from "@/lib/pagination";
+import type { LeadPipeline } from "@/types/lead";
+
+const PIPELINE_OPTIONS: Array<{ value: LeadPipeline; label: string }> = [
+  { value: "sent", label: "Email sent" },
+  { value: "both", label: "Doc/Draft both ready" },
+  { value: "doc", label: "Doc ready (no draft)" },
+  { value: "draft", label: "Draft ready (no doc)" },
+];
+
+const SORT_OPTIONS = [
+  { value: "created_at:desc", label: "Newest first" },
+  { value: "created_at:asc", label: "Oldest first" },
+  { value: "updated_at:desc", label: "Recently updated" },
+  { value: "job_title:asc", label: "Job title A-Z" },
+  { value: "status:asc", label: "Status" },
+  { value: "overall_confidence:desc", label: "Confidence" },
+] as const;
 
 export function LeadsView() {
   return (
@@ -30,15 +48,21 @@ function LeadsTable() {
   const params = useSearchParams();
 
   const [search, setSearch] = useState(params.get("q") ?? "");
+  const pageParam = Number(params.get("page") ?? 1);
   const filters = useMemo(
     () => ({
       q: params.get("q") ?? undefined,
       status: params.get("status") ?? undefined,
+      pipeline: params.get("pipeline") ?? undefined,
       confidence: params.get("confidence") ?? undefined,
-      page: Number(params.get("page") ?? 1),
+      from: params.get("from") ?? undefined,
+      to: params.get("to") ?? undefined,
+      sort: params.get("sort") ?? "created_at",
+      order: params.get("order") ?? "desc",
+      page: Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1,
       pageSize: 25,
     }),
-    [params],
+    [params, pageParam],
   );
 
   const { data, isLoading, isFetching, error, refetch } = useLeads(filters);
@@ -78,41 +102,133 @@ function LeadsTable() {
     headCheck.current.indeterminate = selectedRows.length > 0 && selectedRows.length < rows.length;
   }, [rows, selectedRows]);
 
-  const setParam = (key: string, value: string | undefined) => {
+  const setParams = (updates: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params.toString());
-    if (value) next.set(key, value);
-    else next.delete(key);
-    if (key !== "page") next.delete("page");
-    router.replace(`${pathname}?${next.toString()}`);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    next.delete("page");
+    const query = next.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
   };
+
+  const setParam = (key: string, value: string | undefined) => setParams({ [key]: value });
+
+  const goToPage = useCallback(
+    (page: number) => {
+      const next = new URLSearchParams(params.toString());
+      if (page > 1) next.set("page", String(page));
+      else next.delete("page");
+      const query = next.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname);
+    },
+    [params, pathname, router],
+  );
+
+  // A bookmarked ?page=99 is answered with the last real page. Rewrite the URL
+  // to match so the next filter change does not carry the stale page number.
+  useEffect(() => {
+    if (meta && meta.page !== filters.page) goToPage(meta.page);
+  }, [meta, filters.page, goToPage]);
+
+  const dateSelection =
+    params.get("range") ?? (params.get("from") || params.get("to") ? "custom" : "all");
+
+  const applyDateRange = (value: string) => {
+    if (value === "all") {
+      setParams({ range: undefined, from: undefined, to: undefined });
+      return;
+    }
+    if (value === "custom") return;
+    const range = leadDateRange(value as LeadDateRangeKey);
+    if (!range) return;
+    setParams({ range: value, from: range.from, to: range.to });
+  };
+
+  const sortValue = `${params.get("sort") ?? "created_at"}:${params.get("order") ?? "desc"}`;
+  const applySort = (value: string) => {
+    const [sort, order] = value.split(":");
+    setParams({ sort, order });
+  };
+
+  const hasFilters = Boolean(
+    params.get("q") ||
+      params.get("status") ||
+      params.get("pipeline") ||
+      params.get("confidence") ||
+      params.get("from") ||
+      params.get("to"),
+  );
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <form
-          className="flex flex-1 flex-wrap items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setParam("q", search.trim() || undefined);
-          }}
-        >
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search job title, company, client…"
-            className="max-w-xs"
-            aria-label="Search leads"
-          />
-          <Select
-            aria-label="Status"
-            className="w-36"
-            value={params.get("status") ?? ""}
-            onChange={(e) => setParam("status", e.target.value || undefined)}
+      <div className="card space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <form
+            className="flex flex-1 items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setParam("q", search.trim() || undefined);
+            }}
           >
-            <option value="">All statuses</option>
-            {LEAD_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s.replace(/_/g, " ")}
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search job title, company, client…"
+              className="max-w-sm"
+              aria-label="Search leads"
+            />
+            <Button type="submit" variant="secondary" size="sm">
+              Search
+            </Button>
+          </form>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-[11px] text-muted">
+              {isFetching ? (
+                <>
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> updating
+                </>
+              ) : (
+                <>
+                  <span className="h-1.5 w-1.5 rounded-full bg-brand/60" /> live
+                </>
+              )}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => refetch()} loading={isFetching}>
+              Refresh
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setIngestOpen(true)}>
+              Ingest payload
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            aria-label="Created date"
+            className="w-40"
+            value={dateSelection}
+            onChange={(e) => applyDateRange(e.target.value)}
+          >
+            <option value="all">Any date</option>
+            {dateSelection === "custom" ? <option value="custom">Custom range</option> : null}
+            {LEAD_DATE_RANGES.map((range) => (
+              <option key={range.value} value={range.value}>
+                {range.label}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Pipeline status"
+            className="w-48"
+            value={params.get("pipeline") ?? ""}
+            onChange={(e) => setParam("pipeline", e.target.value || undefined)}
+          >
+            <option value="">Any pipeline state</option>
+            {PIPELINE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </Select>
@@ -129,28 +245,30 @@ function LeadsTable() {
               </option>
             ))}
           </Select>
-          <Button type="submit" variant="secondary" size="sm">
-            Apply
-          </Button>
-        </form>
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-[11px] text-muted">
-            {isFetching ? (
-              <>
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> updating
-              </>
-            ) : (
-              <>
-                <span className="h-1.5 w-1.5 rounded-full bg-brand/60" /> live
-              </>
-            )}
-          </span>
-          <Button variant="ghost" size="sm" onClick={() => refetch()} loading={isFetching}>
-            Refresh
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setIngestOpen(true)}>
-            Ingest payload
-          </Button>
+          <Select
+            aria-label="Sort leads"
+            className="w-44"
+            value={sortValue}
+            onChange={(e) => applySort(e.target.value)}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+          {hasFilters ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSearch("");
+                router.replace(pathname);
+              }}
+            >
+              Clear filters
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -213,14 +331,13 @@ function LeadsTable() {
           />
         ) : rows.length === 0 ? (
           <EmptyState
-            title={
-              params.get("q") || params.get("status")
-                ? "Nothing matches these filters"
-                : "No leads yet"
-            }
+            title={hasFilters ? "Nothing matches these filters" : "No leads yet"}
             description={
-              params.get("q") || params.get("status") ? (
-                <>Search covers the title, company, client, industry and the whole post body.</>
+              hasFilters ? (
+                <>
+                  Search covers the title, company, client, industry and the whole post body. Try a
+                  wider date range or clear the pipeline filter.
+                </>
               ) : (
                 <>
                   Every object posted to <code>POST /api/leads</code> lands here. Paste one now, or
@@ -230,7 +347,7 @@ function LeadsTable() {
             }
             action={
               <>
-                {params.get("q") || params.get("status") ? (
+                {hasFilters ? (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -270,7 +387,10 @@ function LeadsTable() {
                 <Th>Confidence</Th>
                 <Th>Pipeline</Th>
                 <Th>Status</Th>
-                <Th>Received</Th>
+                <Th>Created</Th>
+                <Th className="w-10">
+                  <span className="sr-only">Actions</span>
+                </Th>
               </Tr>
             </THead>
             <TBody>
@@ -329,7 +449,7 @@ function LeadsTable() {
                     <StatusBadge status={lead.status} />
                   </Td>
                   <Td className="whitespace-nowrap text-xs text-muted">
-                    <TimeAgo value={lead.received_at} />
+                    <TimeAgo value={lead.created_at} />
                   </Td>
                   <Td className="w-10 text-right">
                     <Button
@@ -357,7 +477,8 @@ function LeadsTable() {
         page={meta?.page ?? 1}
         totalPages={meta?.totalPages ?? 1}
         total={meta?.total ?? 0}
-        onChange={(page) => setParam("page", page > 1 ? String(page) : undefined)}
+        pageSize={meta?.pageSize ?? 25}
+        onChange={goToPage}
       />
     </div>
   );
@@ -367,31 +488,62 @@ function Pager({
   page,
   totalPages,
   total,
+  pageSize,
   onChange,
 }: {
   page: number;
   totalPages: number;
   total: number;
+  pageSize: number;
   onChange: (page: number) => void;
 }) {
+  const pages = Math.max(1, totalPages);
+  const current = Math.min(Math.max(1, page), pages);
+  const first = total === 0 ? 0 : (current - 1) * pageSize + 1;
+  const last = Math.min(current * pageSize, total);
+
   return (
-    <div className="flex items-center justify-between text-sm text-muted">
+    <div className="flex flex-col gap-3 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
       <span className="tabular">
-        {total} leads · page {page} of {totalPages}
+        {total === 0 ? "No leads" : `${first}–${last} of ${total}`} · page {current} of {pages}
       </span>
-      <div className="flex gap-2">
-        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => onChange(page - 1)}>
-          Prev
-        </Button>
+      <nav aria-label="Lead pages" className="flex flex-wrap items-center gap-1">
         <Button
           size="sm"
           variant="secondary"
-          disabled={page >= totalPages}
-          onClick={() => onChange(page + 1)}
+          disabled={current <= 1}
+          onClick={() => onChange(current - 1)}
+        >
+          Prev
+        </Button>
+        {paginationItems(current, pages).map((item, index) =>
+          item === "ellipsis" ? (
+            <span key={`gap-${index}`} className="px-1 text-faint" aria-hidden>
+              …
+            </span>
+          ) : (
+            <Button
+              key={item}
+              size="sm"
+              variant={item === current ? "primary" : "secondary"}
+              className="min-w-8 px-2"
+              aria-current={item === current ? "page" : undefined}
+              aria-label={`Page ${item}`}
+              onClick={() => onChange(item)}
+            >
+              {item}
+            </Button>
+          ),
+        )}
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={current >= pages}
+          onClick={() => onChange(current + 1)}
         >
           Next
         </Button>
-      </div>
+      </nav>
     </div>
   );
 }

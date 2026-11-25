@@ -149,7 +149,7 @@ export function IngestDialog({ open, onClose }: { open: boolean; onClose: () => 
               className="h-8 w-48 text-xs"
               aria-label="Generation mode"
             >
-              <option value="">server default (AUTO_ENRICH_LEADS = off)</option>
+              <option value="">store only (manual Generate PPD)</option>
               <option value="false">?auto=false — store only, I will click Generate</option>
               <option value="true">?auto=true — write the PPD inside this request</option>
             </Select>

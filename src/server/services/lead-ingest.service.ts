@@ -1,4 +1,3 @@
-import { getServerEnv } from "@/lib/env";
 import { aiConfigured } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { emailRecipients, normalizeLeadPayload } from "@/lib/validation/lead";
@@ -16,7 +15,10 @@ import type {
 const MAX_GENERATIONS_PER_LEAD = 3;
 
 export interface IngestOptions {
-  /** Write the PPD automatically (off by default — see `AUTO_ENRICH_LEADS`). */
+  /**
+   * Write the PPD automatically. Only an explicit `true` opts in (the
+   * `?auto=true` API flag); environment defaults never generate on arrival.
+   */
   autoEnrich?: boolean;
   /** Force a new proposal version even if one exists. */
   regenerate?: boolean;
@@ -43,15 +45,15 @@ export interface IngestOptions {
  * scraper re-posts the same job with different tracking parameters. And nothing
  * is generated on arrival: the email draft, the PDF and the send are human
  * decisions made on the lead page, and so is writing the first draft of the
- * document. `?auto=true` (or `AUTO_ENRICH_LEADS=true`) restores the old
- * ingest-writes-documents behaviour for a caller that wants it.
+ * document. Only an explicit `?auto=true` restores the old
+ * ingest-writes-documents behaviour for a caller that wants it; the env flag is
+ * ignored so an old deployment cannot start spending tokens again.
  * Every step is individually failure-isolated: the lead row is always stored.
  */
 export async function ingestLeadPayload(
   payload: unknown,
   options: IngestOptions = {},
 ): Promise<IngestResult> {
-  const env = getServerEnv();
   const normalized = normalizeLeadPayload(payload);
 
   const { row: lead, created, matchedBy } = await leadsRepo.upsert(normalized, {
@@ -96,8 +98,10 @@ export async function ingestLeadPayload(
   const warnings: string[] = [];
   const proposalsFromRun: ProposalRow[] = [];
 
-  const autoEnrich =
-    (options.autoEnrich ?? env.AUTO_ENRICH_LEADS) && !options.dryRun;
+  // Manual by default, always. `AUTO_ENRICH_LEADS` is kept as a parsed env
+  // value for backward compatibility but is deliberately not consulted here:
+  // a lead with an email must wait for the Generate PPD click.
+  const autoEnrich = options.autoEnrich === true && !options.dryRun;
 
   const generation = {
     attempted: 0,

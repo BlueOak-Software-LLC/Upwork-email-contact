@@ -31,6 +31,10 @@ export const LEAD_STATUSES = [
   "archived",
 ] as const satisfies readonly LeadStatus[];
 
+/** The list filters people actually use, derived from the child tables. */
+export const LEAD_PIPELINES = ["sent", "both", "doc", "draft"] as const;
+export type LeadPipeline = (typeof LEAD_PIPELINES)[number];
+
 export type JsonRecord = Record<string, unknown>;
 
 /** What the scraper/caller may post to `POST /api/leads`. */

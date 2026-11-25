@@ -141,8 +141,8 @@ export function AiPanel({ status }: { status: AiStatus }) {
           />
           <Row
             label="Generate on ingest"
-            value={status.autoEnrich ? "on (AUTO_ENRICH_LEADS=true)" : "off — click Generate"}
-            hint="Off means a payload is stored and nothing is spent until you ask"
+            value="manual — click Generate PPD"
+            hint="Ingest only stores the lead. ?auto=true on POST /api/leads is the explicit opt-in for an automated caller"
           />
           <Row
             label="Puter credential"

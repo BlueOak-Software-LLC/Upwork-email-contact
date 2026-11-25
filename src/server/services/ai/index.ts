@@ -267,7 +267,8 @@ export async function aiStatus() {
     puterConfigured: Boolean(config.puter.apiKey),
     geminiModel: config.gemini.model,
     geminiConfigured: Boolean(config.gemini.apiKey),
-    autoEnrich: env.AUTO_ENRICH_LEADS,
+    // Ingest is manual by design; this field stays present for the settings UI.
+    autoEnrich: false,
     settingsUrl: "/settings/models",
     providers: AI_PROVIDER_IDS.map((provider) => ({
       provider,

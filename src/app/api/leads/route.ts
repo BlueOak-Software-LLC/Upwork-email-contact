@@ -51,8 +51,8 @@ export const GET = withApi(async (request: NextRequest) => {
  * so a scraper can re-post freely.
  *
  * Query flags:
- *   auto=true       generate on arrival (the old behaviour; default is manual)
- *   dry=true        same as auto=false
+ *   auto=true       explicit opt-in to generate on arrival (default is manual)
+ *   dry=true        store only, never generate
  *   regenerate=true force a new proposal version
  *   refresh=true    overwrite the matched lead instead of reporting a duplicate
  *   senderAccountId=<uuid> use a specific sending mailbox for the drafts
@@ -86,7 +86,7 @@ export const POST = withApi(async (request: NextRequest) => {
   logger.info("lead_ingest_requested", {
     count: payloads.length,
     ...ingestOptions,
-    autoEnrich: ingestOptions.autoEnrich ?? "env-default",
+    autoEnrich: ingestOptions.autoEnrich === true,
   });
 
   // A batch is processed inline: every payload is stored, and generation runs

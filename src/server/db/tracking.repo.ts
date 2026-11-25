@@ -356,8 +356,9 @@ export const trackingRepo = {
     }
 
     const perDay = new Map<string, { opens: number; clicks: number; sent: number }>();
+    const now = Date.now();
     for (let index = days - 1; index >= 0; index -= 1) {
-      perDay.set(dayKey(new Date(Date.now() - index * 86_400_000)), {
+      perDay.set(dayKey(new Date(now - index * 86_400_000)), {
         opens: 0,
         clicks: 0,
         sent: 0,
@@ -369,9 +370,12 @@ export const trackingRepo = {
       bucket[field] += amount;
     };
     for (const row of rows) {
-      bump(isoDay(row.created_at), "sent", row.status === "sent" || row.status === "queued" ? 1 : 0);
-      if (Number(row.open_count ?? 0) > 0) bump(isoDay(row.first_open_at), "opens", Number(row.open_count));
-      if (Number(row.click_count ?? 0) > 0) bump(isoDay(row.first_click_at), "clicks", Number(row.click_count));
+      // Graph bars count messages, not raw events: one message with five pixel
+      // hits is still one opened email. The cards above still expose total
+      // event counts separately.
+      if (row.status === "sent") bump(isoDay(row.sent_at ?? row.created_at), "sent", 1);
+      if (Number(row.open_count ?? 0) > 0) bump(isoDay(row.first_open_at), "opens", 1);
+      if (Number(row.click_count ?? 0) > 0) bump(isoDay(row.first_click_at), "clicks", 1);
     }
 
     return {

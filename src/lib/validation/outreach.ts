@@ -1,19 +1,40 @@
 import { z } from "zod";
-import { LEAD_STATUSES } from "@/types/lead";
+import { LEAD_PIPELINES, LEAD_STATUSES } from "@/types/lead";
 
 export const leadStatusSchema = z.enum(LEAD_STATUSES);
 
-export const listLeadsQuerySchema = z.object({
-  q: z.string().trim().max(200).optional(),
-  status: leadStatusSchema.optional(),
-  confidence: z.enum(["HIGH", "MEDIUM", "LOW", "UNIDENTIFIED"]).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(25),
-  sort: z
-    .enum(["received_at", "updated_at", "job_title", "status", "overall_confidence"])
-    .default("received_at"),
-  order: z.enum(["asc", "desc"]).default("desc"),
-});
+export const leadPipelineSchema = z.enum(LEAD_PIPELINES);
+
+/**
+ * ISO timestamp with an offset, or a bare `YYYY-MM-DD` (from a hand-written
+ * link). The client sends full local-midnight ISO strings so "today" means the
+ * reader's today, not the UTC day.
+ */
+const dateBound = z
+  .string()
+  .trim()
+  .max(40)
+  .refine((value) => !Number.isNaN(Date.parse(value)), { message: "Not a valid date" });
+
+export const listLeadsQuerySchema = z
+  .object({
+    q: z.string().trim().max(200).optional(),
+    status: leadStatusSchema.optional(),
+    pipeline: leadPipelineSchema.optional(),
+    confidence: z.enum(["HIGH", "MEDIUM", "LOW", "UNIDENTIFIED"]).optional(),
+    from: dateBound.optional(),
+    to: dateBound.optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(25),
+    sort: z
+      .enum(["created_at", "received_at", "updated_at", "job_title", "status", "overall_confidence"])
+      .default("created_at"),
+    order: z.enum(["asc", "desc"]).default("desc"),
+  })
+  .refine(
+    (value) => !value.from || !value.to || Date.parse(value.from) <= Date.parse(value.to),
+    { message: "from must be before to", path: ["to"] },
+  );
 
 /** Only the human-editable columns; the payload itself is immutable. */
 export const updateLeadSchema = z

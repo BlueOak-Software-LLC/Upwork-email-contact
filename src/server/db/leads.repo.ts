@@ -1,4 +1,5 @@
 import { getAdminClient } from "@/lib/supabase/admin";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { NormalizedLead } from "@/types/lead";
 import type {
@@ -12,6 +13,8 @@ import type {
 import { ApiError } from "@/server/http/errors";
 import { jobIdCandidates, jobUrlCandidates, normalizeJobUrl } from "@/lib/job-ref";
 import { logger } from "@/lib/logger";
+import { isMissingSchema } from "@/server/db/schema-guard";
+import type { LeadPipeline } from "@/types/lead";
 
 /** Which field proved a payload is the job we already have. */
 export type MatchedBy = "job_id" | "job_url" | "dedupe_key";
@@ -57,12 +60,193 @@ export interface LeadDetail {
 export interface ListLeadsQuery {
   q?: string;
   status?: LeadStatus;
+  pipeline?: LeadPipeline;
   confidence?: LeadConfidence;
   hasEmail?: boolean;
+  from?: string;
+  to?: string;
   page: number;
   pageSize: number;
-  sort: "received_at" | "updated_at" | "job_title" | "status" | "overall_confidence";
+  sort: "created_at" | "received_at" | "updated_at" | "job_title" | "status" | "overall_confidence";
   order: "asc" | "desc";
+}
+
+export const LEAD_LIST_MIGRATION = "supabase/migrations/0007_lead_list_view.sql";
+
+const LEAD_LIST_SELECT = `${LEAD_COLUMNS},contact_count,proposal_count,draft_count`;
+const LEAD_LEGACY_SELECT = `${LEAD_COLUMNS},lead_contacts(count),proposals(count),email_drafts(count)`;
+const LEAD_PLAIN_SELECT = `${LEAD_COLUMNS},lead_contacts(count)`;
+
+function embeddedCount(value: unknown): number {
+  const first = Array.isArray(value)
+    ? (value[0] as { count?: number } | undefined)
+    : (value as { count?: number } | undefined);
+  return first?.count ?? 0;
+}
+
+function mapLegacyRows(data: unknown): Array<Record<string, unknown>> {
+  return ((data ?? []) as Array<Record<string, unknown>>).map(
+    ({ lead_contacts, proposals, email_drafts, ...rest }) => ({
+      ...rest,
+      contact_count: embeddedCount(lead_contacts),
+      proposal_count: embeddedCount(proposals),
+      draft_count: embeddedCount(email_drafts),
+    }),
+  );
+}
+
+/** The same predicate the 0007 view applies in SQL, for the pre-migration fallback. */
+function matchesPipeline(row: Record<string, unknown>, pipeline: LeadPipeline): boolean {
+  const proposals = Number(row.proposal_count ?? 0);
+  const drafts = Number(row.draft_count ?? 0);
+  switch (pipeline) {
+    case "sent":
+      return row.status === "sent";
+    case "both":
+      return proposals > 0 && drafts > 0;
+    case "doc":
+      return proposals > 0 && drafts === 0;
+    case "draft":
+      return proposals === 0 && drafts > 0;
+  }
+}
+
+function isRangeError(error: { code?: string | null; message?: string | null }): boolean {
+  return error.code === "PGRST103" || /range not satisfiable/i.test(error.message ?? "");
+}
+
+function pageResult(
+  items: Array<Record<string, unknown>>,
+  count: number | null,
+  query: ListLeadsQuery,
+) {
+  const total = count ?? items.length;
+  return {
+    items,
+    page: query.page,
+    pageSize: query.pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
+  };
+}
+
+/**
+ * Pre-0007 list path. Date/status/search/sort/slice still run in Postgres; only
+ * the derived pipeline predicate needs the in-memory fallback below.
+ */
+async function listLegacy(
+  supabase: SupabaseClient<Database>,
+  query: ListLeadsQuery,
+) {
+  const build = (selection: string, page: number) => {
+    const from = (page - 1) * query.pageSize;
+    let builder = supabase
+      .from("leads")
+      .select(selection, { count: "exact" })
+      .order(query.sort, { ascending: query.order === "asc" })
+      .range(from, from + query.pageSize - 1);
+
+    if (query.status) builder = builder.eq("status", query.status);
+    if (query.confidence) builder = builder.eq("overall_confidence", query.confidence);
+    if (query.from) builder = builder.gte("created_at", query.from);
+    if (query.to) builder = builder.lte("created_at", query.to);
+    if (query.q) {
+      const term = query.q.trim();
+      if (term) {
+        builder = builder.or(
+          `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%,job_description.ilike.%${term}%`,
+        );
+      }
+    }
+    return builder;
+  };
+
+  let selection = LEAD_LEGACY_SELECT;
+  let result = await build(selection, query.page);
+  if (result.error && !isRangeError(result.error)) {
+    // A database older than 0002 has no proposals/email_drafts to embed: keep
+    // the list alive without those counts rather than failing the page.
+    logger.warn("lead_list_counts_embed_failed", {
+      error: result.error.message,
+      note: "falling back to contact counts only",
+    });
+    selection = LEAD_PLAIN_SELECT;
+    result = await build(selection, query.page);
+  }
+
+  if (result.error && isRangeError(result.error)) {
+    const first = await build(selection, 1);
+    if (first.error) throw ApiError.upstream(`Failed to list leads: ${first.error.message}`);
+    const total = first.count ?? first.data?.length ?? 0;
+    const lastPage = Math.max(1, Math.ceil(total / query.pageSize));
+    if (lastPage === 1) {
+      return pageResult(mapLegacyRows(first.data), total, { ...query, page: 1 });
+    }
+    const last = await build(selection, lastPage);
+    if (last.error) throw ApiError.upstream(`Failed to list leads: ${last.error.message}`);
+    return pageResult(mapLegacyRows(last.data), last.count ?? total, { ...query, page: lastPage });
+  }
+
+  const { data, error, count } = result;
+  if (error) throw ApiError.upstream(`Failed to list leads: ${error.message}`);
+  return pageResult(mapLegacyRows(data), count, query);
+}
+
+/**
+ * Until 0007 is applied, pipeline filtering happens after a bounded read of the
+ * same filtered window. The count predicates cannot run in PostgREST, and
+ * returning an empty page would look like "no matches" rather than "migration
+ * missing". The view path is used whenever the migration exists.
+ */
+async function listPipelineFallback(
+  supabase: SupabaseClient<Database>,
+  query: ListLeadsQuery,
+) {
+  const chunk = 1_000;
+  const all: Array<Record<string, unknown>> = [];
+  let total = 0;
+  let offset = 0;
+
+  for (;;) {
+    let builder = supabase
+      .from("leads")
+      .select(LEAD_LEGACY_SELECT, { count: "exact" })
+      .order(query.sort, { ascending: query.order === "asc" })
+      .range(offset, offset + chunk - 1);
+
+    if (query.status) builder = builder.eq("status", query.status);
+    if (query.confidence) builder = builder.eq("overall_confidence", query.confidence);
+    if (query.from) builder = builder.gte("created_at", query.from);
+    if (query.to) builder = builder.lte("created_at", query.to);
+    if (query.q) {
+      const term = query.q.trim();
+      if (term) {
+        builder = builder.or(
+          `job_title.ilike.%${term}%,company_mentioned.ilike.%${term}%,client_name.ilike.%${term}%,industry.ilike.%${term}%,job_description.ilike.%${term}%`,
+        );
+      }
+    }
+
+    const { data, error, count } = await builder;
+    if (error) {
+      throw ApiError.upstream(
+        `Pipeline filtering needs ${LEAD_LIST_MIGRATION}: ${error.message}`,
+      );
+    }
+    all.push(...mapLegacyRows(data));
+    total = count ?? all.length;
+    if (!data?.length || all.length >= total) break;
+    offset += data.length;
+  }
+
+  const filtered = all.filter((row) => matchesPipeline(row, query.pipeline!));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / query.pageSize));
+  const page = Math.min(query.page, totalPages);
+  const from = (page - 1) * query.pageSize;
+  return pageResult(filtered.slice(from, from + query.pageSize), filtered.length, {
+    ...query,
+    page,
+  });
 }
 
 export const leadsRepo = {
@@ -291,24 +475,37 @@ export const leadsRepo = {
 
   async list(query: ListLeadsQuery) {
     const supabase = getAdminClient();
-    const from = (query.page - 1) * query.pageSize;
-    const to = from + query.pageSize - 1;
-
-    // The embedded counts are what the list shows as pipeline dots and what the
-    // delete dialog prints before an irreversible call ("2 documents, 1 draft,
-    // 3 stored PDFs"), so they ride along instead of a second round-trip.
-    const richSelect = `${LEAD_COLUMNS}, lead_contacts(count), proposals(count), email_drafts(count)`;
-    const plainSelect = `${LEAD_COLUMNS}, lead_contacts(count)`;
-
-    const build = (selection: string) => {
+    // 0007 keeps the pipeline predicate, exact count, sort and slice in
+    // Postgres. That matters for "doc ready but no draft": a count predicate
+    // cannot be expressed on an embedded PostgREST relation.
+    const build = (page: number) => {
+      const from = (page - 1) * query.pageSize;
       let builder = supabase
-        .from("leads")
-        .select(selection, { count: "exact" })
+        .from("lead_list")
+        .select(LEAD_LIST_SELECT, { count: "exact" })
         .order(query.sort, { ascending: query.order === "asc" })
-        .range(from, to);
+        .range(from, from + query.pageSize - 1);
 
       if (query.status) builder = builder.eq("status", query.status);
       if (query.confidence) builder = builder.eq("overall_confidence", query.confidence);
+      if (query.from) builder = builder.gte("created_at", query.from);
+      if (query.to) builder = builder.lte("created_at", query.to);
+      switch (query.pipeline) {
+        case "sent":
+          builder = builder.eq("status", "sent");
+          break;
+        case "both":
+          builder = builder.gt("proposal_count", 0).gt("draft_count", 0);
+          break;
+        case "doc":
+          builder = builder.gt("proposal_count", 0).eq("draft_count", 0);
+          break;
+        case "draft":
+          builder = builder.eq("proposal_count", 0).gt("draft_count", 0);
+          break;
+        case undefined:
+          break;
+      }
       if (query.q) {
         const term = query.q.trim();
         if (term) {
@@ -320,42 +517,51 @@ export const leadsRepo = {
       return builder;
     };
 
-    let result = await build(richSelect);
-    if (result.error) {
-      // A database older than 0002 has no proposals/email_drafts to embed: keep
-      // the list alive without those counts rather than failing the page.
-      logger.warn("lead_list_counts_embed_failed", {
-        error: result.error.message,
-        note: "falling back to contact counts only",
-      });
-      result = await build(plainSelect);
+    const result = await build(query.page);
+    if (!result.error) {
+      const items = (result.data ?? []) as unknown as Array<Record<string, unknown>>;
+      return pageResult(items, result.count, query);
     }
-    const { data, error, count } = result;
-    if (error) throw ApiError.upstream(`Failed to list leads: ${error.message}`);
 
-    const embeddedCount = (value: unknown): number => {
-      const first = Array.isArray(value)
-        ? (value[0] as { count?: number } | undefined)
-        : (value as { count?: number } | undefined);
-      return first?.count ?? 0;
-    };
-    const items = ((data ?? []) as unknown as Array<Record<string, unknown>>).map(
-      ({ lead_contacts, proposals, email_drafts, ...rest }) => ({
-        ...rest,
-        contact_count: embeddedCount(lead_contacts),
-        proposal_count: embeddedCount(proposals),
-        draft_count: embeddedCount(email_drafts),
-      }),
-    );
+    // PostgREST rejects a range that starts past the last row with 416. A
+    // bookmarked ?page=99 must land on the real last page, not a 502.
+    if (isRangeError(result.error)) {
+      const first = await build(1);
+      if (first.error) throw ApiError.upstream(`Failed to list leads: ${first.error.message}`);
+      const total = first.count ?? first.data?.length ?? 0;
+      const lastPage = Math.max(1, Math.ceil(total / query.pageSize));
+      if (lastPage === 1) {
+        return pageResult(
+          (first.data ?? []) as unknown as Array<Record<string, unknown>>,
+          total,
+          { ...query, page: 1 },
+        );
+      }
+      const last = await build(lastPage);
+      if (last.error) throw ApiError.upstream(`Failed to list leads: ${last.error.message}`);
+      return pageResult(
+        (last.data ?? []) as unknown as Array<Record<string, unknown>>,
+        last.count ?? total,
+        { ...query, page: lastPage },
+      );
+    }
 
-    const total = count ?? items.length;
-    return {
-      items,
-      page: query.page,
-      pageSize: query.pageSize,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
-    };
+    if (!isMissingSchema(result.error)) {
+      throw ApiError.upstream(`Failed to list leads: ${result.error.message}`);
+    }
+
+    // The view is a pure read-side convenience. Until 0007 is applied, keep the
+    // page alive: the old path handles date/sort/filter/slice, and a pipeline
+    // filter falls back to an in-memory pass over the same window.
+    logger.warn("lead_list_view_missing", {
+      migration: LEAD_LIST_MIGRATION,
+      detail: result.error.message,
+    });
+
+    if (query.pipeline) {
+      return listPipelineFallback(supabase, query);
+    }
+    return listLegacy(supabase, query);
   },
 
   async detail(id: string): Promise<LeadDetail> {
@@ -514,18 +720,19 @@ export const leadsRepo = {
     return typeof latest === "number" ? latest + 1 : 1;
   },
 
-  async metrics() {
+  async metrics(days = 7) {
     const supabase = getAdminClient();
+    const windowDays = Math.max(7, Math.min(days, 365));
     const { data, error } = await supabase
       .from("leads")
-      .select("id,status,overall_confidence,received_at");
+      .select("id,status,overall_confidence,created_at");
     if (error) throw ApiError.upstream(`Failed to compute lead metrics: ${error.message}`);
 
     const rows = (data ?? []) as Array<{
       id: string;
       status: LeadStatus;
       overall_confidence: string;
-      received_at: string;
+      created_at: string;
     }>;
 
     const byStatus = rows.reduce<Record<string, number>>((acc, row) => {
@@ -538,19 +745,23 @@ export const leadsRepo = {
     }, {});
 
     const perDay = new Map<string, number>();
-    for (let i = 6; i >= 0; i--) {
-      perDay.set(new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10), 0);
+    const now = Date.now();
+    for (let i = windowDays - 1; i >= 0; i--) {
+      perDay.set(new Date(now - i * 86_400_000).toISOString().slice(0, 10), 0);
     }
     for (const row of rows) {
-      const key = String(row.received_at).slice(0, 10);
+      // Graph buckets follow created_at, the same clock the list sorts by.
+      const key = String(row.created_at).slice(0, 10);
       if (perDay.has(key)) perDay.set(key, (perDay.get(key) ?? 0) + 1);
     }
 
+    const series = [...perDay.entries()].map(([day, count]) => ({ day, count }));
     return {
       total: rows.length,
       byStatus,
       byConfidence,
-      last7Days: [...perDay.entries()].map(([day, count]) => ({ day, count })),
+      series,
+      last7Days: series.slice(-7),
     };
   },
 

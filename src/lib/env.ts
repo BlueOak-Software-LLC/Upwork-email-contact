@@ -146,10 +146,10 @@ const ServerEnvSchema = z.object({
   /** e.g. "USD 45–65/hour — indicative, confirmed after a scoping call". */
   PROPOSAL_RATE: z.string().max(160).default(""),
   /**
-   * Off by default: writing a proposal is a decision, not a side effect of a
-   * payload arriving. A lead is stored as `received`, and the reviewer clicks
-   * "Generate PPD" on the lead page (or POSTs /api/leads/:id/generate). Turn
-   * this on only if you want the old ingest-writes-documents behaviour back.
+   * Deprecated and ignored by ingest. Writing a proposal is a decision, not a
+   * side effect of a payload arriving: post a lead, then click "Generate PPD"
+   * on the lead page (or POST /api/leads/:id/generate). `?auto=true` on
+   * POST /api/leads remains the explicit opt-in for an automated caller.
    */
   AUTO_ENRICH_LEADS: booleanish(false),
 
@@ -301,14 +301,9 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
     envWarnings.push(msg);
     console.warn("[env]", msg);
   }
-  if (env.AUTO_ENRICH_LEADS && !env.PUTER_AUTH_TOKEN && !env.GROQ_API_KEY && !env.GEMINI_API_KEY) {
-    envWarnings.push(
-      "AUTO_ENRICH_LEADS is on but no AI credential is set in the environment: if none is saved on /settings/models either, ingested leads are stored without proposals — generate them from the lead page once a key exists.",
-    );
-  }
   if (env.AUTO_ENRICH_LEADS) {
     envWarnings.push(
-      "AUTO_ENRICH_LEADS is on: every ingested payload spends tokens on a document nobody has read yet. Leave it off and generate per lead.",
+      "AUTO_ENRICH_LEADS is ignored: ingest never generates a PPD automatically. Click Generate PPD on the lead (or send ?auto=true explicitly). You can remove the variable.",
     );
   }
   if (env.GROQ_MAX_TOKENS < 8000) {

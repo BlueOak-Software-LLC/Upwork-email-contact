@@ -753,6 +753,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      /** public.lead_list (0007) — counts + created_at for the list page. */
+      lead_list: {
+        Row: {
+          id: string;
+          dedupe_key: string;
+          job_id: string | null;
+          job_title: string | null;
+          job_url: string | null;
+          job_location: string | null;
+          industry: string | null;
+          company_mentioned: string | null;
+          client_name: string | null;
+          client_location: string | null;
+          job_description: string | null;
+          overall_confidence: LeadConfidence;
+          key_people: Json;
+          contact_information: Json;
+          raw_payload: Json;
+          status: LeadStatus;
+          error: string | null;
+          received_at: string;
+          created_at: string;
+          updated_at: string;
+          search: string | null;
+          contact_count: number | null;
+          proposal_count: number | null;
+          draft_count: number | null;
+        };
+        Relationships: [];
+      };
       /** public.lead_pipeline (0002) */
       lead_pipeline: {
         Row: {

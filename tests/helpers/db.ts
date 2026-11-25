@@ -21,6 +21,7 @@ const MIGRATIONS = [
   "0003_prompt_templates_review_flow.sql",
   "0004_job_description_ingestion.sql",
   "0005_email_tracking.sql",
+  "0007_lead_list_view.sql",
 ];
 
 const PREAMBLE = `
