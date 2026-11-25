@@ -952,7 +952,7 @@ export function assertPpdShape(
     problems.push(`document is ~${words} words, below the ${DOC_WORD_TARGET.min}-word floor`);
   }
   if (words > DOC_WORD_TARGET.max) {
-    problems.push(`document is ~${words} words, above the ${DOC_WORD_TARGET.max}-word cap`);
+    problems.push(`document is ~${words} words, above the ${DOC_WORD_TARGET.max}-word target`);
   }
   // `deBracket()` runs before this, so anything still bracketed is a hole in the
   // sanitizer rather than a model mistake — say so instead of telling a human to
