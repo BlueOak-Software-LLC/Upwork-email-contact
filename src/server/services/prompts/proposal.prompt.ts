@@ -144,7 +144,7 @@ NON-NEGOTIABLE
   platforms, volumes, formats and deadlines it mentions.
 
 SHAPE
-- 450–700 words of visible text. Hard ceiling: the finished PDF must fit on TWO A4 pages.
+- 450–700 words of visible text. Keep it focused; if the scope genuinely needs more room, the PDF paginates instead of clipping.
 - 4–6 sections, in this order, dropping any section that has nothing real to say:
   1. Project understanding — one paragraph, 70–110 words, the problem and what success looks like.
   2. Proposed approach — 4–5 bullets or 4 numbered steps, each 18–30 words, naming the real stack.
@@ -235,7 +235,7 @@ WHO RECEIVES IT
 
 REMINDERS
 - First person ("I"), no company references, no signature, no contact footer, no date fields.
-- 450–700 words, 4–6 sections, must fit two A4 pages.
+- 450–700 words, 4–6 sections; a longer document paginates cleanly.
 - Answer the direct questions above; if the post asks none, use a "Working assumptions" section with
   2–3 concrete assumptions instead.
 - Return exactly { "ppd": { "document_title", "subtitle", "prepared_for", "rate", "sections" } }.`,

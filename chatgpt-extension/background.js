@@ -23,6 +23,8 @@ let state = {
 };
 
 const ports = new Set();
+// Jobs that already handed the foreground back to the dashboard after typing.
+const focusReturned = new Set();
 let loaded = false;
 let loading = null;
 
@@ -252,6 +254,21 @@ async function focusAppTab() {
   }
 }
 
+// A background tab can still be typed into, but execCommand and the editor's
+// key handling are unreliable without document focus, so the run briefly owns
+// the foreground while the prompt is typed and sent.
+async function activateChatTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.tabs.update(tabId, { active: true });
+    if (Number.isInteger(tab.windowId)) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+  } catch {
+    /* the tab may have been closed; ensureContent reports that */
+  }
+}
+
 async function resumeCurrent() {
   await loadState();
   const job = state.current;
@@ -263,6 +280,7 @@ async function resumeCurrent() {
   }
   try {
     await ensureContent(tab.id);
+    await activateChatTab(tab.id);
     const reply = await chrome.tabs.sendMessage(tab.id, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
@@ -296,6 +314,7 @@ async function processQueue() {
   try {
     const tabId = await openChatTab();
     await ensureContent(tabId);
+    await activateChatTab(tabId);
     const reply = await chrome.tabs.sendMessage(tabId, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
@@ -443,8 +462,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     readClipboard().then((text) => respond({ text }));
     return true;
   }
+  if (message?.type === "CHATGPT_FOCUS") {
+    awaitReady().then(async () => {
+      if (state.chatTabId) await activateChatTab(state.chatTabId);
+      respond({ ok: true });
+    });
+    return true;
+  }
   if (message?.type === "CHATGPT_PROGRESS") {
-    awaitReady().then(() => {
+    awaitReady().then(async () => {
       if (state.current?.jobId === message.jobId) {
         broadcast({
           type: "RUNNING",
@@ -452,6 +478,10 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           phase: message.phase,
           chars: message.chars,
         });
+        if (message.phase === "waiting" && !focusReturned.has(message.jobId)) {
+          focusReturned.add(message.jobId);
+          await focusAppTab();
+        }
       }
     });
     respond({ ok: true });

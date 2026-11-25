@@ -353,9 +353,9 @@ reviewer clicks **Generate PPD** in the lead workspace.
 ## 5. PPD contract → compiled pdfme template
 
 The document is **block-based**, and the pdfme template is generated from the
-content per proposal — no fixed slots. The prompt targets 450–700 words and the
-compiler hard-stops at **two A4 pages**; excess prose is clipped at the page-2
-footer rather than opening page three.
+content per proposal — no fixed slots. The prompt targets 450–700 words for
+focus, and the compiler paginates to **as many A4 pages as the reviewed content
+needs** instead of clipping a longer document.
 
 ```jsonc
 // proposals.ppd  (types in src/types/lead.ts; sample: examples/ppd-example.json)
@@ -392,9 +392,9 @@ record for the whole document** (pdfme v6 counts documents, not pages).
 * Font: **Source Sans 3** (OFL, `public/fonts/`) is registered through
   `options.font`; `fontName` selects the regular or semibold face. A familiar,
   readable sans is the point — no designer display face.
-* Hard cap: the builder stops at two pages. Longer text is clipped at the page-2
-  footer instead of growing the document. The prompt separately targets
-  450–700 words / 4–6 sections.
+* Pagination: the builder opens a new page whenever a block does not fit and
+  repeats the footer with the new page number. Nothing is clipped; the prompt
+  separately targets 450–700 words / 4–6 sections for focus.
 * `templates/pdfme/proposal-template.json` is the **reference copy** of one
   compiled document — import it into <https://pdfme.com/template-design> to
   re-style, or use it as the visual spec. Runtime never reads it; the compiler
@@ -871,9 +871,10 @@ vercel --prod        # or push to GitHub → Import Project
 | `q=blender` finds nothing although the post body says Blender | App-side `ilike` covers `job_description` regardless, but the `leads.search` tsvector only includes it after `0004_job_description_ingestion.sql`. |
 | PDF arrives unchanged after you edited the PPD | Cannot happen by design: saving a PPD flips `pdf_status` back to `pending`, and the PDF is re-compiled from the stored document at the next preview or send. If `ppd_reviewed_at` never appears in the response, 0003 is missing. |
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
-| The ChatGPT drawer says **Extension not connected** | Load `chatgpt-extension/` unpacked in the same browser profile, reload it, and check that `NEXT_PUBLIC_CHATGPT_EXTENSION_ID` matches the extension id. The exact preview origin `upwork-email-contact-coredcy367.vercel.app` is included; if you deploy on another domain, add that exact origin to `externally_connectable` and reload the extension. |
+| The ChatGPT drawer says **Extension not connected** | Load `chatgpt-extension/` unpacked in the same browser profile, reload it, and check that `NEXT_PUBLIC_CHATGPT_EXTENSION_ID` matches the extension id. The exact preview origin `upwork-email-contact-coredev367.vercel.app` is included; if you deploy on another domain, add that exact origin to `externally_connectable` and reload the extension. |
 | The extension is connected, but the job sits at **queued** | No signed-in ChatGPT tab was found, or the tab is showing a login/human check. Open chatgpt.com, finish the check, then press **Run** in the drawer; the prompt is saved server-side. |
-| A job fails with `Could not establish connection. Receiving end does not exist.` right after reloading the extension | The open ChatGPT tab still holds the old, orphaned content script. Extension 1.0.1 clears its `already loaded` flag and re-injects (with one tab reload as a fallback), so just press **Run** again. On older builds, reload the ChatGPT tab first. |
+| A job fails with `Could not establish connection. Receiving end does not exist.` right after reloading the extension | The open ChatGPT tab still holds the old, orphaned content script. Extension 1.0.2 clears its `already loaded` flag and re-injects (with one tab reload as a fallback), so just press **Run** again. On older builds, reload the ChatGPT tab first. |
+| The drawer says **The prompt was typed but ChatGPT would not send it** while the ChatGPT tab stays empty | The tab was in the background, or the send control was off-screen. Extension 1.0.2 brings the existing ChatGPT tab and window forward, waits for document focus, scores the real composer, types, then retries the send button / Enter / form up to three times. If it still fails, click the composer once and press **Run** again; the message includes a `composer=… chars=… users=…` diagnostic line. |
 | The ChatGPT tab shows a dimmed composer and nothing is typed | The page had not finished rendering, was discarded, or is signed out. The content script now waits 25 seconds for a visible composer and then fails with a clear reason instead of hanging; the worker also reloads a discarded tab. Reload chatgpt.com, stay signed in, then press **Run**. |
 | ChatGPT answered but the PPD did not appear | The server rejected a non-JSON or incomplete answer. The drawer returns the job to **running** and the toast names the parse error; paste a corrected JSON answer with the manual-paste box, or press **Run** again. |
 | `chatgpt_jobs` table missing / `0008` or `0009` error | Apply `supabase/migrations/0008_chatgpt_session_followups.sql`, then `0009_chatgpt_completion_claim.sql`; PPD, email and follow-up preparation all write there, and finalisation needs the `completing` state. |

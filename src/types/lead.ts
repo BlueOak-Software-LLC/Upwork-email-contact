@@ -129,7 +129,8 @@ export interface NormalizedContact {
  * turns each block into positioned pdfme `text` fields, pre-wraps the lines to
  * the column width and paginates (A4, mm), repeating the footer + `n / total`
  * page number on every page. A 600-word proposal becomes 2 pages and a
- * 3,000-word one becomes 6 — no template edit needed either way.
+ * 3,000-word one becomes 6 — the builder keeps opening pages instead of
+ * clipping at a fixed count, so no template edit is needed either way.
  *
  * This is the TypeScript port of the `compile_pdfme.py` contract
  * (`blueoak_pdfme_fixed.zip`), so the same content JSON also renders with that

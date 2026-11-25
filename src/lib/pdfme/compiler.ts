@@ -7,13 +7,12 @@ import type {
 import type { PdfmeField, PdfmeTemplate } from "./template";
 
 /**
- * PPD → a compact, two-page A4 proposal for pdfme.
+ * PPD → a paginated A4 proposal for pdfme.
  *
  * The layout is deliberately simple: a navy identity band, the client/date
  * block, then the reviewed prose. It is generated per document because the
- * page count must never depend on a designer file, and a proposal must never
- * grow past two pages: the prompt targets 450–700 words and this builder
- * refuses to open page three. Longer text is clipped at the page-2 footer.
+ * page count must never depend on a designer file. The builder opens as many
+ * pages as the reviewed content needs; nothing is clipped at a page footer.
  *
  * Fonts are Source Sans 3 (OFL) because a generic serif/Helvetica mix is what
  * makes a proposal look like a template rather than a letter.
@@ -66,7 +65,6 @@ class ProposalBuilder {
   private values: Record<string, string> = {};
   private y = TOP;
   private counter = 0;
-  private full = false;
 
   constructor(data: ProposalPpd) {
     this.data = data;
@@ -77,7 +75,6 @@ class ProposalBuilder {
     this.clientAndDate();
 
     for (const section of this.data.sections ?? []) {
-      if (this.full) break;
       const blocks = (section.blocks ?? []).filter((block) => blockHasContent(block));
       const first = blocks[0];
       if (!first) continue;
@@ -87,13 +84,12 @@ class ProposalBuilder {
       if (!this.ensure(9 + this.blockMinimumHeight(first))) break;
       this.sectionHeading(section.title || "Details");
       for (const block of blocks) {
-        if (this.full) break;
         this.block(block);
       }
       this.y += 3;
     }
 
-    if (!this.full && this.data.closing) {
+    if (this.data.closing) {
       this.divider();
       for (const line of wrap(this.data.closing, 105)) {
         if (!this.ensure(4.6)) break;
@@ -207,7 +203,6 @@ class ProposalBuilder {
         break;
       case "numberedSteps":
         block.items.forEach((step, index) => {
-          if (this.full) return;
           this.ensure(13);
           this.absolute("step_title", `${String(index + 1).padStart(2, "0")}  ${step.title}`, {
             y: this.y, width: 170, height: 4.6, font: 9.6, color: NAVY_DARK, bold: true,
@@ -330,12 +325,7 @@ class ProposalBuilder {
   }
 
   private ensure(height: number): boolean {
-    if (this.full) return false;
     if (this.y + height <= BOTTOM) return true;
-    if (this.pages.length >= 2) {
-      this.full = true;
-      return false;
-    }
     this.newPage();
     return true;
   }

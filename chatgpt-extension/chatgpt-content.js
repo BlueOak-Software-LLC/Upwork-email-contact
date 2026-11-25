@@ -12,16 +12,24 @@
 
   const COMPOSER_FINDERS = [
     "#prompt-textarea",
+    'textarea#prompt-textarea',
+    '[data-testid="prompt-textarea"]',
     'form div[contenteditable="true"]',
     'div.ProseMirror[contenteditable="true"]',
+    'form textarea',
+    '[contenteditable="true"][aria-label*="ChatGPT" i]',
     'div[contenteditable="true"]',
-    'textarea[data-testid="prompt-textarea"]',
-    "form textarea",
   ];
   const SEND_FINDERS = [
     'button[data-testid="send-button"]',
     'button[data-testid="fruitjuice-send-button"]',
+    'button[data-testid="composer-send-button"]',
+    "button#composer-submit-button",
+    'button[aria-label="Send prompt" i]',
+    'button[aria-label*="Send message" i]',
     'button[aria-label*="Send" i]',
+    'button[type="submit"]',
+    '[role="button"][aria-label*="Send" i]',
   ];
   const STOP_FINDERS = ['button[data-testid="stop-button"]', 'button[aria-label*="Stop" i]'];
   const ASSISTANT = '[data-message-author-role="assistant"]';
@@ -50,7 +58,17 @@
   function visible(element) {
     if (!element || !element.isConnected) return false;
     const rect = element.getBoundingClientRect();
-    return rect.width > 1 && rect.height > 1;
+    if (rect.width <= 1 || rect.height <= 1) return false;
+    // ChatGPT keeps a responsive duplicate of the composer in the DOM. An
+    // off-screen copy has a size, so check the viewport too.
+    if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= innerWidth || rect.top >= innerHeight) return false;
+    try {
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    } catch {
+      /* keep the rect result */
+    }
+    return true;
   }
 
   // ChatGPT renders responsive copies of its controls; the hidden one must not
@@ -69,11 +87,11 @@
     return null;
   }
 
-  function findEnabled(finders) {
+  function findEnabled(finders, root = document) {
     for (const finder of finders) {
       let list = [];
       try {
-        list = Array.from(document.querySelectorAll(finder));
+        list = Array.from(root.querySelectorAll(finder));
       } catch {
         continue;
       }
@@ -87,9 +105,9 @@
     return null;
   }
 
-  // A visible composer can still be a disabled placeholder while the page
-  // hydrates; typing into it would silently do nothing.
-  function findComposer() {
+  function composerCandidates() {
+    const seen = new Set();
+    const found = [];
     for (const finder of COMPOSER_FINDERS) {
       let list = [];
       try {
@@ -98,16 +116,74 @@
         continue;
       }
       for (const element of list) {
-        if (!visible(element)) continue;
+        if (seen.has(element) || !visible(element)) continue;
         if (element instanceof HTMLTextAreaElement) {
           if (element.disabled || element.readOnly) continue;
         } else if (!element.isContentEditable) {
           continue;
         }
-        return element;
+        seen.add(element);
+        found.push(element);
       }
     }
+    return found;
+  }
+
+  // The main composer is the big editable box near the bottom, usually inside
+  // a form or carrying the prompt-textarea id. Scoring avoids the chat-title
+  // editor and other contenteditable boxes on the page.
+  function composerScore(element) {
+    const rect = element.getBoundingClientRect();
+    let score = Math.min((rect.width * rect.height) / 1000, 40);
+    if (element.id === "prompt-textarea") score += 100;
+    if (element.getAttribute("data-testid") === "prompt-textarea") score += 100;
+    if (element.closest("form")) score += 40;
+    if (element.classList.contains("ProseMirror")) score += 30;
+    if (rect.top > innerHeight * 0.35) score += 20;
+    return score;
+  }
+
+  function findComposer() {
+    const found = composerCandidates();
+    found.sort((a, b) => composerScore(b) - composerScore(a));
+    return found[0] ?? null;
+  }
+
+  function sendControl(composer) {
+    const scopes = [];
+    const form = composer.closest("form");
+    if (form) scopes.push(form);
+    let node = composer.parentElement;
+    for (let depth = 0; node && depth < 4; depth += 1) {
+      scopes.push(node);
+      node = node.parentElement;
+    }
+    scopes.push(document);
+    for (const scope of scopes) {
+      const control = findEnabled(SEND_FINDERS, scope);
+      if (control) return control;
+    }
     return null;
+  }
+
+  // Some pages only react to the full pointer sequence; a bare click() is not
+  // enough for them even though it is fine for plain submit buttons.
+  function activate(control) {
+    if (!control) return;
+    const options = { bubbles: true, cancelable: true, view: window, button: 0 };
+    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+      try {
+        const EventType = type.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+        control.dispatchEvent(new EventType(type, options));
+      } catch {
+        /* the click below still runs */
+      }
+    }
+    try {
+      control.click();
+    } catch {
+      /* nothing else to try */
+    }
   }
 
   async function waitForComposer(timeoutMs = 25000) {
@@ -121,6 +197,15 @@
     return null;
   }
 
+  async function waitForDocumentFocus(timeoutMs = 3000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (document.hasFocus()) return true;
+      await sleep(120);
+    }
+    return document.hasFocus();
+  }
+
   function composerText(element) {
     if (!element) return "";
     if (element instanceof HTMLTextAreaElement) return element.value || "";
@@ -129,7 +214,12 @@
 
   function answerNodes() {
     try {
-      return Array.from(document.querySelectorAll(ASSISTANT));
+      const roles = Array.from(document.querySelectorAll(ASSISTANT));
+      if (roles.length) return roles;
+      // Some builds drop the role attributes but keep conversation turns.
+      return Array.from(document.querySelectorAll('[data-testid^="conversation-turn"]')).filter(
+        (turn) => !turn.querySelector(USER),
+      );
     } catch {
       return [];
     }
@@ -238,7 +328,7 @@
     }
     for (let tries = 0; tries < 24; tries += 1) {
       await sleep(250);
-      if (location.pathname === "/" && answerNodes().length === 0 && find(COMPOSER_FINDERS)) return;
+      if (location.pathname === "/" && answerNodes().length === 0 && findComposer()) return;
     }
   }
 
@@ -252,7 +342,7 @@
   }
 
   async function typePrompt(prompt) {
-    const looksTyped = () => clean(composerText(find(COMPOSER_FINDERS))) === clean(prompt);
+    const looksTyped = () => clean(composerText(findComposer())) === clean(prompt);
     const ready = await waitForComposer();
     if (!ready) {
       throw new Error(
@@ -270,12 +360,17 @@
       } catch {
         /* the next approach is tried */
       }
-      for (let tries = 0; tries < 20; tries += 1) {
-        if (looksTyped()) return;
+      // A raw textContent write can be visible for one frame and then be
+      // reverted by the editor; only accept text that survives a beat.
+      for (let tries = 0; tries < 24; tries += 1) {
+        if (looksTyped()) {
+          await sleep(400);
+          if (looksTyped()) return;
+        }
         await sleep(150);
       }
     }
-    const got = clean(composerText(find(COMPOSER_FINDERS)));
+    const got = clean(composerText(findComposer()));
     throw new Error(
       `The prompt did not fit in the message box (${got.length}/${prompt.length} characters) — click the message box in the ChatGPT tab, then press Run again`,
     );
@@ -285,51 +380,122 @@
     const options = {
       key: "Enter",
       code: "Enter",
-      keyCode: 13,
-      which: 13,
       bubbles: true,
       cancelable: true,
     };
-    composer.focus();
-    composer.dispatchEvent(new KeyboardEvent("keydown", options));
-    composer.dispatchEvent(new KeyboardEvent("keypress", options));
-    composer.dispatchEvent(new KeyboardEvent("keyup", options));
+    try {
+      composer.focus();
+    } catch {
+      /* dispatch still reaches the listeners */
+    }
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      const event = new KeyboardEvent(type, options);
+      // Chrome ignores keyCode in the init dict, while some handlers still
+      // read it; define the legacy fields explicitly.
+      Object.defineProperty(event, "keyCode", { get: () => 13 });
+      Object.defineProperty(event, "which", { get: () => 13 });
+      composer.dispatchEvent(event);
+    }
   }
 
   function userCount() {
     try {
-      return document.querySelectorAll(USER).length;
+      const users = document.querySelectorAll(USER).length;
+      if (users) return users;
+      return document.querySelectorAll('[data-testid^="conversation-turn"]').length;
     } catch {
       return 0;
     }
   }
 
-  async function sendPrompt(composer, usersBefore) {
-    // Only a new user turn proves ChatGPT took the prompt; an emptied or
-    // rebuilt composer can also mean the page simply re-rendered.
-    const sent = () => userCount() > usersBefore;
+  function sendDiagnostics(composer, usersBefore) {
+    const controls = [];
+    try {
+      for (const element of document.querySelectorAll('button, [role="button"]')) {
+        if (controls.length >= 6 || !visible(element)) continue;
+        const label = clean(
+          element.getAttribute("aria-label") || element.getAttribute("data-testid") || element.textContent,
+        ).slice(0, 24);
+        if (!label || !/send|submit|stop|voice|mic/i.test(label)) continue;
+        const off = element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true";
+        controls.push(off ? `${label} (disabled)` : label);
+      }
+    } catch {
+      /* diagnostics are best effort */
+    }
+    const name = composer ? `${composer.tagName.toLowerCase()}${composer.id ? `#${composer.id}` : ""}` : "none";
+    const chars = composer ? clean(composerText(composer)).length : 0;
+    return `composer=${name} chars=${chars} users=${userCount()}/${usersBefore} controls=[${controls.join(", ")}]`;
+  }
 
-    for (const approach of ["button", "enter", "form"]) {
-      try {
-        if (approach === "button") findEnabled(SEND_FINDERS)?.click();
-        else if (approach === "enter") pressEnter(composer);
-        else {
+  async function waitForUserTurn(usersBefore, timeoutMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (userCount() > usersBefore) return true;
+      await sleep(300);
+    }
+    return false;
+  }
+
+  async function sendPrompt(composer, usersBefore, prompt) {
+    // Only a new user turn proves ChatGPT took the prompt; an emptied or
+    // rebuilt composer can also mean the page simply re-rendered, so it is
+    // only trusted together with a stop button or a chat URL change.
+    const startUrl = location.href;
+    const marker = clean(prompt).slice(0, 40);
+    const attempts = [
+      [
+        "button",
+        () => {
+          const control = sendControl(composer);
+          if (!control) return false;
+          activate(control);
+          return true;
+        },
+      ],
+      ["enter", () => (pressEnter(composer), true)],
+      [
+        "form",
+        () => {
           const form = composer.closest("form");
           if (form && typeof form.requestSubmit === "function") form.requestSubmit();
           else pressEnter(composer);
+          return true;
+        },
+      ],
+    ];
+
+    // A slow or busy ChatGPT can take several seconds to add the optimistic
+    // user turn, and a re-render can drop the draft. Retype and retry rather
+    // than failing the job on the first quiet send.
+    for (let round = 0; round < 3; round += 1) {
+      composer = findComposer() || composer;
+      if (!clean(composerText(composer)).includes(marker)) {
+        await typePrompt(prompt);
+        composer = findComposer() || composer;
+      }
+      for (const [, fire] of attempts) {
+        let fired = false;
+        try {
+          fired = fire() !== false;
+        } catch {
+          /* the next attempt is tried */
         }
-      } catch {
-        /* the next approach is tried */
+        if (!fired) continue;
+        if (await waitForUserTurn(usersBefore, 6000)) return;
+        const current = findComposer() || composer;
+        if (!clean(composerText(current))) {
+          // ChatGPT clears the box as soon as it accepts the message; give a
+          // slow thread a moment to paint the user turn before giving up.
+          if (await waitForUserTurn(usersBefore, 3500)) return;
+          if (stopButton() || location.href !== startUrl) return;
+        }
+        composer = current;
       }
-      for (let tick = 0; tick < 16; tick += 1) {
-        await sleep(350);
-        if (sent()) return;
-      }
-      const again = find(COMPOSER_FINDERS);
-      if (again) composer = again;
+      await sleep(1200);
     }
     throw new Error(
-      "The prompt was typed but ChatGPT would not send it — press Enter in the ChatGPT tab, then press Run again",
+      `The prompt was typed but ChatGPT would not send it — press Enter in the ChatGPT tab, then press Run again (${sendDiagnostics(composer, usersBefore)})`,
     );
   }
 
@@ -415,6 +581,10 @@
     const button = copyControl(turn);
     if (button) {
       try {
+        // ChatGPT's Copy action uses the async clipboard API, which needs the
+        // document focused; a background tab silently copies nothing.
+        await Promise.race([ask({ type: "CHATGPT_FOCUS" }), sleep(1500)]);
+        await waitForDocumentFocus(2000);
         reveal(button);
         button.click();
         await sleep(700);
@@ -513,6 +683,15 @@
     try {
       let state = job;
       if (!resume || job.phase !== "waiting") {
+        // The worker brings the tab forward before this message; wait for the
+        // document to actually own focus, because the editor ignores some
+        // programmatic input while it is in the background.
+        try {
+          await Promise.race([ask({ type: "CHATGPT_FOCUS" }), sleep(1500)]);
+        } catch {
+          /* the tab is already active */
+        }
+        await waitForDocumentFocus(3000);
         // Persist the job before touching the page: opening "New chat" can
         // replace the document, and the next injection resumes from storage.
         await setActive({ ...job, phase: "opening" });
@@ -528,9 +707,9 @@
         await setActive(state);
         tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "typing" });
         await typePrompt(prompt);
-        const composer = find(COMPOSER_FINDERS);
+        const composer = findComposer();
         if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
-        await sendPrompt(composer, usersBefore);
+        await sendPrompt(composer, usersBefore, prompt);
         state = { ...state, phase: "waiting" };
         await setActive(state);
         await sleep(900);

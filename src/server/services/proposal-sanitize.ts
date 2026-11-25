@@ -15,9 +15,8 @@ import { ApiError } from "@/server/http/errors";
  * the writer's identity (name, role, contact details, date) is overwritten from
  * the selected sender profile so the model can never invent a signature.
  *
- * Caps mirror what `lib/pdfme/compiler.ts` lays out cleanly on two A4 pages.
- * Exceeding them is not an error — the compiler clips at the page-2 footer —
- * but a runaway response is trimmed so it cannot crowd out the actual scope.
+ * Caps keep each field readable; the compiler paginates freely, so exceeding
+ * one trims a runaway response rather than protecting a fixed page count.
  */
 
 const MAX = {
@@ -48,7 +47,7 @@ const MAX = {
 
 /**
  * Calibrated against `lib/pdfme/compiler.ts` on this pipeline: a 560-word
- * document fills about 1.5 A4 pages; the compiler hard-stops at two.
+ * document fills about 1.5 A4 pages; longer documents add pages.
  */
 export const DOC_WORD_TARGET = { min: 400, ideal: 560, max: 760 } as const;
 
@@ -947,7 +946,7 @@ export function assertPpdShape(
   const words = ppdWordCount(ppd);
 
   if (ppd.sections.length < 4) {
-    problems.push(`only ${ppd.sections.length} sections — the target is 4–6 for a two-page document`);
+    problems.push(`only ${ppd.sections.length} sections — the target is 4–6 for a focused document`);
   }
   if (words < DOC_WORD_TARGET.min) {
     problems.push(`document is ~${words} words, below the ${DOC_WORD_TARGET.min}-word floor`);

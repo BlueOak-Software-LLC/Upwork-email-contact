@@ -87,7 +87,7 @@ describe("sanitizePpd · sender identity", () => {
     expect(ppd.closing).toBe(DEFAULT_PPD_CLOSING);
   });
 
-  it("keeps the document inside the two-page content budget", () => {
+  it("caps runaway sections before layout", () => {
     expect(DOC_WORD_TARGET.max).toBeLessThanOrEqual(900);
     const sections = Array.from({ length: 8 }, (_, index) => ({
       id: `section-${index}`,
@@ -186,13 +186,13 @@ async function render(ppd: ProposalPpd) {
 }
 
 describe("compileProposalPdfme · layout", () => {
-  it("renders the example as two A4 pages with Source Sans", async () => {
+  it("renders the example as A4 pages with Source Sans", async () => {
     const example = JSON.parse(
       readFileSync(fileURLToPath(new URL("../examples/ppd-example.json", import.meta.url)), "utf8"),
     ) as ProposalPpd;
     const { compiled, pdf } = await render(example);
-    expect(compiled.pages).toBeLessThanOrEqual(2);
-    expect(pdf.getPageCount()).toBeLessThanOrEqual(2);
+    expect(compiled.pages).toBeGreaterThanOrEqual(1);
+    expect(pdf.getPageCount()).toBe(compiled.pages);
     expect(JSON.stringify(compiled.inputs)).not.toContain("Secret Agency");
     const names = compiled.template.schemas
       .flat()
@@ -200,10 +200,10 @@ describe("compileProposalPdfme · layout", () => {
       .map((field) => field.name)
       .sort();
     expect(Object.keys(compiled.inputs[0] ?? {}).sort()).toEqual(names);
-    expect(Object.values(compiled.inputs[0] ?? {})).toContain("Page 1 of 2");
+    expect(Object.values(compiled.inputs[0] ?? {})).toContain(`Page 1 of ${compiled.pages}`);
   }, 30000);
 
-  it("clips an over-long answer at page two instead of starting page three", async () => {
+  it("keeps every page instead of clipping after page two", async () => {
     const sections = Array.from({ length: 8 }, (_, index) => ({
       id: `section-${index}`,
       title: `Section ${index + 1}`,
@@ -216,9 +216,22 @@ describe("compileProposalPdfme · layout", () => {
         },
       ],
     }));
-    const ppd = sanitizePpd({ sections, closing: "Thank you." }, context());
+    const ppd = sanitizePpd(rawPpd(), context());
+    ppd.sections = sections as ProposalPpd["sections"];
+    ppd.closing = "Thank you.";
     const { compiled, pdf } = await render(ppd);
-    expect(pdf.getPageCount()).toBe(2);
+    expect(compiled.pages).toBeGreaterThan(2);
+    expect(pdf.getPageCount()).toBe(compiled.pages);
+    const values = Object.values(compiled.inputs[0] ?? {});
+    expect(values).toContain("Thank you.");
+    for (let index = 1; index <= sections.length; index += 1) {
+      expect(values).toContain(`SECTION ${index}`);
+    }
+    compiled.template.schemas.forEach((page, index) => {
+      const footer = page.find((field) => field.name.startsWith("footer_page"));
+      expect(footer).toBeTruthy();
+      expect(compiled.inputs[0]?.[footer?.name ?? ""]).toBe(`Page ${index + 1} of ${compiled.pages}`);
+    });
     for (const page of compiled.template.schemas) {
       for (const field of page) {
         expect(field.position.y).toBeGreaterThanOrEqual(0);
