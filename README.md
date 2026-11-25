@@ -468,16 +468,18 @@ sanitises and stores it exactly as before, so the PPD contract and review flow
 are unchanged.
 
 1. The dashboard prepares a row in `chatgpt_jobs` and returns the prompt.
-2. The extension receives it over `chrome.runtime.connect(EXTENSION_ID)`, starts
-   a fresh ChatGPT chat, types the prompt with three fallbacks, verifies the send,
-   and reads the completed answer through ChatGPT's Copy button.
+2. The extension receives it over `chrome.runtime.connect(EXTENSION_ID)`, reuses
+   the ChatGPT tab and conversation already open, types the prompt once, starts it,
+   reports **waiting** immediately, and reads the completed answer through
+   ChatGPT's Copy button.
 3. The dashboard posts the answer to `/api/chatgpt/jobs/:id/complete`. That route
    parses JSON, applies `sanitizePpd`/`sanitizeEmail`, and writes the proposal or
    draft. A failed parse stays retryable instead of half-saving a document.
 
 Everything is visible in the **ChatGPT session** drawer: connection state, queue,
-prompt transcript, progress, errors, Cancel/Run, and a textarea for pasting an
-answer by hand when the extension cannot be installed. There is deliberately no
+prompt transcript, progress, a timestamped **Extension log** (Opening, Input,
+Start, Sent, Wait, Copied, Done), errors, Cancel/Run, and a textarea for pasting
+an answer by hand when the extension cannot be installed. There is deliberately no
 iframe: ChatGPT cannot be embedded usefully, so the drawer shows the job and the
 extension drives the real tab in the background.
 
@@ -874,9 +876,10 @@ vercel --prod        # or push to GitHub → Import Project
 | A draft send went out when you expected a dry run | `EMAIL_PROVIDER=log` is now a **hard stop**: with it set to `log`, a stored `senderAccountId` is not even decrypted and no SMTP socket is opened (`services/email.service.ts`). Set it back to `smtp` when you want real delivery. |
 | The ChatGPT drawer says **Extension not connected** | Load `chatgpt-extension/` unpacked in the same browser profile, reload it, and check that `NEXT_PUBLIC_CHATGPT_EXTENSION_ID` matches the extension id. The exact preview origin `upwork-email-contact-coredev367.vercel.app` is included; if you deploy on another domain, add that exact origin to `externally_connectable` and reload the extension. |
 | The extension is connected, but the job sits at **queued** | No signed-in ChatGPT tab was found, or the tab is showing a login/human check. Open chatgpt.com, finish the check, then press **Run** in the drawer; the prompt is saved server-side. |
-| A job fails with `Could not establish connection. Receiving end does not exist.` right after reloading the extension | The open ChatGPT tab still holds the old, orphaned content script. Extension 1.0.3 clears its `already loaded` flag and re-injects (with one tab reload as a fallback), so just press **Run** again. On older builds, reload the ChatGPT tab first. |
-| **Run** opens a new ChatGPT chat instead of using the conversation on screen | Fixed in extension 1.0.3. The current conversation is reused; the **New chat** control is only checked as a readiness signal and is never clicked. |
-| The drawer says **The prompt is still in the message box…** | The tab was in the background, the composer was not the real one, or the send control was disabled. Extension 1.0.3 focuses the tab, scores the real composer, types once, then tries the send button, Enter and the form once each. It never types a second copy. If it still fails, click the composer once and press **Run** again; the message includes a `composer=… chars=… users=…` diagnostic line. |
+| A job fails with `Could not establish connection. Receiving end does not exist.` right after reloading the extension | The open ChatGPT tab still holds the old, orphaned content script. Extension 1.0.4 clears its `already loaded` flag and re-injects (with one tab reload as a fallback), so just press **Run** again. On older builds, reload the ChatGPT tab first. |
+| **Run** opens a new ChatGPT chat instead of using the conversation on screen | Fixed in extension 1.0.4. The current conversation is reused; the **New chat** control is only checked as a readiness signal and is never clicked. |
+| The drawer says **The prompt is still in the message box…** | The tab was in the background, the composer was not the real one, or the send control was disabled. Extension 1.0.4 focuses the tab, scores the real composer, types once, then tries the send button, Enter and the form once each. It never types a second copy. If it still fails, click the composer once and press **Run** again; the message includes a `composer=… chars=… users=…` diagnostic line. |
+| The drawer stays on **typing the prompt** after ChatGPT has started answering | Fixed in extension 1.0.4. The content script now sends `waiting` immediately after the prompt is accepted and every five seconds while the answer is generating, instead of waiting for the first answer characters. The drawer also shows a timestamped **Extension log** (`Opening`, `Input`, `Start`, `Sent`, `Wait`, `Copied`, `Done`) under the job and in **Details**. |
 | The ChatGPT tab shows a dimmed composer and nothing is typed | The page had not finished rendering, was discarded, or is signed out. The content script now waits 25 seconds for a visible composer and then fails with a clear reason instead of hanging; the worker also reloads a discarded tab. Reload chatgpt.com, stay signed in, then press **Run**. |
 | ChatGPT answered but the PPD did not appear | The server rejected a non-JSON or incomplete answer. The drawer returns the job to **running** and the toast names the parse error; paste a corrected JSON answer with the manual-paste box, or press **Run** again. |
 | `chatgpt_jobs` table missing / `0008` or `0009` error | Apply `supabase/migrations/0008_chatgpt_session_followups.sql`, then `0009_chatgpt_completion_claim.sql`; PPD, email and follow-up preparation all write there, and finalisation needs the `completing` state. |

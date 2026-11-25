@@ -18,7 +18,9 @@ import {
 } from "@/lib/api/chatgpt";
 import {
   connectBridge,
+  phaseRank,
   type Bridge,
+  type ExtensionLogEntry,
   type ExtensionMessage,
   type ExtensionPhase,
 } from "@/lib/chatgpt/bridge";
@@ -26,6 +28,7 @@ import {
 export interface SessionJob extends ChatGptJobDto {
   phase?: ExtensionPhase;
   liveText?: string;
+  logs?: ExtensionLogEntry[];
 }
 
 type Connection = "connecting" | "connected" | "missing" | "disconnected";
@@ -79,6 +82,12 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
   const activeLeadRef = useRef<string | null>(null);
   activeLeadRef.current = leadId;
   const sendRunRef = useRef<(job: SessionJob) => Promise<boolean>>(async () => false);
+  // Remember the worker's phase so a dashboard reload does not lose it while
+  // the job list request is still in flight.
+  const runningStatusRef = useRef<{ jobId: string | null; phase: ExtensionPhase | null }>({
+    jobId: null,
+    phase: null,
+  });
 
   const setOwned = useCallback((jobId: string, owned: boolean) => {
     if (owned) ownedRef.current.add(jobId);
@@ -103,6 +112,18 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
 
   const patchJob = useCallback((id: string, patch: Partial<SessionJob>) => {
     setJobs((current) => current.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+  }, []);
+
+  const appendLog = useCallback((jobId: string, entry: ExtensionLogEntry) => {
+    setJobs((current) =>
+      current.map((job) => {
+        if (job.id !== jobId) return job;
+        const logs = [...(job.logs ?? []), entry].slice(-100);
+        const phase =
+          entry.phase && phaseRank(entry.phase) >= phaseRank(job.phase) ? entry.phase : job.phase;
+        return { ...job, logs, phase };
+      }),
+    );
   }, []);
 
   const addJob = useCallback((job: ChatGptJobDto) => {
@@ -215,6 +236,11 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
         // Another browser may still be typing this prompt.
         return false;
       }
+      appendLog(job.id, {
+        at: Date.now(),
+        phase: "opening",
+        message: "Run: prompt handed to the extension",
+      });
       bridge.port.postMessage({
         type: "RUN",
         jobId: job.id,
@@ -227,7 +253,7 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
       toast.error("The ChatGPT tab could not start", errorMessage(error));
       return false;
     }
-  }, [addJob, setOwned, toast]);
+  }, [addJob, appendLog, setOwned, toast]);
   sendRunRef.current = sendRun;
 
   const connect = useCallback(() => {
@@ -245,6 +271,16 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
         setConnection("connected");
         setExtensionVersion(message.version);
         setChatTabOpen(message.chatTabOpen);
+        runningStatusRef.current = {
+          jobId: message.runningJobId ?? null,
+          phase: message.runningPhase ?? null,
+        };
+        if (message.runningJobId && message.runningPhase) {
+          const running = jobsRef.current.find((job) => job.id === message.runningJobId);
+          if (running && phaseRank(message.runningPhase) >= phaseRank(running.phase)) {
+            patchJob(message.runningJobId, { phase: message.runningPhase });
+          }
+        }
         // Queued jobs have no owner yet. A running job is re-sent only by the
         // tab that claimed it, so another browser never types the same prompt.
         for (const job of jobsRef.current) {
@@ -256,6 +292,10 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
         return;
       }
       if (message.type === "RUNNING") {
+        const current = jobsRef.current.find((job) => job.id === message.jobId);
+        // Never let a late message move the visible phase backwards.
+        if (current && phaseRank(message.phase) < phaseRank(current.phase)) return;
+        runningStatusRef.current = { jobId: message.jobId, phase: message.phase };
         const visible = jobsRef.current.some(
           (job) => job.id === message.jobId && job.leadId === activeLeadRef.current,
         );
@@ -265,6 +305,14 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
           ...(message.chars ? { liveText: `${message.chars} characters read` } : {}),
         });
         if (visible) setBusyJobId(message.jobId);
+        return;
+      }
+      if (message.type === "LOG") {
+        appendLog(message.jobId, message.entry);
+        const job = jobsRef.current.find((item) => item.id === message.jobId);
+        if (job?.leadId === activeLeadRef.current && ACTIVE.has(job.status)) {
+          setBusyJobId(message.jobId);
+        }
         return;
       }
       if (message.type === "RESULT") {
@@ -279,6 +327,10 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
       if (message.type === "ERROR") {
         const failed = jobsRef.current.find((job) => job.id === message.jobId);
         const visible = failed ? failed.leadId === activeLeadRef.current : true;
+        appendLog(message.jobId, {
+          at: Date.now(),
+          message: `Stopped: ${message.message}`,
+        });
         setOwned(message.jobId, false);
         patchJob(message.jobId, { status: "failed", error: message.message });
         setBusyJobId((current) => (current === message.jobId ? null : current));
@@ -297,7 +349,7 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
       bridgeRef.current = null;
       setConnection("disconnected");
     });
-  }, [finalize, patchJob, sendRun, setOwned, toast]);
+  }, [appendLog, finalize, patchJob, sendRun, setOwned, toast]);
 
   // Connect once, then keep trying while the extension is absent or reloading.
   useEffect(() => {
@@ -335,9 +387,21 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
             const scoped = current.filter((job) => job.leadId === leadId);
             const local = new Map(scoped.map((job) => [job.id, job]));
             const fromServer = new Set(data.jobs.map((job) => job.id));
+            const remote = runningStatusRef.current;
             // Server rows win (a cancelled/failed job must stop looking active),
-            // but keep local phase/liveText for the same running job.
-            const merged = data.jobs.map((job) => ({ ...local.get(job.id), ...job }));
+            // but keep local phase/liveText/logs for the same running job.
+            const merged = data.jobs.map((job) => {
+              const item = { ...local.get(job.id), ...job };
+              if (
+                item.status === "running" &&
+                remote.jobId === job.id &&
+                remote.phase &&
+                phaseRank(remote.phase) >= phaseRank(item.phase)
+              ) {
+                item.phase = remote.phase;
+              }
+              return item;
+            });
             // A just-created job can be missing from a fetch that raced it.
             for (const job of scoped) {
               if (ACTIVE.has(job.status) && !fromServer.has(job.id)) merged.push(job);

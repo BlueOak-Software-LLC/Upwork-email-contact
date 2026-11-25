@@ -32,6 +32,10 @@ function time(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function clock(ms: number) {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 function fullPrompt(job: SessionJob) {
   return job.system ? `${job.system}\n\n---\n\n${job.prompt}` : job.prompt;
 }
@@ -152,6 +156,8 @@ function JobCard({ job, busy }: { job: SessionJob; busy: boolean }) {
   // has in the ChatGPT tab; submitting reopens it server-side.
   const canPaste = job.status === "running" || job.status === "failed";
   const answer = job.responseText ?? "";
+  const logs = job.logs ?? [];
+  const latestLog = logs[logs.length - 1];
 
   async function copy(text: string) {
     try {
@@ -217,6 +223,12 @@ function JobCard({ job, busy }: { job: SessionJob; busy: boolean }) {
         </p>
       ) : null}
 
+      {latestLog ? (
+        <p className="mt-1 truncate text-[10px] text-faint" title={latestLog.message}>
+          <span className="tabular-nums">{clock(latestLog.at)}</span> · {latestLog.message}
+        </p>
+      ) : null}
+
       {job.status === "failed" && job.error ? (
         <p className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-2 py-1.5 text-[11px] text-danger">
           {job.error}
@@ -240,6 +252,19 @@ function JobCard({ job, busy }: { job: SessionJob; busy: boolean }) {
 
       {expanded ? (
         <div className="mt-3 space-y-3 border-t border-line-soft pt-3">
+          {logs.length ? (
+            <div>
+              <p className="mb-1 text-[11px] font-medium text-muted">Extension log</p>
+              <ol className="max-h-52 space-y-1 overflow-y-auto rounded-lg bg-canvas p-2 text-[10px] leading-relaxed text-muted">
+                {logs.map((entry, index) => (
+                  <li key={`${entry.at}-${index}`} className="flex gap-2">
+                    <span className="shrink-0 tabular-nums text-faint">{clock(entry.at)}</span>
+                    <span className="min-w-0 break-words">{entry.message}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
           <div>
             <p className="mb-1 text-[11px] font-medium text-muted">Prompt sent to ChatGPT</p>
             <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-canvas p-2 text-[10px] leading-relaxed text-muted">

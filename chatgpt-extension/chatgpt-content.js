@@ -586,6 +586,16 @@
     }
   }
 
+  // A readable trail of what the tab is doing. The dashboard shows these lines
+  // next to the job, so "waiting" cannot silently look like "typing" again.
+  function logStep(jobId, phase, message) {
+    tell({
+      type: "CHATGPT_LOG",
+      jobId,
+      entry: { at: Date.now(), phase, message },
+    });
+  }
+
   /** Ignore an old clipboard entry when ChatGPT did not actually copy this turn. */
   function sameAnswer(copied, pageText) {
     const normalize = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -629,6 +639,8 @@
     let stopSeen = false;
     let stopGoneAt = 0;
     let toldAt = 0;
+    let loggedText = 0;
+    let loggedAt = startedAt;
 
     while (Date.now() - startedAt < BUDGET_MS) {
       if (cancelled.has(jobId)) throw new Error("Cancelled");
@@ -645,27 +657,52 @@
         stopGoneAt = Date.now();
       }
 
-      if (lastText && Date.now() - toldAt > 5000) {
+      // A heartbeat is sent even before any assistant text is visible. Without
+      // it the dashboard kept the last "typing" message while ChatGPT was
+      // already generating the answer.
+      if (Date.now() - toldAt > 5000) {
         toldAt = Date.now();
         tell({ type: "CHATGPT_PROGRESS", jobId, phase: "waiting", chars: lastText.length });
+      }
+      if (lastText && (loggedText === 0 || Date.now() - loggedAt > 10000)) {
+        logStep(
+          jobId,
+          "waiting",
+          loggedText === 0
+            ? `Wait: answer started (${lastText.length} characters)`
+            : `Wait: answer is growing (${lastText.length} characters)`,
+        );
+        loggedText = lastText.length;
+        loggedAt = Date.now();
       }
 
       if (lastText && !stop) {
         const finished = stopSeen && stopGoneAt && Date.now() - stopGoneAt > 1200;
         const stable = Date.now() - lastChange > STABLE_MS && answerLooksComplete(lastText);
-        if (finished || stable) return { node: current.node, text: current.text };
+        if (finished || stable) {
+          logStep(jobId, "copying", `Answer finished (${lastText.length} characters)`);
+          return { node: current.node, text: current.text };
+        }
       }
 
       if (lastText && Date.now() - lastChange > STALL_MS) {
+        logStep(jobId, "copying", `Answer stopped changing (${lastText.length} characters)`);
         return { node: current.node, text: lastText };
       }
 
       if (!lastText && Date.now() - startedAt > 15000 && isBlocked()) {
         throw new Error("ChatGPT is asking for a sign-in or human check — finish it in the ChatGPT tab, then run again");
       }
-      if (!lastText && userCount() <= usersBefore && Date.now() - startedAt > 30000) {
+      // While the stop control is visible ChatGPT is generating, even when its
+      // assistant markup is not readable yet. Do not fail that as "not sent".
+      if (
+        !lastText &&
+        !stop &&
+        userCount() <= usersBefore &&
+        Date.now() - startedAt > 30000
+      ) {
         throw new Error(
-          "The prompt never appeared in the ChatGPT tab — stay signed in, wait for the page to load, then press Run again",
+          "The prompt did not start in the ChatGPT tab — press Enter there, then press Run again. If ChatGPT is already answering, wait for it to finish.",
         );
       }
       await sleep(500);
@@ -728,6 +765,7 @@
     try {
       let state = job;
       let alreadySent = false;
+      logStep(job.jobId, "opening", "Opening: checking the ChatGPT tab");
       if (resume && job.phase !== "waiting") {
         const sent = await readSent(job.jobId);
         if (sent && Number.isFinite(sent.beforeCount)) {
@@ -735,6 +773,7 @@
           alreadySent = true;
           await setActive(state);
           tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting" });
+          logStep(job.jobId, "waiting", "Prompt was already sent; waiting for the answer");
         }
       }
       if (!alreadySent && (!resume || job.phase !== "waiting")) {
@@ -757,6 +796,7 @@
         // Check that the signed-in shell is ready without clicking New chat:
         // the user's current conversation is the one this job uses.
         await waitForShell();
+        logStep(job.jobId, "opening", "Ready: using the open ChatGPT conversation");
         const nodes = answerNodes();
         const beforeCount = nodes.length;
         const beforeLast = nodes.length ? textOf(nodes[nodes.length - 1]) : "";
@@ -766,7 +806,9 @@
         state = { ...job, phase: "typing", beforeCount, beforeLast, usersBefore };
         await setActive(state);
         tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "typing" });
+        logStep(job.jobId, "typing", `Input: typing the prompt (${prompt.length} characters)`);
         await typePrompt(prompt);
+        logStep(job.jobId, "typing", "Start: prompt is in the message box; sending it");
         const composer = findComposer();
         if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
         await sendPrompt(composer, usersBefore);
@@ -778,6 +820,10 @@
         });
         state = { ...state, phase: "waiting" };
         await setActive(state);
+        // Send this before waiting for the first token; this is the status the
+        // person needs to see while ChatGPT is generating.
+        tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting", chars: 0 });
+        logStep(job.jobId, "waiting", "Sent: ChatGPT accepted the prompt; waiting for the answer");
         await sleep(900);
       }
 
@@ -789,13 +835,18 @@
       );
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
       tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
+      logStep(job.jobId, "copying", "Clicking Copy in the ChatGPT tab");
       const answer = await readAnswer(result.node, result.text);
       if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
+      logStep(job.jobId, "copying", `Copied: (${answer.length} characters)`);
+      tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "done", chars: answer.length });
+      logStep(job.jobId, "done", "Done: sending the answer to the dashboard");
       tell({ type: "CHATGPT_REPLY", jobId: job.jobId, text: answer });
       await clearActive(job.jobId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      logStep(job.jobId, "done", cancelled.has(job.jobId) ? "Stopped by the dashboard" : `Stopped: ${message}`);
       if (cancelled.has(job.jobId)) {
         tell({ type: "CHATGPT_CANCELLED", jobId: job.jobId });
       } else {

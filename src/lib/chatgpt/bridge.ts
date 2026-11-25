@@ -17,9 +17,35 @@ export function extensionId(): string {
 
 export type ExtensionPhase = "opening" | "typing" | "waiting" | "copying" | "done";
 
+const PHASE_RANK: Record<ExtensionPhase, number> = {
+  opening: 0,
+  typing: 1,
+  waiting: 2,
+  copying: 3,
+  done: 4,
+};
+
+export function phaseRank(phase: ExtensionPhase | null | undefined): number {
+  return phase ? (PHASE_RANK[phase] ?? -1) : -1;
+}
+
+export interface ExtensionLogEntry {
+  at: number;
+  phase?: ExtensionPhase;
+  message: string;
+}
+
 export type ExtensionMessage =
-  | { type: "STATUS"; connected: true; version: string; chatTabOpen: boolean }
+  | {
+      type: "STATUS";
+      connected: true;
+      version: string;
+      chatTabOpen: boolean;
+      runningJobId?: string | null;
+      runningPhase?: ExtensionPhase | null;
+    }
   | { type: "RUNNING"; jobId: string; phase: ExtensionPhase; chars?: number }
+  | { type: "LOG"; jobId: string; entry: ExtensionLogEntry }
   | { type: "RESULT"; jobId: string; text: string }
   | { type: "ERROR"; jobId: string; message: string }
   | { type: "PENDING_RESULTS"; results: Array<{ jobId: string; text: string }> }

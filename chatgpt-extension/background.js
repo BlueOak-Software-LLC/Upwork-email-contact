@@ -53,6 +53,25 @@ async function saveState() {
   await chrome.storage.local.set({ [STORE_KEY]: state });
 }
 
+const PHASE_RANK = { opening: 0, typing: 1, waiting: 2, copying: 3, done: 4 };
+
+function phaseRank(phase) {
+  return PHASE_RANK[phase] ?? -1;
+}
+
+// Status only moves forward. A late "typing" message must not overwrite a tab
+// that is already waiting, and a heartbeat may repeat the current phase.
+async function advancePhase(jobId, phase) {
+  await loadState();
+  if (!state.current || state.current.jobId !== jobId) return false;
+  const current = state.current.phase || "opening";
+  if (phaseRank(phase) < phaseRank(current)) return false;
+  if (phaseRank(phase) === phaseRank(current)) return true;
+  state.current.phase = phase;
+  await saveState();
+  return true;
+}
+
 function broadcast(message) {
   for (const port of ports) {
     try {
@@ -70,6 +89,7 @@ function status() {
     version: VERSION,
     chatTabOpen: Boolean(state.chatTabId),
     runningJobId: state.current?.jobId ?? null,
+    runningPhase: state.current?.phase ?? null,
   };
 }
 
@@ -328,7 +348,7 @@ async function processQueue() {
     await saveState();
     return;
   }
-  state.current = job;
+  state.current = { ...job, phase: "opening" };
   await saveState();
   broadcast({ type: "RUNNING", jobId: job.jobId, phase: "opening" });
   try {
@@ -355,7 +375,9 @@ async function processQueue() {
     await armWatchdog(job.jobId);
     // A deduped reply means this tab is already typing or waiting; do not move
     // the dashboard back to "typing" while the page is waiting for an answer.
-    if (!reply.deduped) broadcast({ type: "RUNNING", jobId: job.jobId, phase: "typing" });
+    if (!reply.deduped && (await advancePhase(job.jobId, "typing"))) {
+      broadcast({ type: "RUNNING", jobId: job.jobId, phase: "typing" });
+    }
   } catch (error) {
     await failCurrent(error instanceof Error ? error.message : String(error));
   }
@@ -493,21 +515,31 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   if (message?.type === "CHATGPT_PROGRESS") {
     awaitReady().then(async () => {
-      if (state.current?.jobId === message.jobId) {
-        broadcast({
-          type: "RUNNING",
-          jobId: message.jobId,
-          phase: message.phase,
-          chars: message.chars,
-        });
-        if (message.phase === "waiting" && !focusReturned.has(message.jobId)) {
-          focusReturned.add(message.jobId);
-          await focusAppTab();
-        }
+      if (state.current?.jobId !== message.jobId) return;
+      if (!(await advancePhase(message.jobId, message.phase))) return;
+      broadcast({
+        type: "RUNNING",
+        jobId: message.jobId,
+        phase: message.phase,
+        chars: message.chars,
+      });
+      if (message.phase === "waiting" && !focusReturned.has(message.jobId)) {
+        focusReturned.add(message.jobId);
+        await focusAppTab();
       }
     });
     respond({ ok: true });
     return;
+  }
+  if (message?.type === "CHATGPT_LOG") {
+    awaitReady().then(async () => {
+      if (state.current?.jobId !== message.jobId) return;
+      const entry = message.entry && typeof message.entry === "object" ? message.entry : {};
+      if (entry.phase) await advancePhase(message.jobId, entry.phase);
+      broadcast({ type: "LOG", jobId: message.jobId, entry });
+    });
+    respond({ ok: true });
+    return true;
   }
   if (message?.type === "CHATGPT_REPLY") {
     completeCurrent(message.jobId, message.text).then(() => respond({ ok: true }));
