@@ -35,6 +35,19 @@ replace the key and get a different ID.
 - One job runs at a time; later jobs wait in a persisted queue.
 - The current job is kept in `chrome.storage.local`. A tab reload or a service
   worker restart resumes it instead of asking ChatGPT twice.
+- Reloading the extension orphans the content script in a tab that is already
+  open. Before injecting, the worker clears the script's `already loaded` flag
+  and retries; if that still fails it reloads the tab once. This is what avoids
+  the raw `Could not establish connection. Receiving end does not exist.` error.
+- The ChatGPT tab is marked `autoDiscardable: false` and a discarded tab is
+  reloaded before use, so a background tab cannot come back blank.
+- The content script waits up to 25 seconds for the composer to render. If the
+  tab is signed out, still loading, or genuinely empty, the job fails with that
+  explanation instead of sitting in **running** forever.
+- A send only counts when a new user turn appears; a cleared composer alone is
+  not treated as success.
+- A two-minute `chrome.alarms` watchdog fails a job whose content script stopped
+  answering, so a dead tab does not hang the queue.
 - Completed answers stay in `chrome.storage.local` until the dashboard sends
   `ACK`, so reloading the dashboard does not lose an answer.
 - The dashboard tab is focused again when the answer is copied.
@@ -42,12 +55,22 @@ replace the key and get a different ID.
 
 ## Allowed dashboard origins
 
-`externally_connectable` lists localhost and the production
-`upwork-email-contact.vercel.app` origin. Chrome match patterns cannot express a
+`externally_connectable` lists localhost, the production
+`upwork-email-contact.vercel.app` origin, and the exact preview origin
+`upwork-email-contact-coredcy367.vercel.app`. Chrome match patterns cannot express a
 prefix wildcard such as `upwork-email-contact-*.vercel.app`, so a preview URL
 (or any other domain) must be added to `manifest.json` as an **exact** origin
 and the extension reloaded. Do not widen it to `https://*.vercel.app/*`: any
 Vercel site could then use your signed-in ChatGPT session.
+
+## If a run fails
+
+| What you see | What to do |
+| --- | --- |
+| **Extension not connected** | Reload `chatgpt-extension/` on `chrome://extensions`, then click **Reconnect** in the drawer. |
+| `Could not establish connection. Receiving end does not exist.` | The extension was reloaded while the ChatGPT tab stayed open. Press **Run** again: the worker now re-injects the script (and reloads the tab if needed). |
+| The ChatGPT tab has no composer | Finish sign-in or the human check in that tab, wait for the page to finish loading, then press **Run** again. |
+| The job says **running** for more than two minutes with no progress | Leave the tab open so the watchdog can inspect it; the job fails with a reason and can be retried. |
 
 ## Privacy
 

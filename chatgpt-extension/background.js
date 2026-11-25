@@ -11,6 +11,7 @@
 
 const CHATGPT_URLS = ["https://chatgpt.com/*", "https://chat.openai.com/*"];
 const STORE_KEY = "upworkChatState";
+const WATCHDOG_ALARM = "upworkChatWatch";
 const VERSION = chrome.runtime.getManifest().version;
 
 let state = {
@@ -96,6 +97,7 @@ async function findChatTab() {
   const tab = tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
   if (tab?.id) {
     state.chatTabId = tab.id;
+    await saveState();
     return tab;
   }
   return null;
@@ -106,6 +108,10 @@ function matchUrl(url, pattern) {
   if (pattern === "https://chatgpt.com/*") return url.startsWith("https://chatgpt.com/");
   if (pattern === "https://chat.openai.com/*") return url.startsWith("https://chat.openai.com/");
   return false;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForTabReady(tabId, timeoutMs = 45_000) {
@@ -126,36 +132,114 @@ async function waitForTabReady(tabId, timeoutMs = 45_000) {
   });
 }
 
+async function keepTabAlive(tabId) {
+  try {
+    // Do not let Chrome discard the ChatGPT tab while a prompt is waiting in
+    // the background; a discarded tab comes back blank and loses the bridge.
+    await chrome.tabs.update(tabId, { autoDiscardable: false });
+  } catch {
+    /* the tab can still be used without this hint */
+  }
+}
+
+async function ping(tabId) {
+  try {
+    const reply = await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    return reply ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function openChatTab() {
   const existing = await findChatTab();
   if (existing?.id) {
     state.chatTabId = existing.id;
     await saveState();
+    await keepTabAlive(existing.id);
     return existing.id;
   }
   const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
   if (!tab.id) throw new Error("Chrome did not create the ChatGPT tab");
   state.chatTabId = tab.id;
   await saveState();
+  await keepTabAlive(tab.id);
   await waitForTabReady(tab.id);
   return tab.id;
 }
 
-async function ensureContent(tabId) {
-  try {
-    const pong = await chrome.tabs.sendMessage(tabId, { type: "PING" });
-    if (pong?.ok) return;
-  } catch {
-    /* not injected on this navigation yet */
+async function ensureChatPage(tabId) {
+  let tab = await chrome.tabs.get(tabId);
+  if (!CHATGPT_URLS.some((pattern) => matchUrl(tab.url, pattern))) {
+    throw new Error(
+      "The ChatGPT tab is showing another page. Open chatgpt.com, stay signed in, then press Run again.",
+    );
   }
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["chatgpt-content.js"] });
-  await sleep(350);
-  const pong = await chrome.tabs.sendMessage(tabId, { type: "PING" });
-  if (!pong?.ok) throw new Error("The ChatGPT page could not be prepared — reload it and try again");
+  if (tab.discarded) {
+    await chrome.tabs.reload(tabId);
+    tab = await chrome.tabs.get(tabId);
+  }
+  if (tab.status !== "complete") await waitForTabReady(tabId);
+  // The composer is rendered by the web app after the document loads.
+  await sleep(400);
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * A tab that was open when the extension was reloaded keeps a dead copy of the
+ * content script and its "already loaded" flag. Clearing the flag lets the
+ * fresh script register instead of returning immediately.
+ */
+async function clearInjectedFlag(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        try {
+          delete window.__upworkEmailChatGptLoaded;
+        } catch {
+          window.__upworkEmailChatGptLoaded = false;
+        }
+      },
+    });
+  } catch {
+    /* the file injection below reports the real failure */
+  }
+}
+
+async function injectContent(tabId) {
+  await clearInjectedFlag(tabId);
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["chatgpt-content.js"] });
+  } catch {
+    return null;
+  }
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await sleep(attempt < 4 ? 250 : 500);
+    const reply = await ping(tabId);
+    if (reply?.ok) return reply;
+  }
+  return null;
+}
+
+async function ensureContent(tabId) {
+  const alive = await ping(tabId);
+  if (alive?.ok) return alive;
+  await ensureChatPage(tabId);
+  const injected = await injectContent(tabId);
+  if (injected) return injected;
+  // A clean reload clears a half-loaded single-page app and a dead context.
+  try {
+    await chrome.tabs.reload(tabId);
+    await waitForTabReady(tabId);
+    await sleep(500);
+    const retried = await injectContent(tabId);
+    if (retried) return retried;
+  } catch {
+    /* fall through to the clear message below */
+  }
+  throw new Error(
+    "The ChatGPT tab did not load the extension bridge. Reload the ChatGPT tab, stay signed in, then press Run again.",
+  );
 }
 
 async function focusAppTab() {
@@ -190,6 +274,8 @@ async function resumeCurrent() {
       setTimeout(resumeCurrent, 4_000);
     } else if (!reply?.ok) {
       await failCurrent(reply?.error || "The ChatGPT page could not resume the job");
+    } else {
+      await armWatchdog(job.jobId);
     }
   } catch (error) {
     await failCurrent(error instanceof Error ? error.message : String(error));
@@ -227,6 +313,7 @@ async function processQueue() {
       }
       throw new Error(reply?.error || "The ChatGPT page refused the prompt");
     }
+    await armWatchdog(job.jobId);
     broadcast({ type: "RUNNING", jobId: job.jobId, phase: "typing" });
   } catch (error) {
     await failCurrent(error instanceof Error ? error.message : String(error));
@@ -259,6 +346,7 @@ async function cancelJob(jobId) {
   state.queue = state.queue.filter((job) => job.jobId !== jobId);
   const wasCurrent = state.current?.jobId === jobId;
   if (wasCurrent) {
+    await disarmWatchdog();
     if (state.chatTabId) {
       chrome.tabs.sendMessage(state.chatTabId, { type: "CANCEL", jobId }).catch(() => undefined);
     }
@@ -269,10 +357,23 @@ async function cancelJob(jobId) {
   if (wasCurrent) setTimeout(processQueue, 800);
 }
 
+async function armWatchdog(jobId) {
+  await loadState();
+  if (state.current?.jobId !== jobId) return;
+  // Alarms survive a sleeping service worker, unlike setTimeout.
+  await chrome.alarms.clear(WATCHDOG_ALARM).catch(() => undefined);
+  chrome.alarms.create(WATCHDOG_ALARM, { delayInMinutes: 2 });
+}
+
+async function disarmWatchdog() {
+  await chrome.alarms.clear(WATCHDOG_ALARM).catch(() => undefined);
+}
+
 async function failCurrent(message) {
   await loadState();
   const job = state.current;
   if (!job) return;
+  await disarmWatchdog();
   state.current = null;
   await saveState();
   broadcast({ type: "ERROR", jobId: job.jobId, message });
@@ -282,6 +383,7 @@ async function failCurrent(message) {
 async function completeCurrent(jobId, text) {
   await loadState();
   if (!state.current || state.current.jobId !== jobId) return;
+  await disarmWatchdog();
   state.results[jobId] = text;
   state.current = null;
   await saveState();
@@ -315,6 +417,26 @@ async function readClipboard() {
     return "";
   }
 }
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== WATCHDOG_ALARM) return;
+  (async () => {
+    await loadState();
+    const job = state.current;
+    if (!job) return;
+    const tabId = state.chatTabId;
+    if (!tabId) {
+      await failCurrent("The ChatGPT tab was closed before the answer arrived");
+      return;
+    }
+    const alive = await ping(tabId);
+    // The content script is alive and has its own 20-minute budget.
+    if (alive?.busy) return;
+    await failCurrent(
+      "The ChatGPT tab stopped before the prompt was typed. Reload the tab, stay signed in, then press Run again.",
+    );
+  })().catch(() => undefined);
+});
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message?.type === "CHATGPT_CLIPBOARD") {
@@ -359,6 +481,10 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   ports.add(port);
   port.onDisconnect.addListener(() => ports.delete(port));
   loadState().then(async () => {
+    // Adopt a ChatGPT tab the person already has open so the drawer and the
+    // tab-update listener know about it before the first run.
+    const tab = await findChatTab().catch(() => null);
+    if (tab?.id) await saveState();
     await postStatus(port);
     const results = await pendingResults();
     if (results.length) {

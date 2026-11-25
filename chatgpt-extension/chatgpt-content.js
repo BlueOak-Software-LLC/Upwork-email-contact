@@ -47,14 +47,24 @@
       .trim();
   }
 
+  function visible(element) {
+    if (!element || !element.isConnected) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 1 && rect.height > 1;
+  }
+
+  // ChatGPT renders responsive copies of its controls; the hidden one must not
+  // receive the prompt, so only a laid-out element counts.
   function find(finders) {
     for (const finder of finders) {
+      let list = [];
       try {
-        const element = document.querySelector(finder);
-        if (element) return element;
+        list = Array.from(document.querySelectorAll(finder));
       } catch {
-        /* skip an unusable selector */
+        continue;
       }
+      const element = list.find(visible);
+      if (element) return element;
     }
     return null;
   }
@@ -70,8 +80,43 @@
       for (const element of list) {
         if (element.hasAttribute("disabled")) continue;
         if (element.getAttribute("aria-disabled") === "true") continue;
+        if (!visible(element)) continue;
         return element;
       }
+    }
+    return null;
+  }
+
+  // A visible composer can still be a disabled placeholder while the page
+  // hydrates; typing into it would silently do nothing.
+  function findComposer() {
+    for (const finder of COMPOSER_FINDERS) {
+      let list = [];
+      try {
+        list = Array.from(document.querySelectorAll(finder));
+      } catch {
+        continue;
+      }
+      for (const element of list) {
+        if (!visible(element)) continue;
+        if (element instanceof HTMLTextAreaElement) {
+          if (element.disabled || element.readOnly) continue;
+        } else if (!element.isContentEditable) {
+          continue;
+        }
+        return element;
+      }
+    }
+    return null;
+  }
+
+  async function waitForComposer(timeoutMs = 25000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const composer = findComposer();
+      if (composer) return composer;
+      if (isBlocked()) return null;
+      await sleep(300);
     }
     return null;
   }
@@ -208,9 +253,14 @@
 
   async function typePrompt(prompt) {
     const looksTyped = () => clean(composerText(find(COMPOSER_FINDERS))) === clean(prompt);
+    const ready = await waitForComposer();
+    if (!ready) {
+      throw new Error(
+        "The ChatGPT message box was not found — the tab may still be loading or signed out. Reload chatgpt.com, sign in, then press Run again",
+      );
+    }
     for (const approach of ["insert", "paste", "paint"]) {
-      const composer = find(COMPOSER_FINDERS);
-      if (!composer) throw new Error("The ChatGPT message box was not found — open chatgpt.com and sign in");
+      const composer = findComposer() || ready;
       selectComposer(composer);
       await sleep(120);
       try {
@@ -226,7 +276,9 @@
       }
     }
     const got = clean(composerText(find(COMPOSER_FINDERS)));
-    throw new Error(`The prompt did not fit in the message box (${got.length}/${prompt.length} characters)`);
+    throw new Error(
+      `The prompt did not fit in the message box (${got.length}/${prompt.length} characters) — click the message box in the ChatGPT tab, then press Run again`,
+    );
   }
 
   function pressEnter(composer) {
@@ -253,10 +305,9 @@
   }
 
   async function sendPrompt(composer, usersBefore) {
-    const taken = () =>
-      clean(composerText(find(COMPOSER_FINDERS) || composer)).length === 0 ||
-      userCount() > usersBefore ||
-      !document.contains(composer);
+    // Only a new user turn proves ChatGPT took the prompt; an emptied or
+    // rebuilt composer can also mean the page simply re-rendered.
+    const sent = () => userCount() > usersBefore;
 
     for (const approach of ["button", "enter", "form"]) {
       try {
@@ -270,14 +321,16 @@
       } catch {
         /* the next approach is tried */
       }
-      for (let tick = 0; tick < 8; tick += 1) {
+      for (let tick = 0; tick < 16; tick += 1) {
         await sleep(350);
-        if (taken()) return;
+        if (sent()) return;
       }
       const again = find(COMPOSER_FINDERS);
       if (again) composer = again;
     }
-    throw new Error("The prompt was typed but ChatGPT would not send it");
+    throw new Error(
+      "The prompt was typed but ChatGPT would not send it — press Enter in the ChatGPT tab, then press Run again",
+    );
   }
 
   function stopButton() {
@@ -375,7 +428,7 @@
     return pageText;
   }
 
-  async function waitForReply(jobId, beforeCount, beforeLast) {
+  async function waitForReply(jobId, beforeCount, beforeLast, usersBefore) {
     const startedAt = Date.now();
     let lastText = "";
     let lastChange = Date.now();
@@ -416,6 +469,11 @@
       if (!lastText && Date.now() - startedAt > 15000 && isBlocked()) {
         throw new Error("ChatGPT is asking for a sign-in or human check — finish it in the ChatGPT tab, then run again");
       }
+      if (!lastText && userCount() <= usersBefore && Date.now() - startedAt > 30000) {
+        throw new Error(
+          "The prompt never appeared in the ChatGPT tab — stay signed in, wait for the page to load, then press Run again",
+        );
+      }
       await sleep(500);
     }
     throw new Error("ChatGPT did not finish within 20 minutes");
@@ -455,6 +513,9 @@
     try {
       let state = job;
       if (!resume || job.phase !== "waiting") {
+        // Persist the job before touching the page: opening "New chat" can
+        // replace the document, and the next injection resumes from storage.
+        await setActive({ ...job, phase: "opening" });
         // A fresh chat keeps one lead's text out of the next lead's answer.
         await beginFreshChat();
         const nodes = answerNodes();
@@ -463,7 +524,7 @@
         const usersBefore = userCount();
         const system = clean(job.system || "");
         const prompt = system ? `${system}\n\n---\n\n${job.prompt}` : job.prompt;
-        state = { ...job, phase: "typing", beforeCount, beforeLast };
+        state = { ...job, phase: "typing", beforeCount, beforeLast, usersBefore };
         await setActive(state);
         tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "typing" });
         await typePrompt(prompt);
@@ -475,7 +536,12 @@
         await sleep(900);
       }
 
-      const result = await waitForReply(job.jobId, state.beforeCount ?? 0, state.beforeLast ?? "");
+      const result = await waitForReply(
+        job.jobId,
+        state.beforeCount ?? 0,
+        state.beforeLast ?? "",
+        state.usersBefore ?? 0,
+      );
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
       tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
       const answer = await readAnswer(result.node, result.text);
