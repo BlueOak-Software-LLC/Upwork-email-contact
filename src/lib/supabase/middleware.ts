@@ -21,11 +21,31 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
 const REQUIRE_SESSION =
   process.env.NODE_ENV === "production" || process.env.REQUIRE_SESSION === "true";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/api/health", "/api/email/send", "/o", "/c"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth",
+  "/api/health",
+  "/api/email/send",
+  "/o",
+  "/c",
+];
+
+/**
+ * Exact paths that are reachable without a cookie but still authenticate
+ * themselves. Only the collection route is listed: subroutes such as
+ * `/api/leads/:id/generate` stay behind the session gate as a second layer.
+ * The scraper extension posts to `/api/leads` with `x-api-key` and has no
+ * Supabase session, so the middleware used to redirect it to /login before the
+ * route's requireApiKey check could run.
+ */
+const PUBLIC_EXACT = ["/api/leads"];
 
 /** Exported so the public surface stays testable when `REQUIRE_SESSION` flips. */
 export function isPublic(pathname: string) {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  return (
+    PUBLIC_EXACT.includes(pathname) ||
+    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  );
 }
 
 export async function updateSession(request: NextRequest) {

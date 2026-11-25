@@ -13,14 +13,33 @@ export const logger = {
 
 export type LogMeta = Record<string, unknown> | undefined;
 
+/**
+ * The daily console keeps two signals only: a lead arrived and a ChatGPT
+ * answer came back. Everything else (per-request API lines, prompt prep,
+ * tracking, status touches) is intentionally quiet. Set `LOG_LEVEL=debug` when
+ * you need the full trail while debugging.
+ */
+const ALWAYS_LOGGED = new Set(["leads_received", "chatgpt_response_received"]);
+
+export function isQuietLog(message: string): boolean {
+  return !ALWAYS_LOGGED.has(message);
+}
+
 function write(level: Level, message: string, meta: LogMeta) {
   let threshold: Level = "info";
+  let verbose = false;
   try {
     threshold = getServerEnv().LOG_LEVEL;
+    verbose = threshold === "debug";
   } catch {
     // env not ready yet (build / edge) — use default
   }
-  if (order.indexOf(level) < order.indexOf(threshold)) return;
+  // The allow-list is absolute: the two receive lines are written even when
+  // LOG_LEVEL is "error". Every other line is dropped unless debugging, and
+  // then still respects the configured threshold.
+  const required = !isQuietLog(message);
+  if (!required && !verbose) return;
+  if (!required && order.indexOf(level) < order.indexOf(threshold)) return;
 
   const line = {
     level,

@@ -67,7 +67,10 @@ function toResponse(error: unknown, requestId: string) {
     return fail(400, "bad_request", "Body is not valid JSON");
   }
 
-  console.error("[api] unhandled error", { requestId, error });
+  logger.error("api_unhandled_error", {
+    requestId,
+    error: error instanceof Error ? error.message : String(error),
+  });
   // In development, surface the real failure instead of an opaque 500 —
   // production keeps the message generic.
   const debug =

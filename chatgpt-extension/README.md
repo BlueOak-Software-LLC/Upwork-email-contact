@@ -24,9 +24,15 @@ replace the key and get a different ID.
 2. The background worker reuses one ChatGPT tab (opens it in the background if
    needed), injects `chatgpt-content.js`, and sends the prompt.
 3. The content script types into the composer, clicks Send, waits for the stop
-   control to disappear, and reads the answer. It prefers ChatGPT’s own Copy
-   button and falls back to the visible answer text.
-4. The worker returns the text to the dashboard. The app posts it to
+   control to disappear, and reads the answer. It tries ChatGPT’s own Copy
+   button, but the visible answer text is the source of truth: a blocked
+   clipboard can no longer hold up the handoff.
+4. The content script saves the answer under `upworkChatAnswer:<jobId>`, sends
+   `CHATGPT_REPLY`, and waits for the worker’s acknowledgement. If the worker
+   was asleep, the send is retried; if the page reloads first, the saved answer
+   is sent on the next run instead of typing the prompt again.
+5. The worker stores the text in its pending-result cache, broadcasts
+   `RESULT`, and returns the foreground to the dashboard. The app posts it to
    `POST /api/chatgpt/jobs/:id/complete`; the server parses the JSON, sanitises
    it, and saves the proposal/draft. The browser never writes a draft directly.
 
@@ -50,14 +56,32 @@ replace the key and get a different ID.
   answering, so a dead tab does not hang the queue.
 - Completed answers stay in `chrome.storage.local` until the dashboard sends
   `ACK`, so reloading the dashboard does not lose an answer.
-- The dashboard tab is focused again when the answer is copied.
+- The answer is acknowledged by the worker before the cached active job is
+  cleared. A duplicate delivery is safe: the dashboard's completion claim makes
+  the second write a no-op.
+- The dashboard tab is focused again after the answer is stored.
 - Cancelling a job stops waiting and tells the ChatGPT tab to ignore the answer.
+
+## Log trail
+
+The drawer shows one timestamped line per step, from both sides of the bridge:
+
+- **Queue / Open** — the job arrived, the ChatGPT tab was located, and the
+  content script was injected.
+- **Prompt / Input / Sent** — the prompt was typed, the page accepted it, and
+  ChatGPT started generating.
+- **Wait** — generation started, characters are arriving, and the stop control
+  disappeared.
+- **Answer / Copy** — the assistant turn was found, Copy was clicked, and whether
+  the clipboard or the visible text supplied the answer.
+- **Handoff / Result** — the answer was saved, sent to the worker, stored by the
+  dashboard, and acknowledged. A retry names its attempt number.
 
 ## Allowed dashboard origins
 
 `externally_connectable` lists localhost, the production
 `upwork-email-contact.vercel.app` origin, and the exact preview origin
-`upwork-email-contact-coredcy367.vercel.app`. Chrome match patterns cannot express a
+`upwork-email-contact-coredev367.vercel.app`. Chrome match patterns cannot express a
 prefix wildcard such as `upwork-email-contact-*.vercel.app`, so a preview URL
 (or any other domain) must be added to `manifest.json` as an **exact** origin
 and the extension reloaded. Do not widen it to `https://*.vercel.app/*`: any

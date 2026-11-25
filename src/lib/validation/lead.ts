@@ -57,6 +57,88 @@ export const records = (value: unknown): JsonRecord[] =>
       )
     : [];
 
+/**
+ * Contact lists arrive in two documented shapes: objects with
+ * `contact_value`/`url` (the dashboard examples) or bare strings (the scraper
+ * writes link lists). `records()` would silently drop every bare string, which
+ * is how a research answer with only a LinkedIn profile lost its contact.
+ *
+ * Strings are promoted to the object shape here, before storage and before
+ * contact extraction, so both callers see the same items.
+ */
+function contactListItems(
+  value: unknown,
+  key: keyof LeadContactInformation,
+): JsonRecord[] {
+  // Models and scrapers sometimes send one item instead of a list, or wrap the
+  // list in an object ({ "urls": [...] }). Accept those shapes too; otherwise a
+  // single LinkedIn profile looked like "no contact" and was dropped.
+  let list: unknown[];
+  if (Array.isArray(value)) {
+    list = value;
+  } else if (typeof value === "string") {
+    list = [value];
+  } else if (value && typeof value === "object") {
+    const wrapper = value as JsonRecord;
+    const nested = [
+      "urls",
+      "links",
+      "items",
+      "pages",
+      "profiles",
+      "values",
+      "contacts",
+      "people",
+      "list",
+    ]
+      .map((name) => wrapper[name])
+      .find(Array.isArray);
+    list = nested ?? [wrapper];
+  } else {
+    return [];
+  }
+  const out: JsonRecord[] = [];
+  for (const item of list) {
+    if (typeof item === "string") {
+      const text = item.trim();
+      if (!text) continue;
+      if (key === "verified_contacts" || key === "potential_contacts") {
+        out.push({ contact_value: text, type: "contact" });
+      } else {
+        out.push({
+          url: text,
+          type:
+            key === "linkedin_profiles"
+              ? "linkedin"
+              : key === "social_media_profiles"
+                ? "social"
+                : "company page",
+        });
+      }
+      continue;
+    }
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const object = item as JsonRecord;
+      const isLinkList =
+        key !== "verified_contacts" && key !== "potential_contacts";
+      if (isLinkList && !str(object.type)) {
+        out.push({
+          ...object,
+          type:
+            key === "linkedin_profiles"
+              ? "linkedin"
+              : key === "social_media_profiles"
+                ? "social"
+                : "company page",
+        });
+      } else {
+        out.push(object);
+      }
+    }
+  }
+  return out;
+}
+
 const stringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.map((v) => str(v)).filter((v): v is string => Boolean(v));
   const single = str(value);
@@ -217,12 +299,15 @@ export function normalizeLeadPayload(input: unknown): NormalizedLead {
 
   const contactInformation = emptyContactInformation();
   for (const [key] of CONTACT_LIST_KEYS) {
-    contactInformation[key] = records(contactInformationRaw[key]) as unknown as LeadContactItem[];
+    contactInformation[key] = contactListItems(
+      contactInformationRaw[key],
+      key,
+    ) as unknown as LeadContactItem[];
   }
 
   const contacts: NormalizedContact[] = [];
   for (const [key, listType] of CONTACT_LIST_KEYS) {
-    for (const item of records(contactInformationRaw[key])) {
+    for (const item of contactListItems(contactInformationRaw[key], key)) {
       const normalized = itemToContact(item, listType);
       if (normalized) contacts.push(normalized);
     }

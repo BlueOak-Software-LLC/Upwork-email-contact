@@ -83,7 +83,7 @@ export const POST = withApi(async (request: NextRequest) => {
     senderAccountId: options.senderAccountId,
   };
 
-  logger.info("lead_ingest_requested", {
+  logger.info("leads_received", {
     count: payloads.length,
     ...ingestOptions,
     autoEnrich: ingestOptions.autoEnrich === true,

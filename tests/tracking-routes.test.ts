@@ -201,19 +201,32 @@ describe("public surface (middleware)", () => {
    * being bounced to a login page they cannot reach from an email client. The
    * root `/` is the dashboard overview and must stay gated with the rest.
    */
-  it.each(["/o/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v.gif", "/c/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v", "/api/health", "/api/email/send"])(
-    "%s stays reachable without a session",
-    (path) => {
-      expect(isPublic(path)).toBe(true);
-    },
-  );
+  it.each([
+    "/o/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v.gif",
+    "/c/Ab3dE5fG7hI9jK1lM3nO5pQ7rS9tU1v",
+    "/api/health",
+    "/api/email/send",
+    // The scraper extension posts here with x-api-key and no session cookie.
+    // The route itself calls requireApiKey, so the middleware must not bounce
+    // it to /login first.
+    "/api/leads",
+  ])("%s stays reachable without a session", (path) => {
+    expect(isPublic(path)).toBe(true);
+  });
 
-  it.each(["/", "/emails", "/leads", "/api/tracking/stats", "/api/maintenance/purge", "/settings/tracking"])(
-    "%s is gated once auth is switched on",
-    (path) => {
-      expect(isPublic(path)).toBe(false);
-    },
-  );
+  it.each([
+    "/",
+    "/emails",
+    "/leads",
+    // Only the collection route is exempt; a mutation on one lead still needs
+    // a session even though the route also checks x-api-key.
+    "/api/leads/00000000-0000-0000-0000-000000000000/generate",
+    "/api/tracking/stats",
+    "/api/maintenance/purge",
+    "/settings/tracking",
+  ])("%s is gated once auth is switched on", (path) => {
+    expect(isPublic(path)).toBe(false);
+  });
 
   it("does not treat a prefix collision as public", async () => {
     // "/o" must not open "/oauth", and "/c" must not open "/contacts".

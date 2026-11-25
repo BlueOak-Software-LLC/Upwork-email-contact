@@ -82,6 +82,18 @@ function broadcast(message) {
   }
 }
 
+// A step line for the dashboard drawer. Unlike phase updates these are also
+// delivered when no job is current (for example the final "answer received"
+// line that races the completion), so the trail cannot end mid-step.
+function logEvent(jobId, phase, message, extra) {
+  if (!jobId) return;
+  broadcast({
+    type: "LOG",
+    jobId,
+    entry: { at: Date.now(), phase, message, ...(extra || {}) },
+  });
+}
+
 function status() {
   return {
     type: "STATUS",
@@ -361,6 +373,7 @@ async function resumeCurrent() {
   await loadState();
   const job = state.current;
   if (!job) return;
+  logEvent(job.jobId, job.phase || "opening", "Resume: picking the job up after a worker reload");
   const tab = await findChatTab();
   if (!tab?.id) {
     await failCurrent("The ChatGPT tab was closed before the answer arrived");
@@ -368,6 +381,7 @@ async function resumeCurrent() {
   }
   try {
     await ensureContent(tab.id);
+    logEvent(job.jobId, job.phase || "opening", "Resume: the ChatGPT bridge is ready");
     await activateChatTab(tab.id);
     const reply = await chrome.tabs.sendMessage(tab.id, {
       type: "RUN_CHATGPT",
@@ -377,6 +391,9 @@ async function resumeCurrent() {
       createdAt: job.createdAt,
     });
     if (reply?.busy) {
+      // The content script is still working on this job. Keep a watchdog armed
+      // so a script that dies mid-answer cannot leave the job running forever.
+      await armWatchdog(job.jobId);
       setTimeout(resumeCurrent, 4_000);
     } else if (!reply?.ok) {
       await failCurrent(reply?.error || "The ChatGPT page could not resume the job");
@@ -400,10 +417,20 @@ async function processQueue() {
   state.current = { ...job, phase: "opening" };
   await saveState();
   broadcast({ type: "RUNNING", jobId: job.jobId, phase: "opening" });
+  logEvent(job.jobId, "opening", "Queue: job started; locating the ChatGPT tab");
   try {
     const tabId = await openChatTab();
-    await ensureContent(tabId);
+    logEvent(job.jobId, "opening", "Open: ChatGPT tab is ready (tab " + tabId + ")");
+    const alive = await ensureContent(tabId);
+    logEvent(
+      job.jobId,
+      "opening",
+      alive?.busy
+        ? "Bridge: the content script is ready but still busy with the previous answer"
+        : "Bridge: content script is ready",
+    );
     await activateChatTab(tabId);
+    logEvent(job.jobId, "opening", "Prompt: handing the prompt to the ChatGPT page");
     const reply = await chrome.tabs.sendMessage(tabId, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
@@ -422,6 +449,13 @@ async function processQueue() {
       }
       throw new Error(reply?.error || "The ChatGPT page refused the prompt");
     }
+    logEvent(
+      job.jobId,
+      "typing",
+      reply.deduped
+        ? "Prompt: the page is already running this job"
+        : "Prompt: the page accepted the job; it is typing now",
+    );
     await armWatchdog(job.jobId);
     // A deduped reply means this tab is already typing or waiting; do not move
     // the dashboard back to "typing" while the page is waiting for an answer.
@@ -436,14 +470,22 @@ async function processQueue() {
 async function startJob(job, appTabId) {
   await loadState();
   if (appTabId) state.appTabId = appTabId;
-  if (state.current?.jobId === job.jobId) return;
-  if (state.queue.some((item) => item.jobId === job.jobId)) return;
+  if (state.current?.jobId === job.jobId) {
+    logEvent(job.jobId, state.current.phase || "opening", "Queue: this job is already running");
+    return;
+  }
+  if (state.queue.some((item) => item.jobId === job.jobId)) {
+    logEvent(job.jobId, "opening", "Queue: this job is already waiting in the queue");
+    return;
+  }
   // A finished answer that the dashboard has not acknowledged is re-broadcast
   // instead of typing the prompt again.
   if (state.results[job.jobId]) {
+    logEvent(job.jobId, "done", "Queue: replaying the saved answer instead of typing again");
     broadcast({ type: "RESULT", jobId: job.jobId, text: state.results[job.jobId] });
     return;
   }
+  logEvent(job.jobId, "opening", "Queue: job received from the dashboard");
   state.queue.push({
     jobId: job.jobId,
     prompt: job.prompt,
@@ -488,6 +530,7 @@ async function failCurrent(message) {
   const job = state.current;
   if (!job) return;
   await disarmWatchdog();
+  logEvent(job.jobId, "done", "Stopped: " + message);
   state.current = null;
   pinChatFocus = false;
   await saveState();
@@ -497,15 +540,34 @@ async function failCurrent(message) {
 
 async function completeCurrent(jobId, text) {
   await loadState();
-  if (!state.current || state.current.jobId !== jobId) return;
+  const owns = Boolean(state.current && state.current.jobId === jobId);
+  // The answer is stored even if the service worker lost `current` (a restart
+  // between the last save and the reply) or the dashboard polled again. The
+  // completion endpoint claims the row, so a duplicate delivery is harmless;
+  // throwing the answer away here was how a finished ChatGPT turn disappeared.
+  if (!owns && state.results[jobId] === text) {
+    logEvent(jobId, "done", "Result: the dashboard already has this answer");
+    return true;
+  }
+  logEvent(
+    jobId,
+    "done",
+    "Result: answer received from the ChatGPT tab (" + String(text || "").length + " characters)",
+  );
   await disarmWatchdog();
   state.results[jobId] = text;
-  state.current = null;
-  pinChatFocus = false;
+  if (owns) {
+    state.current = null;
+    pinChatFocus = false;
+  }
   await saveState();
+  logEvent(jobId, "done", "Result: answer saved; handing it to the dashboard now");
   broadcast({ type: "RESULT", jobId, text });
-  await focusAppTab(true);
-  setTimeout(processQueue, 800);
+  if (owns) {
+    await focusAppTab(true);
+    setTimeout(processQueue, 800);
+  }
+  return true;
 }
 
 async function ensureOffscreen() {
@@ -546,10 +608,28 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       return;
     }
     const alive = await ping(tabId);
-    // The content script is alive and has its own 20-minute budget.
-    if (alive?.busy) return;
+    // The content script is alive and has its own 20-minute budget. Keep a
+    // watchdog armed instead of letting the single alarm expire.
+    if (alive?.busy) {
+      await armWatchdog(job.jobId);
+      return;
+    }
+    // The script is idle but may have finished the answer and failed every
+    // acknowledgement. Recover that saved answer before declaring failure.
+    const pending = await chrome.tabs
+      .sendMessage(tabId, { type: "CHATGPT_PENDING", jobId: job.jobId })
+      .catch(() => null);
+    if (
+      pending?.jobId === job.jobId &&
+      typeof pending.text === "string" &&
+      pending.text
+    ) {
+      logEvent(job.jobId, "done", "Result: recovered the saved answer from the ChatGPT tab");
+      await completeCurrent(job.jobId, pending.text);
+      return;
+    }
     await failCurrent(
-      "The ChatGPT tab stopped before the prompt was typed. Reload the tab, stay signed in, then press Run again.",
+      "The ChatGPT tab stopped before the answer was handed back. Reload the tab, stay signed in, then press Run again.",
     );
   })().catch(() => undefined);
 });
@@ -589,16 +669,21 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   if (message?.type === "CHATGPT_LOG") {
     awaitReady().then(async () => {
-      if (state.current?.jobId !== message.jobId) return;
       const entry = message.entry && typeof message.entry === "object" ? message.entry : {};
-      if (entry.phase) await advancePhase(message.jobId, entry.phase);
+      if (state.current?.jobId === message.jobId && entry.phase) {
+        await advancePhase(message.jobId, entry.phase);
+      }
+      // Logs are useful even when the job is no longer `current`: the final
+      // "answer received" line is sent in the same beat as the reply.
       broadcast({ type: "LOG", jobId: message.jobId, entry });
     });
     respond({ ok: true });
     return true;
   }
   if (message?.type === "CHATGPT_REPLY") {
-    completeCurrent(message.jobId, message.text).then(() => respond({ ok: true }));
+    completeCurrent(message.jobId, message.text)
+      .then((stored) => respond({ ok: true, stored: Boolean(stored) }))
+      .catch((error) => respond({ ok: false, error: String(error) }));
     return true;
   }
   if (message?.type === "CHATGPT_PROBLEM") {
@@ -672,6 +757,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
           delete state.results[message.jobId];
           await saveState();
         }
+        logEvent(message.jobId, "done", "Result: the dashboard stored the answer");
       });
       return;
     }

@@ -469,6 +469,13 @@ export async function completeChatGptJob(
 
   const claimed = await chatgptJobsRepo.claimCompletion(jobId, answer);
   const row = claimed.job;
+  logger.info("chatgpt_response_received", {
+    jobId,
+    leadId: row.lead_id,
+    kind: row.kind,
+    chars: answer.length,
+    claimed: claimed.claimed,
+  });
   if (!claimed.claimed) {
     if (row.status === "completed") {
       return { job: toChatGptJobDto(row), warnings: ["this answer was already stored"] };

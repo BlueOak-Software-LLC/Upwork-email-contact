@@ -7,7 +7,7 @@ import {
   type SendResponse,
 } from "./types";
 
-/** Default provider: prints to the server log. Safe for dev + CI. */
+/** Default provider: records the send without delivering it. Safe for dev + CI. */
 export const logProvider: EmailProvider = {
   name: "log",
   async send(message: EmailMessage): Promise<SendResponse> {
@@ -19,11 +19,6 @@ export const logProvider: EmailProvider = {
       subject: message.subject,
       bytes: message.text.length + (message.html?.length ?? 0),
     });
-    if (getServerEnv().NODE_ENV === "development") {
-      console.info(
-        `\n──── email (dry run) ────\nfrom: ${message.from}\nto: ${message.to.join(", ")}\nsubject: ${message.subject}\n\n${message.text}\n─────────────────────────\n`,
-      );
-    }
     return { provider: "log", providerMessageId: id };
   },
 } satisfies EmailProvider;

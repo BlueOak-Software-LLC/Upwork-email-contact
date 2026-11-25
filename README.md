@@ -256,6 +256,12 @@ without keeping the request log. Add to `vercel.json` when you want it automatic
 
 ## 4. The ingest contract
 
+`POST /api/leads` is listed in the middleware's public paths because the scraper
+has no Supabase session cookie. That does **not** make it unauthenticated: the
+route calls `requireApiKey` and accepts only `x-api-key: $API_MASTER_KEY` (or a
+signed-in user). Without this exception the production middleware redirected the
+scraper to `/login` before the route could read the key.
+
 `POST /api/leads` accepts exactly your payload shape — every key nullable, empty
 strings and empty arrays welcome, unknown keys preserved verbatim in
 `raw_payload`, and a bare array of payloads accepted too:
@@ -280,6 +286,11 @@ strings and empty arrays welcome, unknown keys preserved verbatim in
   "overall_confidence": ""     // HIGH | MEDIUM | LOW | UNIDENTIFIED | "" (→ UNIDENTIFIED)
 }
 ```
+
+The five `contact_information` lists accept objects (the documented shape) or
+bare strings; a string is promoted to `{ "url": … }` for the three link lists
+and to `{ "contact_value": … }` for verified/potential contacts, so a scraper
+that writes a plain list of URLs does not lose them.
 
 **`job_information.job_description` is the primary input for generation.** It is
 stored as-is in `leads.job_description` (migration `0004` also folds it into the
@@ -470,15 +481,17 @@ are unchanged.
 1. The dashboard prepares a row in `chatgpt_jobs` and returns the prompt.
 2. The extension receives it over `chrome.runtime.connect(EXTENSION_ID)`, reuses
    the ChatGPT tab and conversation already open, types the prompt once, starts it,
-   reports **waiting** immediately, and reads the completed answer through
-   ChatGPT's Copy button.
-3. The dashboard posts the answer to `/api/chatgpt/jobs/:id/complete`. That route
+   reports **waiting** immediately, and reads the completed assistant turn.
+   ChatGPT's Copy button is preferred, but the visible text is authoritative.
+3. The content script saves the answer and retries until the worker acknowledges
+   it; the dashboard then posts it to `/api/chatgpt/jobs/:id/complete`. That route
    parses JSON, applies `sanitizePpd`/`sanitizeEmail`, and writes the proposal or
    draft. A failed parse stays retryable instead of half-saving a document.
 
 Everything is visible in the **ChatGPT session** drawer: connection state, queue,
-prompt transcript, progress, a timestamped **Extension log** (Opening, Input,
-Start, Sent, Wait, Copied, Done), errors, Cancel/Run, and a textarea for pasting
+prompt transcript, progress, a timestamped **Extension log** (Queue, Open,
+Prompt, Input, Sent, Wait, Answer, Copy, Handoff, Result, Done), errors,
+Cancel/Run, and a textarea for pasting
 an answer by hand when the extension cannot be installed. There is deliberately no
 iframe: ChatGPT cannot be embedded usefully, so the drawer shows the job and the
 extension drives the real tab in the background.
@@ -493,6 +506,14 @@ passwords.
 and `follow_up`. They are global (any dashboard user can edit them), so treat
 that page as workspace configuration. Token/temperature fields still exist on
 old rows but the ChatGPT session ignores them.
+
+**Console logs.** The server prints exactly two JSON lines in normal operation:
+`leads_received` (the lead payloads accepted by `POST /api/leads`) and
+`chatgpt_response_received` (the answer handed back by the extension). Request
+lines, prompt preparation, status touches, tracking and other internal steps are
+suppressed centrally in `src/lib/logger.ts`; set `LOG_LEVEL=debug` to see the
+full trail while debugging. The `EMAIL_PROVIDER=log` dry run no longer prints the
+message body either — the row at `/emails` is the record.
 
 The default PPD prompt asks for 450–700 words in 4–6 sections, and explicitly
 forbids company branding, invented case studies and bracketed placeholders.
@@ -866,6 +887,7 @@ vercel --prod        # or push to GitHub → Import Project
 | Symptom | Cause / fix |
 | --- | --- |
 | Every route returns 500 `internal_error` — “Invalid environment configuration: API_MASTER_KEY: Too small” | A blank value in `.env.local` (`API_MASTER_KEY=`) is now treated as **unset** (`lib/env.ts` drops empty strings before validating). Pull this fix; previously an empty optional var failed its own constraint. |
+| The scraper gets a `302`/`307` to `/login` (HTML) instead of JSON from `POST /api/leads` | The production middleware gated every non-public path before the route's `x-api-key` check. `/api/leads` is now in `PUBLIC_PATHS` while the route still calls `requireApiKey`; deploy this build. A per-deployment `*.vercel.app` preview can also be behind Vercel Deployment Protection — point `LEAD_URL` at the production alias or add a bypass secret. |
 | `TypeError: fetch failed` on `/api/*` | The function could not reach `NEXT_PUBLIC_SUPABASE_URL` (offline sandbox, VPN, wrong project ref, or paused project). `/api/health` shows it as `"status":"degraded"` with the reason. |
 | `upstream_error … Failed to list leads` | Migration `0002_leads_senders_proposals.sql` not applied yet (tables missing). |
 | `Cannot save prompt overrides: the prompt_templates table is missing … apply supabase/migrations/0003_prompt_templates_review_flow.sql` (502 from `PUT /api/prompts`) | Migration **0003** not applied. Until then prompt reads fall back to the code defaults, generation still works, and the review stamp / custom-recipient provenance are dropped from the write with a `db_columns_missing` log line — but you cannot save edited prompts. |
@@ -879,8 +901,9 @@ vercel --prod        # or push to GitHub → Import Project
 | A job fails with `Could not establish connection. Receiving end does not exist.` right after reloading the extension | The open ChatGPT tab still holds the old, orphaned content script. Extension 1.0.5 clears its `already loaded` flag and re-injects (with one tab reload as a fallback), so just press **Run** again. On older builds, reload the ChatGPT tab first. |
 | **Run** opens a new ChatGPT chat instead of using the conversation on screen | Fixed in extension 1.0.5. The current conversation is reused; the **New chat** control is only checked as a readiness signal and is never clicked. |
 | The drawer says **The prompt is still in the message box…** | The tab was in the background, the composer was not the real one, or the send control was disabled. Extension 1.0.5 focuses the tab, scores the real composer, types once, then tries the send button, Enter and the form once each. It never types a second copy. If it still fails, click the composer once and press **Run** again; the message includes a `composer=… chars=… users=…` diagnostic line. |
-| The drawer stays on **typing the prompt** after ChatGPT has started answering | Fixed in extension 1.0.5. The content script now sends `waiting` immediately after the prompt is accepted and every five seconds while the answer is generating, instead of waiting for the first answer characters. The drawer also shows a timestamped **Extension log** (`Opening`, `Input`, `Start`, `Sent`, `Wait`, `Copied`, `Done`) under the job and in **Details**. |
-| ChatGPT answers but **Copy** gets nothing, or the answer arrives as plain text | Fixed in extension 1.0.5. The worker raises the ChatGPT window and waits for document focus before clicking Copy; focus changes are serialized so the dashboard cannot steal focus back during the clipboard write. If the page still refuses the async clipboard write, the extension copies the rendered answer itself with a focused selection. The extension log shows which path succeeded. |
+| The drawer stays on **typing the prompt** after ChatGPT has started answering | The content script sends `waiting` immediately after the prompt is accepted and every five seconds while the answer is generating. The drawer also shows a timestamped **Extension log** (`Queue`, `Open`, `Prompt`, `Input`, `Sent`, `Wait`, `Answer`, `Copy`, `Handoff`, `Result`, `Done`) under the job and in **Details**. |
+| ChatGPT answers but **Copy** gets nothing, or the answer arrives as plain text | Extension 1.0.6 treats the visible answer as the source of truth. It still tries ChatGPT’s Copy button and the focused-selection fallback, but a blocked clipboard now falls through immediately to the rendered text, so the result cannot hang on a clipboard permission. |
+| ChatGPT finished, but the dashboard never showed the PPD/draft | Extension 1.0.6 saves the answer under `upworkChatAnswer:<jobId>` and waits for the worker’s `CHATGPT_REPLY` acknowledgement before clearing the active job. A sleeping worker is retried; a page reload resends the saved answer instead of typing the prompt again. The drawer names the failed step (Handoff/Result) when it still cannot store it. |
 | The ChatGPT tab shows a dimmed composer and nothing is typed | The page had not finished rendering, was discarded, or is signed out. The content script now waits 25 seconds for a visible composer and then fails with a clear reason instead of hanging; the worker also reloads a discarded tab. Reload chatgpt.com, stay signed in, then press **Run**. |
 | ChatGPT answered but the PPD did not appear | The server rejected a non-JSON or incomplete answer. The drawer returns the job to **running** and the toast names the parse error; paste a corrected JSON answer with the manual-paste box, or press **Run** again. |
 | `chatgpt_jobs` table missing / `0008` or `0009` error | Apply `supabase/migrations/0008_chatgpt_session_followups.sql`, then `0009_chatgpt_completion_claim.sql`; PPD, email and follow-up preparation all write there, and finalisation needs the `completing` state. |
@@ -896,7 +919,8 @@ vercel --prod        # or push to GitHub → Import Project
 | One Gmail open shows up as two events | Expected, and not a bug: Gmail fetches the pixel through `googleimageproxy.com` **and** `googleusercontent.com`, twice each. The 60-second dedupe window is keyed on the truncated user-agent, so genuinely different clients still count separately — that is why "unique openers" counts *messages opened*, not requests. |
 | A tracking link `302`s to the wrong host | It cannot. `validateDestination()` runs again at click time (and the stored URL was validated at send time), so a link edited straight in the database to a private/metadata address returns 400 instead of redirecting. |
 
-In dev, `/api/*` is open when `API_MASTER_KEY` is empty (logged as `api_open_dev_mode`);
+In dev, `/api/*` is open when `API_MASTER_KEY` is empty. That open mode is
+deliberate, but it is quiet: only the two receive events below reach the console;
 the same config in production answers `403` until you set a key.
 
 ## 12. Security notes

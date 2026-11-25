@@ -391,7 +391,21 @@ export function ChatGptSessionProvider({ children }: { children: React.ReactNode
             // Server rows win (a cancelled/failed job must stop looking active),
             // but keep local phase/liveText/logs for the same running job.
             const merged = data.jobs.map((job) => {
-              const item = { ...local.get(job.id), ...job };
+              const cached = local.get(job.id);
+              // A list request that started before finalisation can come back
+              // with the job still "running". Do not let that stale response
+              // hide the answer that was just stored; the next poll is
+              // authoritative and will agree that it is completed.
+              const item =
+                cached?.status === "completed" && job.status !== "completed"
+                  ? {
+                      ...cached,
+                      ...job,
+                      status: cached.status,
+                      responseText: cached.responseText,
+                      completedAt: cached.completedAt,
+                    }
+                  : { ...cached, ...job };
               if (
                 item.status === "running" &&
                 remote.jobId === job.id &&

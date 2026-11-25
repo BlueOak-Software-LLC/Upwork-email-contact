@@ -36,9 +36,12 @@
   const USER = '[data-message-author-role="user"]';
   const ACTIVE_KEY = "upworkChatActive";
   const SENT_KEY_PREFIX = "upworkChatSent:";
+  const ANSWER_KEY_PREFIX = "upworkChatAnswer:";
   const BUDGET_MS = 20 * 60 * 1000;
-  const STABLE_MS = 12000;
-  const STALL_MS = 4 * 60 * 1000;
+  // The stop button disappearing is the primary finish signal; this stable
+  // window is the fallback for builds that do not expose one.
+  const STABLE_MS = 4000;
+  const STALL_MS = 2 * 60 * 1000;
 
   let activeJobId = null;
   const cancelled = new Set();
@@ -212,11 +215,11 @@
   // for document focus before clicking; retry because Windows sometimes hands
   // focus over a moment after chrome.windows.update().
   async function focusChatForCopy(jobId) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await Promise.race([
           ask({ type: "CHATGPT_FOCUS", jobId, reason: "copy" }),
-          sleep(2500),
+          sleep(1200),
         ]);
       } catch {
         /* the worker may be restarting; the tab can still be active */
@@ -227,8 +230,8 @@
         /* not fatal; the check below decides */
       }
       if (document.hasFocus()) return true;
-      if (await waitForDocumentFocus(1200)) return true;
-      await sleep(250);
+      if (await waitForDocumentFocus(800)) return true;
+      await sleep(150);
     }
     return document.hasFocus();
   }
@@ -360,9 +363,34 @@
   function answerLooksComplete(text) {
     const trimmed = clean(text);
     if (!trimmed) return false;
-    if (trimmed.startsWith("```")) return /```$/.test(trimmed);
-    if (trimmed.includes("```")) return /```$/.test(trimmed);
-    if (trimmed.includes("{")) return trimmed.endsWith("}");
+    // An unclosed Markdown fence means the model is still writing.
+    const firstFence = trimmed.indexOf("```");
+    if (firstFence >= 0 && trimmed.lastIndexOf("```") === firstFence) return false;
+    // A JSON answer is complete when its braces balance, even if ChatGPT adds
+    // a closing sentence after it. The old endsWith("}") check treated that
+    // trailing sentence as "still writing" and waited for the stall timeout.
+    const start = trimmed.indexOf("{");
+    if (start >= 0) {
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+      for (let i = start; i < trimmed.length; i += 1) {
+        const ch = trimmed[i];
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (ch === "\\") escaped = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') inString = true;
+        else if (ch === "{") depth += 1;
+        else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) return true;
+        }
+      }
+      return false;
+    }
     return true;
   }
 
@@ -612,6 +640,12 @@
     }
   }
 
+  // The worker can be asleep or restarting exactly when the answer is ready.
+  // Wait for its acknowledgement instead of firing and forgetting.
+  async function askWithin(message, timeoutMs = 5000) {
+    return Promise.race([ask(message), sleep(timeoutMs).then(() => null)]);
+  }
+
   // A readable trail of what the tab is doing. The dashboard shows these lines
   // next to the job, so "waiting" cannot silently look like "typing" again.
   function logStep(jobId, phase, message) {
@@ -666,9 +700,16 @@
   }
 
   async function readAnswer(jobId, node, pageText) {
-    if (!node) return pageText;
+    if (!node) {
+      logStep(jobId, "copying", "Copy: no assistant message node; using the visible answer");
+      return pageText;
+    }
     const turn = node.closest('[data-testid^="conversation-turn"]') || node.closest("article") || node.parentElement;
     const button = copyControl(turn);
+    if (!button) {
+      logStep(jobId, "copying", "Copy: no Copy control on this turn; using the visible answer");
+      return pageText;
+    }
     if (button) {
       try {
         logStep(
@@ -738,10 +779,12 @@
       }
       const stop = stopButton();
       if (stop) {
+        if (!stopSeen) logStep(jobId, "waiting", "Wait: ChatGPT is generating the answer");
         stopSeen = true;
         stopGoneAt = 0;
       } else if (stopSeen && !stopGoneAt) {
         stopGoneAt = Date.now();
+        logStep(jobId, "copying", "Wait: ChatGPT stopped generating; finishing the answer");
       }
 
       // A heartbeat is sent even before any assistant text is visible. Without
@@ -765,14 +808,19 @@
 
       if (lastText && !stop) {
         const finished = stopSeen && stopGoneAt && Date.now() - stopGoneAt > 1200;
-        const stable = Date.now() - lastChange > STABLE_MS && answerLooksComplete(lastText);
+        // Never call a short pause "finished" while the stop control is still
+        // on screen: a long JSON answer pauses between fields, and treating
+        // that as done truncated the PPD. Stable is only a fallback for builds
+        // that do not render a stop control at all.
+        const stable =
+          Date.now() - lastChange > STABLE_MS && answerLooksComplete(lastText);
         if (finished || stable) {
           logStep(jobId, "copying", `Answer finished (${lastText.length} characters)`);
           return { node: current.node, text: current.text };
         }
       }
 
-      if (lastText && Date.now() - lastChange > STALL_MS) {
+      if (lastText && !stop && Date.now() - lastChange > STALL_MS) {
         logStep(jobId, "copying", `Answer stopped changing (${lastText.length} characters)`);
         return { node: current.node, text: lastText };
       }
@@ -818,7 +866,12 @@
 
   async function clearActive(jobId) {
     try {
-      await chrome.storage.local.remove(ACTIVE_KEY);
+      const stored = await chrome.storage.local.get(ACTIVE_KEY);
+      const active = stored?.[ACTIVE_KEY];
+      // Never let a late handoff for job A clear the active marker for job B.
+      if (!active || !jobId || active.jobId === jobId) {
+        await chrome.storage.local.remove(ACTIVE_KEY);
+      }
       if (jobId) await chrome.storage.local.remove(SENT_KEY_PREFIX + jobId);
     } catch {
       /* nothing to clear */
@@ -845,11 +898,81 @@
     }
   }
 
+  // A finished answer is persisted before the handoff. If the worker misses the
+  // message (or the page reloads at that moment), the next RUN/resume sends the
+  // saved answer instead of typing the whole prompt again.
+  async function readPendingReply(jobId) {
+    try {
+      const key = ANSWER_KEY_PREFIX + jobId;
+      const stored = await chrome.storage.local.get(key);
+      const value = stored?.[key];
+      return value && typeof value.text === "string" && value.text ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function writePendingReply(jobId, text) {
+    try {
+      await chrome.storage.local.set({
+        [ANSWER_KEY_PREFIX + jobId]: { text, at: Date.now() },
+      });
+    } catch {
+      /* storage is best effort; the retry below still runs */
+    }
+  }
+
+  async function clearPendingReply(jobId) {
+    try {
+      await chrome.storage.local.remove(ANSWER_KEY_PREFIX + jobId);
+    } catch {
+      /* nothing to clear */
+    }
+  }
+
+  async function sendReplyToApp(jobId, text) {
+    await writePendingReply(jobId, text);
+    logStep(jobId, "copying", "Handoff: sending the answer to the extension worker");
+    for (let attempt = 1; attempt <= 12; attempt += 1) {
+      const reply = await askWithin({ type: "CHATGPT_REPLY", jobId, text }, 5000);
+      if (reply?.ok) {
+        await clearPendingReply(jobId);
+        logStep(
+          jobId,
+          "done",
+          attempt === 1
+            ? "Handoff: the worker stored the answer"
+            : "Handoff: the worker stored the answer after " + attempt + " tries",
+        );
+        return true;
+      }
+      logStep(
+        jobId,
+        "copying",
+        "Handoff: the worker did not acknowledge (try " + attempt + "/12); retrying",
+      );
+      await sleep(800);
+    }
+    logStep(
+      jobId,
+      "copying",
+      "Handoff: the worker never acknowledged; the answer is saved and will be sent when the dashboard runs this job again",
+    );
+    return false;
+  }
+
   async function runTask(job, resume) {
     if (activeJobId === job.jobId) return;
     if (activeJobId) return;
     activeJobId = job.jobId;
     try {
+      const pending = await readPendingReply(job.jobId);
+      if (pending) {
+        logStep(job.jobId, "copying", "Resume: found the finished answer; sending it before typing");
+        const stored = await sendReplyToApp(job.jobId, pending.text);
+        if (stored) await clearActive(job.jobId);
+        return;
+      }
       let state = job;
       let alreadySent = false;
       logStep(job.jobId, "opening", `Opening: checking the ChatGPT tab (${location.host}${location.pathname})`);
@@ -921,21 +1044,28 @@
         state.usersBefore ?? 0,
       );
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
+      logStep(
+        job.jobId,
+        "copying",
+        "Answer: captured " + result.text.length + " characters from the page",
+      );
       tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
-      logStep(job.jobId, "copying", "Clicking Copy in the ChatGPT tab");
       const answer = await readAnswer(job.jobId, result.node, result.text);
       if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
       if (cancelled.has(job.jobId)) throw new Error("Cancelled");
-      logStep(job.jobId, "copying", `Copied: (${answer.length} characters)`);
-      tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "done", chars: answer.length });
-      logStep(job.jobId, "done", "Done: sending the answer to the dashboard");
-      tell({ type: "CHATGPT_REPLY", jobId: job.jobId, text: answer });
-      await clearActive(job.jobId);
+      logStep(job.jobId, "copying", "Answer: ready to hand over (" + answer.length + " characters)");
+      // Do not report "done" yet: the answer is only done once the worker has
+      // stored it and the dashboard has claimed it. The worker emits the done
+      // phase from completeCurrent after the handoff.
+      tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: answer.length });
+      const stored = await sendReplyToApp(job.jobId, answer);
+      if (stored) await clearActive(job.jobId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logStep(job.jobId, "done", cancelled.has(job.jobId) ? "Stopped by the dashboard" : `Stopped: ${message}`);
       if (cancelled.has(job.jobId)) {
         tell({ type: "CHATGPT_CANCELLED", jobId: job.jobId });
+        await clearPendingReply(job.jobId);
       } else {
         tell({ type: "CHATGPT_PROBLEM", jobId: job.jobId, message });
       }
@@ -955,6 +1085,22 @@
       cancelled.add(message.jobId);
       respond({ ok: true });
       return;
+    }
+    if (message?.type === "CHATGPT_PENDING") {
+      void (async () => {
+        try {
+          const stored = await chrome.storage.local.get(ACTIVE_KEY);
+          const job = stored?.[ACTIVE_KEY];
+          // The worker names the job, so a pending answer is recoverable even
+          // if the active marker was cleared by a late error.
+          const jobId = message.jobId || job?.jobId;
+          const pending = jobId ? await readPendingReply(jobId) : null;
+          respond(pending && jobId ? { jobId, text: pending.text } : {});
+        } catch {
+          respond({});
+        }
+      })();
+      return true;
     }
     if (message?.type === "RUN_CHATGPT") {
       const job = {

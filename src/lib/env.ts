@@ -116,6 +116,11 @@ export type ServerEnv = Omit<
 
 const envWarnings: string[] = [];
 
+/** Warnings stay in `getEnvWarnings()`; the console keeps only the two receive lines. */
+function warnEnv(message: string) {
+  if (process.env.LOG_LEVEL === "debug") console.warn("[env]", message);
+}
+
 /** Non-fatal configuration problems found while validating the environment. */
 export function getEnvDiagnostics(): string[] {
   return envWarnings;
@@ -191,7 +196,7 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
       "under row-level security: lists come back empty and inserts fail with \"violates " +
       "row-level security policy\". Set the secret key (Supabase → Project Settings → API Keys).";
     envWarnings.push(msg);
-    console.warn("[env]", msg);
+    warnEnv(msg);
   }
 
   if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) {
@@ -206,7 +211,7 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
     const msg =
       "APP_ENCRYPTION_KEY unset: sender_accounts SMTP passwords cannot be saved. Set `openssl rand -hex 32`.";
     envWarnings.push(msg);
-    console.warn("[env]", msg);
+    warnEnv(msg);
   }
   if (env.AUTO_ENRICH_LEADS) {
     envWarnings.push(
