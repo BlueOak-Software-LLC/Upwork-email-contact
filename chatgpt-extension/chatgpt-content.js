@@ -765,7 +765,7 @@
     try {
       let state = job;
       let alreadySent = false;
-      logStep(job.jobId, "opening", "Opening: checking the ChatGPT tab");
+      logStep(job.jobId, "opening", `Opening: checking the ChatGPT tab (${location.host}${location.pathname})`);
       if (resume && job.phase !== "waiting") {
         const sent = await readSent(job.jobId);
         if (sent && Number.isFinite(sent.beforeCount)) {
