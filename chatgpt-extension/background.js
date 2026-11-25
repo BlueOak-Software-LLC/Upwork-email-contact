@@ -288,6 +288,9 @@ async function ensureContent(tabId) {
 // and the ChatGPT tab is focused again for Copy; without a queue a late
 // dashboard focus can steal the tab back just before the clipboard write.
 let focusChain = Promise.resolve();
+// Once Copy starts, keep the ChatGPT window. A late dashboard focus would make
+// the clipboard write fail again; only the final result may return to the app.
+let pinChatFocus = false;
 
 function withFocusLock(task) {
   const next = focusChain.then(task, task);
@@ -306,8 +309,10 @@ async function focusWindow(windowId) {
 
 async function focusAppTab(force = false) {
   if (!state.appTabId) return;
+  if (!force && pinChatFocus) return;
   if (!force && state.current?.phase !== "waiting") return;
   await withFocusLock(async () => {
+    if (!force && pinChatFocus) return;
     if (!force && state.current?.phase !== "waiting") return;
     try {
       const tab = await chrome.tabs.get(state.appTabId);
@@ -328,10 +333,22 @@ async function activateChatTab(tabId) {
     try {
       const tab = await chrome.tabs.get(tabId);
       await chrome.tabs.update(tabId, { active: true });
+      if (Number.isInteger(tab.windowId) && Number.isInteger(tab.index)) {
+        try {
+          await chrome.tabs.highlight({ windowId: tab.windowId, tabs: [tab.index] });
+        } catch {
+          /* highlighting is a hint; tabs.update already made it active */
+        }
+      }
       await focusWindow(tab.windowId);
-      // Give the OS a moment to hand focus to the window before the content
-      // script checks document.hasFocus().
-      await sleep(200);
+      // Give the OS a moment to hand focus to the window. Poll once or twice
+      // because Windows can apply the foreground change asynchronously.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await sleep(120);
+        const win = await chrome.windows.get(tab.windowId).catch(() => null);
+        if (win?.focused) break;
+        await focusWindow(tab.windowId);
+      }
       return tab;
     } catch {
       /* the tab may have been closed; ensureContent reports that */
@@ -379,6 +396,7 @@ async function processQueue() {
     await saveState();
     return;
   }
+  pinChatFocus = false;
   state.current = { ...job, phase: "opening" };
   await saveState();
   broadcast({ type: "RUNNING", jobId: job.jobId, phase: "opening" });
@@ -397,6 +415,7 @@ async function processQueue() {
       if (reply?.busy) {
         state.queue.unshift(job);
         state.current = null;
+        pinChatFocus = false;
         await saveState();
         setTimeout(processQueue, 3_000);
         return;
@@ -445,6 +464,7 @@ async function cancelJob(jobId) {
       chrome.tabs.sendMessage(state.chatTabId, { type: "CANCEL", jobId }).catch(() => undefined);
     }
     state.current = null;
+    pinChatFocus = false;
   }
   await saveState();
   broadcast({ type: "CANCELLED", jobId });
@@ -469,6 +489,7 @@ async function failCurrent(message) {
   if (!job) return;
   await disarmWatchdog();
   state.current = null;
+  pinChatFocus = false;
   await saveState();
   broadcast({ type: "ERROR", jobId: job.jobId, message });
   setTimeout(processQueue, 1_000);
@@ -480,6 +501,7 @@ async function completeCurrent(jobId, text) {
   await disarmWatchdog();
   state.results[jobId] = text;
   state.current = null;
+  pinChatFocus = false;
   await saveState();
   broadcast({ type: "RESULT", jobId, text });
   await focusAppTab(true);
@@ -539,6 +561,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }
   if (message?.type === "CHATGPT_FOCUS") {
     awaitReady().then(async () => {
+      if (message.reason === "copy" && state.current?.jobId === message.jobId) {
+        pinChatFocus = true;
+      }
       if (state.chatTabId) await activateChatTab(state.chatTabId);
       respond({ ok: true });
     });

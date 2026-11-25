@@ -211,10 +211,13 @@
   // no-op in a background document. Ask the worker to raise the tab and wait
   // for document focus before clicking; retry because Windows sometimes hands
   // focus over a moment after chrome.windows.update().
-  async function focusChatForCopy() {
+  async function focusChatForCopy(jobId) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await Promise.race([ask({ type: "CHATGPT_FOCUS" }), sleep(2500)]);
+        await Promise.race([
+          ask({ type: "CHATGPT_FOCUS", jobId, reason: "copy" }),
+          sleep(2500),
+        ]);
       } catch {
         /* the worker may be restarting; the tab can still be active */
       }
@@ -632,6 +635,36 @@
     return a.includes(probe(b)) || b.includes(probe(a));
   }
 
+  // If ChatGPT's own Copy control cannot write to the clipboard (Chrome denies
+  // async clipboard writes to a programmatic click), copy the rendered answer
+  // ourselves while the document is focused. This keeps the user's clipboard
+  // useful even when the page button silently does nothing.
+  function copyVisibleAnswer(text) {
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.cssText = "position:fixed;top:-2000px;left:-2000px;opacity:0;";
+      (document.body || document.documentElement).appendChild(area);
+      area.focus({ preventScroll: true });
+      area.select();
+      area.setSelectionRange(0, text.length);
+      const copied = document.execCommand("copy");
+      area.remove();
+      return copied;
+    } catch {
+      return false;
+    }
+  }
+
+  async function readCopiedClipboard() {
+    const reply = await Promise.race([
+      ask({ type: "CHATGPT_CLIPBOARD" }),
+      sleep(3000).then(() => null),
+    ]);
+    return clean(reply?.text || "");
+  }
+
   async function readAnswer(jobId, node, pageText) {
     if (!node) return pageText;
     const turn = node.closest('[data-testid^="conversation-turn"]') || node.closest("article") || node.parentElement;
@@ -645,7 +678,7 @@
             ? "Copy focus: ChatGPT tab is already focused"
             : "Copy focus: bringing the ChatGPT tab forward",
         );
-        const focused = await focusChatForCopy();
+        const focused = await focusChatForCopy(jobId);
         logStep(
           jobId,
           "copying",
@@ -661,14 +694,21 @@
         }
         button.click();
         await sleep(900);
-        const reply = await Promise.race([
-          ask({ type: "CHATGPT_CLIPBOARD" }),
-          sleep(3000).then(() => null),
-        ]);
-        const copied = clean(reply?.text || "");
+        const copied = await readCopiedClipboard();
         if (copied && sameAnswer(copied, pageText)) {
           logStep(jobId, "copying", "Copy: the clipboard now holds ChatGPT's answer");
           return copied;
+        }
+        logStep(jobId, "copying", "Copy: ChatGPT's button did not write the answer; copying the visible text");
+        if (copyVisibleAnswer(pageText)) {
+          await sleep(250);
+          const fallback = await readCopiedClipboard();
+          if (fallback && sameAnswer(fallback, pageText)) {
+            logStep(jobId, "copying", "Copy: the visible answer is now on the clipboard");
+            return fallback;
+          }
+          logStep(jobId, "copying", "Copy: copied the visible answer to the clipboard");
+          return pageText;
         }
         logStep(jobId, "copying", "Copy: the clipboard was empty or different; using the visible answer");
       } catch {
