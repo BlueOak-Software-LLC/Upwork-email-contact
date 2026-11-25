@@ -284,29 +284,60 @@ async function ensureContent(tabId) {
   );
 }
 
-async function focusAppTab() {
-  if (!state.appTabId) return;
-  try {
-    await chrome.tabs.update(state.appTabId, { active: true });
-    await chrome.windows.update((await chrome.tabs.get(state.appTabId)).windowId, { focused: true });
-  } catch {
-    /* the dashboard tab was closed */
+// Focus changes must run one at a time. The dashboard is focused while waiting
+// and the ChatGPT tab is focused again for Copy; without a queue a late
+// dashboard focus can steal the tab back just before the clipboard write.
+let focusChain = Promise.resolve();
+
+function withFocusLock(task) {
+  const next = focusChain.then(task, task);
+  focusChain = next.catch(() => undefined);
+  return next;
+}
+
+async function focusWindow(windowId) {
+  if (!Number.isInteger(windowId)) return;
+  const win = await chrome.windows.get(windowId).catch(() => null);
+  if (win?.state === "minimized") {
+    await chrome.windows.update(windowId, { state: "normal" }).catch(() => undefined);
   }
+  await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+}
+
+async function focusAppTab(force = false) {
+  if (!state.appTabId) return;
+  if (!force && state.current?.phase !== "waiting") return;
+  await withFocusLock(async () => {
+    if (!force && state.current?.phase !== "waiting") return;
+    try {
+      const tab = await chrome.tabs.get(state.appTabId);
+      await chrome.tabs.update(state.appTabId, { active: true });
+      await focusWindow(tab.windowId);
+    } catch {
+      /* the dashboard tab was closed */
+    }
+  });
 }
 
 // A background tab can still be typed into, but execCommand and the editor's
 // key handling are unreliable without document focus, so the run briefly owns
-// the foreground while the prompt is typed and sent.
+// the foreground while the prompt is typed and sent. The same activation is
+// used again before Copy because ChatGPT writes to the async clipboard.
 async function activateChatTab(tabId) {
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    await chrome.tabs.update(tabId, { active: true });
-    if (Number.isInteger(tab.windowId)) {
-      await chrome.windows.update(tab.windowId, { focused: true });
+  return withFocusLock(async () => {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      await chrome.tabs.update(tabId, { active: true });
+      await focusWindow(tab.windowId);
+      // Give the OS a moment to hand focus to the window before the content
+      // script checks document.hasFocus().
+      await sleep(200);
+      return tab;
+    } catch {
+      /* the tab may have been closed; ensureContent reports that */
+      return null;
     }
-  } catch {
-    /* the tab may have been closed; ensureContent reports that */
-  }
+  });
 }
 
 async function resumeCurrent() {
@@ -451,7 +482,7 @@ async function completeCurrent(jobId, text) {
   state.current = null;
   await saveState();
   broadcast({ type: "RESULT", jobId, text });
-  await focusAppTab();
+  await focusAppTab(true);
   setTimeout(processQueue, 800);
 }
 

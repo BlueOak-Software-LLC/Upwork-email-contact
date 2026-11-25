@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Upwork Email Contact — ChatGPT session",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Runs Upwork Email Contact PPD and email prompts in the ChatGPT tab you are signed in to. No API key.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6bCuffbI5WMIx49TsZV5lUwABguyqSgDq86WtgOpJbdOYsM8an+NYXSgS5kgB9Kzd69VbuGQZXcHckF182l09hJUr9BLBkG2L32nXce4lMHKbt+ij8iU7kEIsFWUlvcjjfddidQPLbNQDWrrG4CazQdfBvkrHqoex5TDsZq2VGpodWnlxmrmVAIfnfLa1/CMG0MQL7g9n75owTk4Vu4D95E7wkFYpQ+3hEoPy0HW/511djxbhUB6YVMguP1ryR1CYxa7fjCYav4ElfLsuqnbBIynv20uaTYuGMkP3q3ZcW6VWdXVj0OMqHZ7ppvrxQ6KVtCsW9TUP5bZvgdYrLTK0QIDAQAB",
   "permissions": [
