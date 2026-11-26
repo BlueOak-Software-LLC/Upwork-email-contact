@@ -186,6 +186,15 @@ describe("buildTrackedHtml", () => {
     expect(html).not.toContain("**Approach:**");
   });
 
+  it("shows a Markdown destination URL only once as a clickable link", () => {
+    const html = textToHtml("[https://linear.app](https://linear.app) and WhatsApp: [Start chatting](https://wa.me/84366425800)");
+    expect(html.match(/<a href="https:\/\/linear\.app"[^>]*>https:\/\/linear\.app<\/a>/g)).toHaveLength(1);
+    expect(html).not.toContain("</a>https://linear.app");
+    expect(html).toContain('<a href="https://wa.me/84366425800"');
+    expect(html).toContain(">Start chatting</a>");
+    expect(html).not.toContain("</a>https://wa.me/84366425800");
+  });
+
   it("escapes markup that is not part of the supported formatting", () => {
     const html = textToHtml("<img src=x onerror=alert(1)> **safe**");
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
@@ -320,5 +329,37 @@ describe("buildTrackedHtml", () => {
     });
     expect(stripTrackingPixels(built.html)).toBe("<p>hi</p>");
     expect(stripTrackingPixels(`<img src='${DOMAIN}/o/${TOKEN}.gif' alt='x'><p>hi</p>`)).toBe("<p>hi</p>");
+  });
+});
+
+describe("tracked email body · one link per URL", () => {
+  it("renders each destination once as visible text after tracking rewrites the hrefs", () => {
+    const content = [
+      "Hi team,",
+      "",
+      "Live examples for context:",
+      "- [https://linear.app](https://linear.app) — queue triage",
+      "- https://developers.notion.com/ — database views",
+      "",
+      "Start with the intake rules; details at https://linear.app.",
+    ].join("\n");
+    const found = discoverLinks({ text: content });
+    const links = found.map((candidate, index) => ({
+      token: `LinkToken${String(index).padStart(2, "0")}0123456789abcdefghij`,
+      label: candidate.label,
+      destinationUrl: candidate.destinationUrl,
+    }));
+    const built = buildTrackedHtml({
+      html: textToHtml(content),
+      token: TOKEN,
+      domain: DOMAIN,
+      links,
+    });
+
+    // Visible text of every anchor is the destination itself, never a raw URL after an anchor.
+    expect(built.html).not.toMatch(/<\/a>\s*https?:\/\//);
+    const visible = [...built.html.matchAll(/<a [^>]*>([^<]*)<\/a>/g)].map((match) => match[1]);
+    expect(visible).toEqual(["https://linear.app", "https://developers.notion.com/", "https://linear.app"]);
+    expect(built.html.match(/<li/g)).toHaveLength(2);
   });
 });

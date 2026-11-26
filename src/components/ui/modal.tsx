@@ -83,7 +83,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         className={cn(
-          "animate-pop-in card w-full max-w-lg p-5 shadow-[var(--shadow-float)] outline-none",
+          "animate-pop-in card flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden p-5 shadow-[var(--shadow-float)] outline-none",
           className,
         )}
       >
@@ -106,10 +106,10 @@ export function Modal({
           </button>
         </div>
 
-        <div className="space-y-4">{children}</div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pr-1">{children}</div>
 
         {footer ? (
-          <div className="mt-5 flex justify-end gap-2">{footer}</div>
+          <div className="mt-5 flex shrink-0 justify-end gap-2">{footer}</div>
         ) : null}
       </div>
     </div>

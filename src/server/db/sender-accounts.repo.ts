@@ -5,13 +5,14 @@ import type { SenderAccountRow } from "@/types/lead";
 import { ApiError } from "@/server/http/errors";
 
 export const SENDER_PUBLIC_COLUMNS =
-  "id,label,from_email,display_name,reply_to,signature,role_title,phone,whatsapp,linkedin_url,website,location,experience_summary,skills,smtp_host,smtp_port,smtp_secure,smtp_user,daily_limit,sent_count,status,is_default,last_verified_at,last_error,created_at,updated_at";
+  "id,label,from_email,display_name,company_name,reply_to,signature,role_title,phone,whatsapp,linkedin_url,website,location,experience_summary,skills,smtp_host,smtp_port,smtp_secure,smtp_user,daily_limit,sent_count,status,is_default,last_verified_at,last_error,created_at,updated_at";
 
 export interface SenderAccountDto {
   id: string;
   label: string;
   from_email: string;
   display_name: string | null;
+  company_name: string | null;
   reply_to: string | null;
   signature: string | null;
   role_title: string | null;
@@ -55,6 +56,7 @@ export interface UpsertSenderInput {
   label: string;
   fromEmail: string;
   displayName?: string | null;
+  companyName?: string | null;
   replyTo?: string | null;
   signature?: string | null;
   roleTitle?: string | null;
@@ -109,6 +111,7 @@ export const senderAccountsRepo = {
         label: input.label,
         from_email: input.fromEmail.toLowerCase(),
         display_name: input.displayName ?? null,
+        company_name: input.companyName ?? null,
         reply_to: input.replyTo?.toLowerCase() ?? null,
         signature: input.signature ?? null,
         role_title: input.roleTitle ?? null,
@@ -146,6 +149,7 @@ export const senderAccountsRepo = {
     if (input.label !== undefined) patch.label = input.label;
     if (input.fromEmail !== undefined) patch.from_email = input.fromEmail.toLowerCase();
     if (input.displayName !== undefined) patch.display_name = input.displayName;
+    if (input.companyName !== undefined) patch.company_name = input.companyName;
     if (input.replyTo !== undefined) patch.reply_to = input.replyTo?.toLowerCase() ?? null;
     if (input.signature !== undefined) patch.signature = input.signature;
     if (input.roleTitle !== undefined) patch.role_title = input.roleTitle;

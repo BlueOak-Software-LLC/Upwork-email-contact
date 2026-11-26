@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { emailSignatureLines } from "@/lib/email-signature";
 import { updateContactSchema } from "@/lib/validation/contact";
 import { createSenderAccountSchema, updateSenderAccountSchema } from "@/lib/validation/outreach";
 
@@ -29,6 +30,36 @@ describe("sender account validation", () => {
     expect(parsed).not.toHaveProperty("smtpSecure");
     expect(parsed).not.toHaveProperty("dailyLimit");
     expect(parsed).not.toHaveProperty("isDefault");
+  });
+});
+
+describe("canonical email signature", () => {
+  it("uses the requested four-line format with one linked website and no sender mailbox", () => {
+    expect(emailSignatureLines({
+      name: "Luan Le",
+      role: "Senior Software Engineer",
+      company: "Luan Labs",
+      website: "https://luanle.dev/",
+    })).toEqual([
+      "Best Regards,",
+      "Luan Le",
+      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "Senior Software Engineer | [Luan Labs](https://luanle.dev)",
+    ]);
+  });
+
+  it("validates a website before including it in the linked company line", () => {
+    expect(emailSignatureLines({
+      name: "Luan Le",
+      role: "Engineer",
+      company: "Luan Labs",
+      website: "javascript:alert(1)",
+    })).toEqual([
+      "Best Regards,",
+      "Luan Le",
+      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "Engineer | Luan Labs",
+    ]);
   });
 });
 

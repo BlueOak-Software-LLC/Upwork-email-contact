@@ -145,6 +145,7 @@ export const createSenderAccountSchema = z.object({
   label: z.string().trim().min(1).max(80),
   fromEmail: z.string().trim().toLowerCase().email().max(320),
   displayName: z.string().trim().max(120).nullish(),
+  companyName: z.string().trim().max(160).nullish(),
   replyTo: z.string().trim().toLowerCase().email().max(320).nullish(),
   signature: z.string().trim().max(2000).nullish(),
   roleTitle: z.string().trim().max(120).nullish(),

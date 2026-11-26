@@ -5,6 +5,7 @@ import {
   type SenderAccountDto,
 } from "@/server/db/sender-accounts.repo";
 import type { ProposalBrand } from "@/server/services/prompts/proposal.prompt";
+import { emailSignatureLines } from "@/lib/email-signature";
 
 /**
  * The identity stamped onto a PPD, the PDF header and every email sign-off.
@@ -19,6 +20,7 @@ export function brandFromSender(account: SenderAccountDto | null): ProposalBrand
   const env = brandConfig();
   const preparedBy = account?.display_name?.trim() || env.preparedBy;
   const title = account?.role_title?.trim() || env.title;
+  const company = account?.company_name?.trim() || env.company;
   const senderEmail = account?.from_email?.trim() || env.senderEmail;
   const website = account?.website?.trim() || env.website;
   const phone = account?.phone?.trim() || "";
@@ -27,10 +29,15 @@ export function brandFromSender(account: SenderAccountDto | null): ProposalBrand
   const location = account?.location?.trim() || "";
   const experience = account?.experience_summary?.trim() || "";
   const skills = account?.skills?.trim() || "";
-  const signature = signatureLines({ preparedBy, title, website });
+  const signature = emailSignatureLines({
+    name: preparedBy,
+    role: title,
+    company,
+    website,
+  });
 
   return {
-    company: "",
+    company,
     website,
     preparedBy,
     title,
@@ -64,19 +71,4 @@ export async function resolveSenderBrand(senderAccountId?: string | null): Promi
     });
     return brandFromSender(null);
   }
-}
-
-function signatureLines(brand: {
-  preparedBy: string;
-  title: string;
-  website: string;
-}): string[] {
-  const whatsapp = "https://wa.me/84366425800";
-  return [
-    "Best regards,",
-    brand.preparedBy,
-    brand.title,
-    `WhatsApp: [Start chatting](${whatsapp})`,
-    brand.website,
-  ].filter((line) => Boolean(line && line.trim()));
 }

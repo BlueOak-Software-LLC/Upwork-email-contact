@@ -43,10 +43,9 @@ function formatEmailInline(value: string): string {
   const withLinks = value.replace(
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>]+)/g,
     (match, label?: string, markdownUrl?: string, rawUrl?: string) => {
-      const url = (markdownUrl ?? rawUrl ?? "").replace(/[.,;:!?]+$/, "");
-      const suffix = label && markdownUrl
-        ? ""
-        : match.slice((rawUrl ?? "").length - (rawUrl ?? "").replace(/[.,;:!?]+$/, "").length);
+      const rawDestination = markdownUrl ?? rawUrl ?? "";
+      const url = rawDestination.replace(/[.,;:!?]+$/, "");
+      const suffix = label && markdownUrl ? "" : rawDestination.slice(url.length);
       let safeUrl: URL | null = null;
       try {
         safeUrl = new URL(url);
@@ -70,6 +69,8 @@ function formatEmailInline(value: string): string {
 export function htmlToText(html: string) {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<\/li>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")

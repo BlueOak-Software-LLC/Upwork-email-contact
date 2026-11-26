@@ -26,6 +26,7 @@ const MIGRATIONS = [
   "0009_chatgpt_completion_claim.sql",
   "0010_sender_profile.sql",
   "0011_retire_ai_settings.sql",
+  "0012_sender_company_name.sql",
 ];
 
 const PREAMBLE = `

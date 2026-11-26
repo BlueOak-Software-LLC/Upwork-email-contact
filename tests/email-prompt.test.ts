@@ -12,20 +12,26 @@ describe("email draft prompt", () => {
     expect(all).not.toContain("similar_products");
   });
 
-  it("covers requirements, the PPD approach, references and every question", () => {
-    expect(prompt.system).toContain("CLIENT REQUIREMENTS AND PROJECT APPROACH");
-    expect(prompt.system).toContain("reviewed PPD");
+  it("covers requirements, the PPD approach and every question", () => {
+    expect(prompt.system).toContain("REQUIREMENTS AND APPROACH");
+    expect(prompt.system).toContain("Follow the reviewed PPD");
     expect(prompt.system).toContain("Answer EVERY question or direct request");
     expect(prompt.system).toContain("Use web search");
-    expect(prompt.system).toContain("examples inline in the explanation of the approach");
-    expect(prompt.system).toContain("Professional, warm, concise, technically specific");
-    expect(prompt.system).toContain("bold");
-    expect(prompt.system).toContain("WhatsApp");
-    expect(prompt.user).toContain("only the WhatsApp");
-    expect(prompt.user).toContain("Do not write a sign-off or contact block");
-    expect(prompt.system).toContain("source code");
-    expect(prompt.user).toContain("{{research_notes}}");
     expect(prompt.user).toContain("{{job_questions}}");
+    expect(prompt.user).toContain("{{research_notes}}");
     expect(prompt.user).toContain("{{ppd_summary}}");
+  });
+
+  it("asks for a hands-on pitch with a bulleted list of verified links in [URL](URL) form", () => {
+    expect(prompt.system).toContain("hands-on");
+    expect(prompt.system).toContain("handover");
+    expect(prompt.system).toContain("- [https://example.com/feature](https://example.com/feature)");
+    expect(prompt.system).toContain("official Apple App Store / Google Play");
+    expect(prompt.system).toContain("keep each list item on its own");
+  });
+
+  it("leaves the sign-off to the server", () => {
+    expect(prompt.system).toContain("Do not write a sign-off");
+    expect(prompt.user).toContain("Do not include {{whatsapp_share_link}}");
   });
 });

@@ -8,6 +8,7 @@ import type {
   ProposalPpd,
 } from "@/types/lead";
 import { ApiError } from "@/server/http/errors";
+import { emailSignatureLines } from "@/lib/email-signature";
 
 /**
  * The model is asked for the PPD block contract, but we never trust it:
@@ -82,12 +83,19 @@ const BRACKET_MEANINGS: Array<[RegExp, string]> = [
  * site. There is deliberately no company component.
  */
 function identityFromSignature(signature: string[]) {
-  const [name = "", role = "", maybeSite = ""] = signature.slice(1);
-  const title = (role.includes("·") ? role.split("·")[0] ?? role : role).trim();
+  const profileLines = signature.slice(1).filter((line) =>
+    Boolean(line?.trim()) &&
+    !/whatsapp|wa\.me/i.test(line) &&
+    !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(line),
+  );
+  const [name = "", roleCompany = "", ...rest] = profileLines;
+  const title = roleCompany.split(" | ")[0]?.trim() || roleCompany.trim();
+  const companyLink = roleCompany.match(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/);
+  const maybeSite = rest.find((line) => /^https?:\/\//i.test(line)) ?? companyLink?.[2] ?? "";
   return {
     name: name || title,
-    website: /^https?:\/\//i.test(maybeSite) ? maybeSite : "",
-    email: maybeSite.includes("@") ? maybeSite : "",
+    website: maybeSite,
+    email: rest.find((line) => line.includes("@")) ?? "",
     title,
   };
 }
@@ -343,6 +351,9 @@ export interface EmailContext {
     title: string;
     senderEmail: string;
     website: string;
+    company?: string;
+    whatsapp?: string;
+    phone?: string;
   };
   jobDescription?: string;
   jobQuestions?: string[];
@@ -389,31 +400,32 @@ export function sanitizeEmail(
   ctx: EmailContext,
 ): { subject: string; content: string } {
   const signature = ctx.sender
-    ? [
-        "Best regards,",
-        ctx.sender.preparedBy,
-        ctx.sender.title,
-        "WhatsApp: [Start chatting](https://wa.me/84366425800)",
-        ctx.sender.website,
-      ].filter((line) => Boolean(line?.trim()))
+    ? emailSignatureLines({
+        name: ctx.sender.preparedBy,
+        role: ctx.sender.title,
+        company: ctx.sender.company,
+        website: ctx.sender.website,
+      })
     : ctx.includeWhatsappContact
       ? (() => {
-          const profileLines = (ctx.signature ?? []).filter((line) =>
+          const cleanSignature = (ctx.signature ?? []).filter((line) =>
             Boolean(line?.trim()) &&
             !/best regards|kind regards|warm regards|\bregards\b|\bthanks\b|\bsincerely\b/i.test(line) &&
             !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(line) &&
             !/\+?\d[\d\s().-]{7,}/.test(line) &&
             !/wa\.me|whatsapp|linkedin\.com/i.test(line),
           );
-          const website = profileLines.find((line) => /^https?:\/\//i.test(line));
-          const identity = profileLines.filter((line) => line !== website);
-          return [
-            "Best regards,",
-            identity[0],
-            identity[1],
-            "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+          const identity = identityFromSignature(cleanSignature);
+          const roleCompany = cleanSignature.find((line) => line.includes(" | "));
+          const company = roleCompany?.match(/\|\s*\[([^\]]+)\]\(/)?.[1] ?? "";
+          const website = identity.website || roleCompany?.match(/\((https?:\/\/[^)]+)\)/)?.[1];
+          const role = roleCompany?.split(" | ")[0] ?? identity.title;
+          return emailSignatureLines({
+            name: identity.name,
+            role,
+            company,
             website,
-          ].filter((line): line is string => Boolean(line?.trim()));
+          });
         })()
       : (ctx.signature ?? []).filter((line) => Boolean(line?.trim()) && !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(line));
   const identity = ctx.sender
@@ -469,6 +481,7 @@ function sanitizeEmailInner(
     }
   }) || fallbackBody;
   body = stripDisallowedUrls(body);
+  body = linkifyPlainUrls(body);
   if (ctx.includeSimilarProjectLink) {
     const productLinks = [...body.matchAll(/(?:\]\()?((?:https?:\/\/)[^\s)\]]+)/g)]
       .map((match) => (match[1] ?? "").replace(/[.,;:!?]+$/, ""))
@@ -562,6 +575,27 @@ const BLOCKED_HOSTS = [
 
 const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "buff.ly"]);
 const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?|docs?|documentation|api|source|src|repository|repo)(\/|$)/i;
+
+function linkifyPlainUrls(value: string): string {
+  const tokens: string[] = [];
+  const protectedMarkdown = value.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    (match) => {
+      const token = `EMAILMARKDOWNLINK${tokens.length}ENDTOKEN`;
+      tokens.push(match);
+      return token;
+    },
+  );
+  const linked = protectedMarkdown.replace(
+    /https?:\/\/[^\s<>"')\]]+/g,
+    (raw) => {
+      const url = raw.replace(/[.,;:!?]+$/, "");
+      const trailing = raw.slice(url.length);
+      return `[${url}](${url})${trailing}`;
+    },
+  );
+  return linked.replace(/EMAILMARKDOWNLINK(\d+)ENDTOKEN/g, (_match, index: string) => tokens[Number(index)] ?? "");
+}
 
 function isAllowedProductUrl(value: string): boolean {
   const cleaned = value.trim().replace(/[),.;:!?]+$/, "");
@@ -930,33 +964,50 @@ export function softEmail(value: unknown, max: number): string {
 }
 
 function formatEmailParagraphs(value: string): string {
-  const blocks = value
-    .replace(/\r\n/g, "\n")
-    .split(/\n\s*\n/)
-    .map((block) => block
-      .split("\n")
-      .map((line) => line.replace(/^\s*(?:[•*-]|\d+[.)])\s+/, "").trim())
-      .filter(Boolean)
-      .join(" ")
-      .replace(/\s{2,}/g, " ")
-      .trim())
-    .filter(Boolean);
-  if (!blocks.length) return "";
-
-  const paragraphs: string[] = [];
-  for (const block of blocks) {
-    const greeting = block.match(/^(Hi\s+[^,\n]{1,80},|Hello,)\s*/i);
-    let remainder = block;
-    if (greeting) {
-      paragraphs.push((greeting[1] ?? "").trim());
-      remainder = block.slice(greeting[0].length).trim();
+  const out: string[] = [];
+  for (const block of value.replace(/\r\n/g, "\n").split(/\n\s*\n/)) {
+    let prose: string[] = [];
+    let list: string[] = [];
+    const flushProse = () => {
+      if (prose.length) out.push(...splitProse(prose.join(" ")));
+      prose = [];
+    };
+    const flushList = () => {
+      if (list.length) out.push(list.join("\n"));
+      list = [];
+    };
+    for (const raw of block.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const bullet = line.match(/^[•*-]\s+(.+)$/);
+      if (bullet) {
+        flushProse();
+        list.push(`- ${bullet[1]}`);
+      } else {
+        flushList();
+        prose.push(line.replace(/^\d+[.)]\s+/, ""));
+      }
     }
-    const sentences = remainder.split(/(?<=[.!?])\s+(?=[A-Z“])/).filter(Boolean);
-    for (let index = 0; index < sentences.length; index += 2) {
-      paragraphs.push(sentences.slice(index, index + 2).join(" ").trim());
-    }
+    flushProse();
+    flushList();
   }
-  return paragraphs.filter(Boolean).join("\n\n");
+  return out.filter(Boolean).join("\n\n");
+}
+
+/** Splits prose into paragraphs of about two sentences, keeping any greeting alone. */
+function splitProse(text: string): string[] {
+  const paragraphs: string[] = [];
+  const greeting = text.match(/^(Hi\s+[^,\n]{1,80},|Hello,)\s*/i);
+  let remainder = text.trim();
+  if (greeting) {
+    paragraphs.push((greeting[1] ?? "").trim());
+    remainder = text.slice(greeting[0].length).trim();
+  }
+  const sentences = remainder.split(/(?<=[.!?])\s+(?=[A-Z“])/).filter(Boolean);
+  for (let index = 0; index < sentences.length; index += 2) {
+    paragraphs.push(sentences.slice(index, index + 2).join(" ").trim());
+  }
+  return paragraphs.filter(Boolean);
 }
 
 function stripMarkdown(value: string): string {

@@ -1,6 +1,6 @@
 {
-  "document_title": "Customer support workflow proposal",
-  "subtitle": "A practical plan for ticket routing, AI assistance, CRM sync and production monitoring.",
+  "document_title": "Support ticket routing with CRM sync",
+  "subtitle": "A short plan to classify tickets, route them safely and write clean records back to your CRM.",
   "prepared_for": "Hiring team · Northstar Support",
   "prepared_by": "Luan Le",
   "prepared_role": "Senior Software Engineer",
@@ -24,8 +24,8 @@
         {
           "type": "paragraph",
           "items": [
-            "Your support team handles a growing queue across email and chat, and agents currently read each ticket, decide its category and copy context into the CRM by hand. The result is slower first response, inconsistent routing and customer history that is hard to trust.",
-            "The goal is a workflow that classifies incoming requests, surfaces the right help-centre content to an agent, and writes a clean activity record back to the CRM. Success means faster first response, fewer misrouted tickets and a measurable accuracy baseline before any automation is allowed to act without review."
+            "Your agents read each ticket, pick a category and copy the details into the CRM by hand. This slows first response and makes routing inconsistent.",
+            "The goal is a workflow that suggests a category for each incoming request, sends it to the right team and writes a clean activity record to the CRM. Success means faster first response, fewer misrouted tickets and a measured accuracy baseline before automation acts on its own."
           ]
         }
       ]
@@ -38,20 +38,20 @@
           "type": "numberedSteps",
           "items": [
             {
-              "title": "Map the real queue",
-              "description": "Review 100–200 historical tickets with your team, agree the categories that matter and identify the CRM fields an agent actually uses."
+              "title": "Review the real queue",
+              "description": "We go through 100–200 past tickets together, agree the categories that matter and list the CRM fields agents actually use."
             },
             {
-              "title": "Design the routing contract",
-              "description": "Define confidence thresholds, fallback to human review, duplicate handling and the exact event payload written back to the CRM."
+              "title": "Agree the rules",
+              "description": "We set confidence thresholds, human review for uncertain tickets, duplicate handling and the exact record written to the CRM."
             },
             {
-              "title": "Build and calibrate the pilot",
-              "description": "Connect one channel, classify live tickets in shadow mode and compare the model's choices with your team's decisions before enabling routing."
+              "title": "Pilot in shadow mode",
+              "description": "The model suggests categories on live tickets for two weeks. Your team compares its choices with theirs before routing is switched on."
             },
             {
               "title": "Harden and hand over",
-              "description": "Add retries, audit logs, permission checks and monitoring, then document how to change categories and investigate a bad classification."
+              "description": "I add retries, logs and monitoring, then write a short guide on changing categories and checking a bad classification."
             }
           ]
         }
@@ -59,15 +59,15 @@
     },
     {
       "id": "deliverables",
-      "title": "Scope and deliverables",
+      "title": "What you receive",
       "blocks": [
         {
           "type": "bullets",
           "items": [
-            "Category taxonomy, routing rules and confidence thresholds agreed with your support lead",
-            "Working connector for one channel plus CRM activity and contact synchronisation",
-            "Shadow-mode evaluation report with accuracy, false-route rate and sample failures",
-            "Operator runbook covering retries, escalations, permissions and rollback",
+            "An agreed category list, routing rules and confidence thresholds",
+            "A working connector for one channel, with CRM activity and contact sync",
+            "A shadow-mode report showing accuracy, false routes and sample failures",
+            "A short operator guide covering retries, escalations and rollback",
             "Two review sessions with your team and a final handover walkthrough"
           ]
         }
@@ -82,18 +82,18 @@
           "rows": [
             {
               "label": "Working basis",
-              "value": "Fixed-scope milestones with written acceptance criteria"
+              "value": "Fixed milestones with written acceptance criteria"
             },
             {
               "label": "First milestone",
-              "value": "Taxonomy and integration map in week one"
+              "value": "Category list and integration map in week one"
             },
             {
               "label": "Indicative investment",
-              "value": "USD 4,800–6,200, confirmed after a scoping call"
+              "value": "USD 4,800–6,200, confirmed after a short scoping call"
             },
             {
-              "label": "Your inputs",
+              "label": "What I need from you",
               "value": "Ticket samples, CRM sandbox access and one support lead for reviews"
             }
           ]
@@ -102,14 +102,14 @@
     },
     {
       "id": "questions",
-      "title": "Questions from your brief",
+      "title": "Answers to your questions",
       "blocks": [
         {
           "type": "bullets",
           "items": [
-            "Yes — I can connect to your CRM and helpdesk. Please confirm which platforms and versions are in scope so I can validate the available APIs before the first milestone.",
-            "Yes — the pilot can run without sending customer data to an external model. I can start with a local classifier or a redacted payload, and we can agree the data policy before any live traffic.",
-            "For the pilot I would target at least 90% agreement with your team on the top five categories, with every low-confidence ticket routed to a human."
+            "Can you connect to our CRM and helpdesk? Yes. Tell me the platforms and versions and I will check their APIs before the first milestone.",
+            "Can customer data stay private? Yes. The pilot can use a redacted payload or a local classifier, and we agree the data policy before any live traffic.",
+            "What accuracy do you target? At least 90% agreement with your team on the top five categories, with every low-confidence ticket sent to a person."
           ]
         }
       ]
@@ -123,14 +123,14 @@
           "items": [
             {
               "title": "15-minute call",
-              "description": "Confirm the queue, CRM and the one channel for the pilot."
+              "description": "We confirm the queue, the CRM and the channel for the pilot."
             },
             {
               "title": "Scoping note",
               "description": "I send a one-page scope, milestone plan and fixed price within two working days."
             },
             {
-              "title": "Week-one kickoff",
+              "title": "Kickoff",
               "description": "We start with ticket samples and the integration map once the scope is signed off."
             }
           ]
@@ -138,5 +138,5 @@
       ]
     }
   ],
-  "closing": "Thank you for considering this proposal. I am happy to walk through the plan or adjust the pilot scope on a short call."
+  "closing": "Thank you for reading. I am happy to walk through the plan or adjust the pilot scope on a short call."
 }

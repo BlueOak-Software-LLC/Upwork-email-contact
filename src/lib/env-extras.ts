@@ -1,17 +1,19 @@
 import "server-only";
 import { getServerEnv } from "@/lib/env";
+import { emailSignatureLines } from "@/lib/email-signature";
 
 /**
  * Fallback identity for a fresh install with no sender profile yet. The real
  * name, role and contact details come from `sender_accounts`; this function
- * deliberately never invents a company name.
+ * deliberately never invents a company name; an explicitly configured env
+ * value is used only for the linked email-signature label.
  */
 export function brandConfig() {
   const env = getServerEnv();
   const from = parseFrom(env.EMAIL_FROM);
-  // `PROPOSAL_COMPANY` is parsed for old .env files but is deliberately never
-  // returned: no company name may reach a PPD, PDF or email signature.
-  const company = "";
+  // This value may label the linked company website in an email signature;
+  // PPD identity is still derived from the sender profile's person fields.
+  const company = env.PROPOSAL_COMPANY;
   // Only the explicit name is safe here: an EMAIL_FROM display name can be a
   // company, and the PPD must never print one.
   const preparedBy = env.PROPOSAL_PREPARED_BY || "";
@@ -36,22 +38,24 @@ export function brandConfig() {
       website: env.PROPOSAL_WEBSITE,
       preparedBy,
       title,
+      company,
     }),
   };
 }
 
-/** Keep public contact links in the email signature to WhatsApp and the website. */
+/** Keep email-signature formatting consistent with selected sender profiles. */
 function signatureLines(brand: {
   website: string;
   preparedBy: string;
   title: string;
+  company: string;
 }): string[] {
-  const lines = ["Best regards,"];
-  if (brand.preparedBy) lines.push(brand.preparedBy);
-  if (brand.title) lines.push(brand.title);
-  lines.push("WhatsApp: https://wa.me/84366425800");
-  if (brand.website) lines.push(brand.website);
-  return lines;
+  return emailSignatureLines({
+    name: brand.preparedBy,
+    role: brand.title,
+    company: brand.company,
+    website: brand.website,
+  });
 }
 
 /** `"Luan Le" <luan@example.com>` → { email, local, domain }. */

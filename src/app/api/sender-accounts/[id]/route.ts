@@ -37,6 +37,7 @@ export const PATCH = withApi<Ctx>(async (request, { params }) => {
     label: input.label,
     fromEmail: input.fromEmail,
     displayName: input.displayName,
+    companyName: input.companyName,
     replyTo: input.replyTo,
     signature: input.signature,
     roleTitle: input.roleTitle,

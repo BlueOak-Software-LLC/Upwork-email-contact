@@ -392,6 +392,7 @@ export interface Database {
           label: string;
           from_email: string;
           display_name: string | null;
+          company_name: string | null;
           reply_to: string | null;
           signature: string | null;
           role_title: string | null;
@@ -421,6 +422,7 @@ export interface Database {
           label: string;
           from_email: string;
           display_name?: string | null;
+          company_name?: string | null;
           reply_to?: string | null;
           signature?: string | null;
           role_title?: string | null;
@@ -450,6 +452,7 @@ export interface Database {
           label?: string;
           from_email?: string;
           display_name?: string | null;
+          company_name?: string | null;
           reply_to?: string | null;
           signature?: string | null;
           role_title?: string | null;

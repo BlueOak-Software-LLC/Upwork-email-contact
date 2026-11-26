@@ -8,11 +8,13 @@ import { compileProposalPdfme } from "@/lib/pdfme/compiler";
 import {
   DEFAULT_PPD_CLOSING,
   DOC_WORD_TARGET,
+  assertPpdShape,
   sanitizeEmail,
   sanitizePpd,
   type ProposalContext,
 } from "@/server/services/proposal-sanitize";
 import { extractQuestions } from "@/server/services/prompts/proposal.prompt";
+import { htmlToText, textToHtml } from "@/server/services/templates";
 import type { ProposalPpd } from "@/types/lead";
 
 const fontPath = (name: string) =>
@@ -114,8 +116,14 @@ describe("sanitizeEmail · product links", () => {
       title: "Senior Software Engineer",
       senderEmail: "luan@example.com",
       website: "https://luanle.dev",
+      company: "Luan Labs",
     },
-    signature: ["Best regards,", "Luan Le", "luan@example.com"],
+    signature: [
+      "Best Regards,",
+      "Luan Le",
+      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "Senior Software Engineer | [Luan Labs](https://luanle.dev)",
+    ],
     includeWhatsappContact: true,
   };
 
@@ -135,6 +143,7 @@ describe("sanitizeEmail · product links", () => {
       emailContext,
     );
     expect(email.content).toContain("https://linear.app");
+    expect(email.content).toContain("[https://linear.app](https://linear.app)");
     expect(email.content).not.toContain("medium.com");
     expect(email.content).not.toContain("g2.com");
     expect(email).not.toHaveProperty("similarProducts");
@@ -153,6 +162,36 @@ describe("sanitizeEmail · product links", () => {
     expect(email.content).toContain("**Approach:**");
     expect(email.content).toContain("[Linear](https://linear.app)");
     expect(email.content).toContain("https://wa.me/84366425800");
+  });
+
+  it("keeps a bulleted link list as list items and shows each URL once in HTML and text", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content: [
+            "Hi team,",
+            "",
+            "Live examples for context:",
+            "- [https://linear.app](https://linear.app) — queue triage",
+            "- https://developers.notion.com/ — database views",
+            "",
+            "I would map the intake rules first and hand over the runbook at the end.",
+          ].join("\n"),
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("- [https://linear.app](https://linear.app)");
+    expect(email.content).toContain("- [https://developers.notion.com/](https://developers.notion.com/)");
+
+    const html = textToHtml(email.content);
+    expect(html.match(/<li/g)).toHaveLength(2);
+    expect(html.match(/https:\/\/linear\.app/g)).toHaveLength(2); // href + visible text only
+    expect(html).not.toMatch(/<\/a>\s*https?:\/\//);
+    const text = htmlToText(html);
+    expect(text.match(/https:\/\/linear\.app/g)).toHaveLength(1);
+    expect(text).toContain("- https://linear.app");
   });
 
   it("keeps paragraphs readable and replaces model closings/contact details with one canonical signature", () => {
@@ -181,9 +220,11 @@ describe("sanitizeEmail · product links", () => {
     expect(email.content).toContain("rules first.\n\nThen I would");
     expect(email.content).toContain("team.\n\nThe reviewed proposal");
     expect(email.content).not.toContain("luan@example.com");
-    expect(email.content.match(/Best regards,/g)).toHaveLength(1);
+    expect(email.content.match(/Best Regards,/g)).toHaveLength(1);
     expect(email.content).toContain("WhatsApp: [Start chatting](https://wa.me/84366425800)");
-    expect(email.content).toContain("https://luanle.dev");
+    expect(email.content).toContain("Senior Software Engineer | [Luan Labs](https://luanle.dev)");
+    expect(email.content).not.toContain("luan@example.com");
+    expect(email.content.match(/Best Regards,/g)).toHaveLength(1);
   });
 
   it("keeps an allowed reference link inline and returns exactly subject/content", () => {
@@ -289,6 +330,7 @@ describe("compileProposalPdfme · layout", () => {
     const example = JSON.parse(
       readFileSync(fileURLToPath(new URL("../examples/ppd-example.json", import.meta.url)), "utf8"),
     ) as ProposalPpd;
+    expect(assertPpdShape(example)).toEqual([]);
     const { compiled, pdf } = await render(example);
     expect(compiled.pages).toBeGreaterThanOrEqual(1);
     expect(pdf.getPageCount()).toBe(compiled.pages);

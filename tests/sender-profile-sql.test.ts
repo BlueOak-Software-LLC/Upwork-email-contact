@@ -18,6 +18,7 @@ describe("0010 sender profile", () => {
   it("stores the profile fields without touching the SMTP secret", async () => {
     const { rows } = await asService<{
       display_name: string;
+      company_name: string;
       role_title: string;
       phone: string;
       whatsapp: string;
@@ -29,15 +30,16 @@ describe("0010 sender profile", () => {
     }>(
       db,
       `insert into public.sender_accounts
-         (label, from_email, display_name, role_title, phone, whatsapp, linkedin_url,
+         (label, from_email, display_name, company_name, role_title, phone, whatsapp, linkedin_url,
           website, location, experience_summary, skills, smtp_host, smtp_port, is_default)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 465, true)
-       returning display_name, role_title, phone, whatsapp, linkedin_url, website,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 465, true)
+       returning display_name, company_name, role_title, phone, whatsapp, linkedin_url, website,
                  location, experience_summary, skills`,
       [
         "Luan — Gmail",
         "luan@example.com",
         "Luan Le",
+        "Luan Labs",
         "Senior Software Engineer",
         "+84 90 123 4567",
         "https://wa.me/84901234567",
@@ -51,6 +53,7 @@ describe("0010 sender profile", () => {
     );
     expect(rows[0]).toMatchObject({
       display_name: "Luan Le",
+      company_name: "Luan Labs",
       role_title: "Senior Software Engineer",
       website: "https://luanle.dev",
       experience_summary: "Built React and Node products for 10 years.",

@@ -18,6 +18,7 @@ import { TimeAgo } from "@/components/ui/time-ago";
 import { Table, TBody, Td, Th, THead, Tr } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import type { SenderAccountDto } from "@/server/db/sender-accounts.repo";
+import { emailSignatureLines } from "@/lib/email-signature";
 
 const GMAIL = { host: "smtp.gmail.com", port: 465, secure: true };
 
@@ -34,6 +35,7 @@ const emptyForm = {
   label: "",
   fromEmail: "",
   displayName: "",
+  companyName: "",
   roleTitle: "",
   replyTo: "",
   phone: "",
@@ -43,7 +45,6 @@ const emptyForm = {
   location: "",
   experienceSummary: "",
   skills: "",
-  signature: "",
   smtpUser: "",
   smtpPassword: "",
   smtpHost: GMAIL.host,
@@ -58,6 +59,7 @@ function formFromAccount(account: SenderAccountDto) {
     label: account.label,
     fromEmail: account.from_email,
     displayName: account.display_name ?? "",
+    companyName: account.company_name ?? "",
     roleTitle: account.role_title ?? "",
     replyTo: account.reply_to ?? "",
     phone: account.phone ?? "",
@@ -67,7 +69,6 @@ function formFromAccount(account: SenderAccountDto) {
     location: account.location ?? "",
     experienceSummary: account.experience_summary ?? "",
     skills: account.skills ?? "",
-    signature: account.signature ?? "",
     smtpUser: account.smtp_user ?? "",
     smtpPassword: "",
     smtpHost: account.smtp_host,
@@ -89,6 +90,12 @@ export function SendersView() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [preset, setPreset] = useState("gmail");
   const [form, setForm] = useState(emptyForm);
+  const signaturePreview = emailSignatureLines({
+    name: form.displayName,
+    role: form.roleTitle,
+    company: form.companyName,
+    website: form.website,
+  }).join("\n");
 
   const set = (key: keyof typeof form) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>,
@@ -129,6 +136,7 @@ export function SendersView() {
       label: form.label,
       fromEmail: form.fromEmail,
       displayName: form.displayName || null,
+      companyName: form.companyName || null,
       replyTo: form.replyTo || null,
       roleTitle: form.roleTitle || null,
       phone: form.phone || null,
@@ -138,7 +146,6 @@ export function SendersView() {
       location: form.location || null,
       experienceSummary: form.experienceSummary || null,
       skills: form.skills || null,
-      signature: form.signature || null,
       smtpHost: form.smtpHost,
       smtpPort: Number(form.smtpPort),
       smtpSecure: form.smtpSecure === "true",
@@ -311,7 +318,7 @@ export function SendersView() {
         open={open}
         onClose={close}
         title={editingId ? "Edit sender profile" : "Add sender profile"}
-        description="Shown on every PPD and email sign-off. No company name is added."
+        description="Manage the sender identity, signature, and SMTP mailbox in one place."
         footer={
           <>
             <Button variant="ghost" onClick={close}>
@@ -332,14 +339,15 @@ export function SendersView() {
             </Button>
           </>
         }
+        className="max-w-4xl"
       >
         <div className="space-y-5">
           <section className="grid gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <h3 className="text-sm font-semibold">Person on the proposal</h3>
               <p className="text-xs text-muted">
-                The PPD and every email use this name, role and contact block. Leave signature
-                blank to generate it from these fields.
+                The PPD uses the profile details; email uses a fixed, privacy-safe signature with
+                your name, role, WhatsApp link, and linked company website.
               </p>
             </div>
             <Field label="Profile label" hint="internal name, not printed">
@@ -359,6 +367,13 @@ export function SendersView() {
                 placeholder="Senior Software Engineer"
               />
             </Field>
+            <Field label="Company name" hint="shown as the website link label">
+              <Input
+                value={form.companyName}
+                onChange={set("companyName")}
+                placeholder="Your company"
+              />
+            </Field>
             <Field label="Location" hint="city / timezone">
               <Input
                 value={form.location}
@@ -366,28 +381,48 @@ export function SendersView() {
                 placeholder="Ho Chi Minh City, GMT+7"
               />
             </Field>
-            <Field label="Phone">
+            <div className="sm:col-span-2">
+              <div className="rounded-xl border border-line bg-surface-2/60 p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">Email signature preview</h4>
+                  <span className="text-[11px] text-muted/70">Generated from this profile</span>
+                </div>
+                <div className="whitespace-pre-wrap text-sm leading-6 text-ink">{signaturePreview.split("\n").map((line, index) => {
+                  const match = line.match(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/);
+                  return (
+                    <div key={`${index}-${line}`}>
+                      {match ? (
+                        <>{line.slice(0, match.index)}<a className="text-brand underline underline-offset-2" href={match[2]} target="_blank" rel="noreferrer">{match[1]}</a></>
+                      ) : line}
+                    </div>
+                  );
+                })}</div>
+              </div>
+            </div>
+            <Field label="Phone" hint="proposal document only; never shown in email signature">
               <Input value={form.phone} onChange={set("phone")} placeholder="+84 ..." />
             </Field>
-            <Field label="WhatsApp" hint="number or wa.me link">
+            <Field label="WhatsApp" hint="Email uses the configured company start-chat link">
               <Input
                 value={form.whatsapp}
                 onChange={set("whatsapp")}
                 placeholder="https://wa.me/84..."
               />
             </Field>
+            <div className="sm:col-span-2">
+              <Field label="Website / portfolio" hint="linked under the company name in the email signature">
+                <Input
+                  value={form.website}
+                  onChange={set("website")}
+                  placeholder="yourdomain.com"
+                />
+              </Field>
+            </div>
             <Field label="LinkedIn">
               <Input
                 value={form.linkedinUrl}
                 onChange={set("linkedinUrl")}
                 placeholder="linkedin.com/in/your-name"
-              />
-            </Field>
-            <Field label="Website / portfolio">
-              <Input
-                value={form.website}
-                onChange={set("website")}
-                placeholder="yourdomain.com"
               />
             </Field>
             <div className="sm:col-span-2">
@@ -409,16 +444,6 @@ export function SendersView() {
                   value={form.skills}
                   onChange={set("skills")}
                   placeholder="React, TypeScript, Next.js, Supabase, Node.js"
-                />
-              </Field>
-            </div>
-            <div className="sm:col-span-2">
-              <Field label="Email signature" hint="optional; blank = generated from the profile">
-                <Textarea
-                  value={form.signature}
-                  onChange={set("signature")}
-                  rows={4}
-                  placeholder={"Best regards,\nLuan Le\nSenior Software Engineer\nluan@example.com · linkedin.com/in/luan"}
                 />
               </Field>
             </div>

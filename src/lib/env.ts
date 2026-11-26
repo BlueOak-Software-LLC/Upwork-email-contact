@@ -42,8 +42,8 @@ const ServerEnvSchema = z.object({
   PROPOSAL_LANGUAGE: z.string().default("English"),
   /**
    * Fallback identity for a fresh install. The real writer identity comes from
-   * Settings → Senders & profile; `PROPOSAL_COMPANY` is parsed for old env files
-   * and is never printed on a PPD, PDF or email.
+   * Settings → Senders & profile; `PROPOSAL_COMPANY` is an optional linked
+   * company label for the email signature, never printed in the PPD/PDF body.
    */
   PROPOSAL_COMPANY: z.string().max(120).default(""),
   PROPOSAL_WEBSITE: z.string().max(200).default(""),

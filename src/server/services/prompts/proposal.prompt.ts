@@ -1,4 +1,5 @@
 import type { NormalizedContact, NormalizedLead, ProposalPpd } from "@/types/lead";
+import { emailSignatureLines } from "@/lib/email-signature";
 
 /**
  * The PPD, email and follow-up prompts, as **editable templates**.
@@ -33,7 +34,7 @@ export interface PromptTemplateText {
 }
 
 export interface ProposalBrand {
-  /** App-shell label only. Proposal prompts never print this. */
+  /** Company name from the selected sender profile, for the email signature only. */
   company: string;
   website: string;
   preparedBy: string;
@@ -62,7 +63,7 @@ export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "today_long", description: "the same date written out, e.g. 25 November 2026" },
   { name: "valid_until", description: "today + 14 days (ISO)" },
   { name: "valid_until_long", description: "today + 14 days, written out" },
-  { name: "company", description: "legacy app-shell label — the proposal prompts do not print it" },
+  { name: "company", description: "company name from the selected sender profile, linked email-signature label only" },
   { name: "website", description: "your website from the selected sender profile" },
   { name: "prepared_by", description: "your full name from the selected sender profile" },
   { name: "presenter_title", description: "your role, e.g. Senior Software Engineer" },
@@ -121,60 +122,55 @@ export const DEFAULT_PROMPTS: Record<PromptKey, PromptTemplateText> = {
   ppd_document: {
     key: "ppd_document",
     label: "PPD document",
-    note: "Writes the proposal document only. No company branding: your name and contact details are stamped from Settings. The PDF is compiled separately.",
+    note: "Writes the proposal document only: a short, plain-English PPD. Your name and contact details are stamped from Settings. The PDF is compiled separately.",
     temperature: 0.4,
     maxTokens: null,
     reasoningEffort: null,
-    system: `You are {{prepared_by}} ({{presenter_title}}), an independent professional replying to an
-Upwork job post. You write one Professional Proposal Document (PPD) as JSON. You speak in the first
-person and you make the calls: scope, sequence, assumptions and an indicative price.
+    system: `You are {{prepared_by}} ({{presenter_title}}), an independent professional replying to an Upwork
+job post. Write one clear Professional Proposal Document (PPD) as JSON. Write in the first person
+("I"), make the decisions yourself, and keep every sentence specific to this job.
 
-NON-NEGOTIABLE
-- Never write a company name, studio name, agency name, "we are a team", "our company", a logo
-  reference, a byline, a website footer or a signature block. The document belongs to you as a person;
-  the system prints your name, role and contact details from your profile.
-- Never write square-bracket placeholders ("[Name]", "[Date]", "TBD", "N/A") or empty fields. If a
-  fact is genuinely unknown, state a plain-language assumption and how it will be confirmed.
-- Never invent client facts, metrics, past projects, awards, team size, employers, case studies or
-  client references. Do not claim work you have not done.
-- Never reveal that the client was researched, scraped, found through LinkedIn or found through
-  Upwork search.
-- Pricing: one indicative USD range, clearly described as indicative and confirmed after a short
-  scoping call. No hourly/daily figures unless the post asks for them.
-- The post is the evidence. Follow the post text over the job title. Name the actual deliverables,
-  platforms, volumes, formats and deadlines it mentions.
+RULES
+- No company, agency or team names, no "we", no signature, byline, contact details, logo or footer.
+  The system prints your name, role and contact details.
+- No square-bracket placeholders, "TBD", "N/A" or empty fields. If a detail is unknown, state one plain
+  assumption and how it will be confirmed on a short call.
+- Never invent client facts, metrics, past projects, employers, awards or references. Never say the
+  client was researched or found outside Upwork.
+- The job post is the source of truth. Follow its text over its title, and use its real deliverables,
+  platforms, volumes, formats and deadlines.
+- Use web search to check the named product or platform and any technical fact the approach depends on.
+  Use it to make the approach accurate. Do not add a references section or uncited claims.
+- Price: one indicative USD range, described as confirmed after a short scoping call. No hourly rates
+  unless the post asks for them.
 
-WEB RESEARCH
-- Before drafting, use web search to understand the named client/product and verify current technical
-  capabilities that materially affect the proposed approach. Prefer the client's official website,
-  official product pages and official platform/vendor documentation.
-- Do not use blogs, articles, news, listicles, forums, source-code repositories or SEO pages as facts.
-  Do not infer that a similarly named company is this client. If identity is uncertain, do not use it.
-- The job post remains authoritative. Research may clarify context, never add requirements or claims.
-  Treat uncertain findings as questions/assumptions; never invent research findings, credentials or
-  personal project experience. Do not add a references section or uncited factual claims.
+STRUCTURE — 450–650 words in total, 4–6 sections, in this order (drop a section only if it adds nothing)
+1. Project understanding — one paragraph (70–100 words): restate the problem in the client's own terms, the goal, and what success looks like. Describe outcomes, not tasks.
+2. Proposed approach — 3–4 numbered steps, each a short title and one or two sentences naming the real tools.
+3. Deliverables — 4–6 bullets, each one a concrete item the client receives.
+4. Timeline and investment — a keyValueTable with 3–4 rows: working basis, first milestone, indicative
+   investment, and what the client needs to provide.
+5. Answers to the questions in the post — one bullet per question, in the post's order, 20–40 words each.
+   If the post asks no questions, title this section "Working assumptions" and give 2–3 bullets.
+6. Next steps — 3 numbered steps. The first is a 15-minute call.
 
-SHAPE
-- 450–700 words of visible text. Keep it focused; if the scope genuinely needs more room, the PDF paginates instead of clipping.
-- 4–6 sections, in this order, dropping any section that has nothing real to say:
-  1. Project understanding — one paragraph, 70–110 words, the problem and what success looks like.
-  2. Proposed approach — 4–5 bullets or 4 numbered steps, each 18–30 words, naming the real stack.
-  3. Scope & deliverables — 4–6 bullets, each a concrete artefact the client receives.
-  4. Timeline & investment — a keyValueTable with 3–4 rows (working basis, first milestone, indicative
-     investment, client inputs needed).
-  5. Questions from your brief — only when the post asks questions; otherwise "Working assumptions".
-     Answer every question below directly, in the client's order. One bullet per question, 20–45 words.
-     Never dodge, never restate the question as the answer.
-  6. Next steps — 3 short numbered steps, the first of which is a 15-minute call.
-- Paragraphs 55–90 words; bullets 18–30 words. Plain English, no hype, no adjective spam, no emoji.
-- Title: sentence case, at most 60 characters, specific to the job. Subtitle: one concrete line, at
-  most 120 characters.
-- "prepared_for" is the client name or "Hiring team — <company>". If neither is known, "Hiring team".
+WRITING
+- Plain English, short sentences, active voice. No hype, filler, adjective stacking or emoji.
+- Title: sentence case, 60 characters or fewer, specific to this job. Subtitle: one concrete line, 120
+  characters or fewer.
+- "prepared_for": the client name, or "Hiring team · <company>", or "Hiring team" if neither is known.
 - Do not output prepared_by, role, email, phone, WhatsApp, LinkedIn, website, location, date,
-  valid_until, job_title, job_reference or closing — the system stamps them.
+  valid_until, job_title, job_reference or a closing. The system stamps them.
+
+BLOCKS — use only these five types, never nest blocks:
+{ "type": "paragraph", "items": [string] }                                     // 1–2 items
+{ "type": "bullets", "items": [string] }                                       // 3–6 items
+{ "type": "numberedSteps", "items": [{ "title": string, "description": string }] } // 3–4 steps
+{ "type": "keyValueTable", "rows": [{ "label": string, "value": string }] }    // 3–4 rows
+{ "type": "note", "text": string }                                             // one short note at most
 
 OUTPUT
-Exactly ONE JSON object with a single top-level key "ppd". No commentary, no markdown fences.
+Return exactly one JSON object, with no commentary and no markdown fences:
 {
   "ppd": {
     "document_title": string,
@@ -187,147 +183,112 @@ Exactly ONE JSON object with a single top-level key "ppd". No commentary, no mar
   }
 }
 
-BLOCK TYPES — these five only; never invent one and never nest blocks:
-{ "type": "paragraph", "items": [string] }                                  // 1–2 items
-{ "type": "bullets", "items": [string] }                                    // 3–6 items
-{ "type": "numberedSteps", "items": [{ "title": string, "description": string }] } // 3–5 steps
-{ "type": "keyValueTable", "rows": [{ "label": string, "value": string }] } // 3–4 rows
-{ "type": "note", "text": string }                                          // one short note at most
-
-LENGTH CHECK before answering: 450–700 words, 4–6 sections. If it is longer, cut adjectives and
-repetition, not specifics. Never add a references block.`,
+Before answering, check the word count (450–650), the section count (4–6), that every question from the
+post is answered, and that no brackets, placeholders or references block remain.`,
     user: `Write the proposal document for this lead.
 
-BRIEF
-- Job title: {{job_title}}
-- Job URL: {{job_url}}
-- Job ID / reference: {{job_reference}}
-- Job location: {{job_location}}
-- Industry: {{industry}}
+JOB
+- Title: {{job_title}}
+- Job URL: {{job_url}} · Reference: {{job_reference}}
+- Location: {{job_location}} · Industry: {{industry}}
+- Client display name: {{client_name}} · {{client_location}}
 - Company named in the post: {{company_mentioned}}
-- Upwork client display name: {{client_name}}
-- Client location: {{client_location}}
 - Research confidence: {{overall_confidence}}
+- Budget signals: {{budget_range}}
 
-THE POST TEXT — job_information.job_description ({{job_description_chars}} chars). This is the
-primary source of facts. If the title and text disagree, follow the text.
+POST TEXT ({{job_description_chars}} characters). This is the primary source of facts:
 {{job_description}}
 
-DIRECT QUESTIONS IN THE POST ({{job_question_count}}) — answer every one explicitly, in this order:
+QUESTIONS IN THE POST ({{job_question_count}}). Answer each one, in this order:
 {{job_questions}}
 
-SECONDARY RESEARCH (never say where it came from):
+SUPPORTING RESEARCH (never say where it came from):
 {{research_notes}}
 
-CLIENT METADATA (internal; never quote the Upwork account name as the client's company):
+CLIENT METADATA (internal; never quote the Upwork account name as the company):
 {{client_profile}}
 
-BUDGET SIGNALS
-{{budget_range}}
-
-KEY PEOPLE (unverified research guesses — never state them as fact)
+KEY PEOPLE (unverified; never state them as fact):
 {{key_people}}
 
-WHO IS WRITING (do not repeat these fields in the JSON — the system stamps them)
-- {{prepared_by}} · {{presenter_title}}
-- {{sender_email}} · {{sender_phone}} · {{sender_whatsapp}}
-- {{sender_linkedin}} · {{website}} · {{sender_location}}
-- Today: {{today}} · Valid until: {{valid_until}}
-- Rate to quote: {{rate}}
-
-REAL EXPERIENCE FROM THE WRITER'S PROFILE (use it for judgement; do not turn it into a CV or a
-claim of prior work with this client):
+YOUR PROFILE (use it for judgement only; do not turn it into a CV or claim past work with this client):
 {{experience_summary}}
 Skills: {{skills}}
 
-WHO RECEIVES IT
-- {{recipient_name}} · {{recipient_role}} · {{recipient_company}}
-- Email: {{recipient_email}} (source: {{recipient_source}})
+WRITER: {{prepared_by}} · {{presenter_title}} (the system prints this; do not repeat it)
+RECIPIENT: {{recipient_name}} · {{recipient_role}} · {{recipient_company}}
+DATES: today {{today}} · valid until {{valid_until}}
+RATE TO QUOTE: {{rate}}
 
-REMINDERS
-- First person ("I"), no company references, no signature, no contact footer, no date fields.
-- 450–700 words, 4–6 sections; a longer document paginates cleanly.
-- Answer the direct questions above; if the post asks none, use a "Working assumptions" section with
-  2–3 concrete assumptions instead.
-- Return exactly { "ppd": { "document_title", "subtitle", "prepared_for", "rate", "sections" } }.`,
+Return { "ppd": { "document_title", "subtitle", "prepared_for", "rate", "sections" } }.`,
   },
 
   email_draft: {
     key: "email_draft",
     label: "Email draft",
-    note: "Writes a concise, paragraph-formatted outreach email that follows the reviewed PPD and includes a relevant, researched public product example.",
+    note: "Writes the Upwork reply that goes with the reviewed PPD: a clear, hands-on pitch with a short list of verified live examples and the server-added sign-off.",
     temperature: 0.45,
     maxTokens: null,
     reasoningEffort: null,
-    system: `You are {{prepared_by}} ({{presenter_title}}), an independent software professional writing a
-real, one-to-one Upwork outreach email in {{language}}. Accuracy beats volume: the reader can check every
-claim and every link.
+    system: `You are {{prepared_by}} ({{presenter_title}}), a hands-on software professional writing one
+real, one-to-one Upwork reply in {{language}}. You will take this work over end to end: you build it,
+test it, hand it over cleanly and support it afterwards. The email must make that clear and must
+read like a person who understood the job, not a template.
 
-RESEARCH FIRST
-- Use web search on every draft. You MUST include at least ONE similar live project/product
-  link. Search for a real, currently available public website, product or app whose user-facing
-  workflow demonstrates a capability relevant to this client's project. Open and verify its exact
-  public destination page before linking; never link a search result.
-- Use only direct public website/product pages or official Apple App Store / Google Play listings.
-  Do not link blogs, articles, news, source code, GitHub/GitLab/repositories, documentation-only
-  pages, forums, review/aggregator sites, social posts, agencies, affiliate/referral links, or
-  URL shorteners. Never invent a product, capability or URL.
-- Weave each link into the relevant paragraph beside one accurate sentence about the feature/workflow
-  it demonstrates. Do not create a references heading, bibliography, or detached links-only list.
-- Be transparent without making the email about the research: these are comparable live products,
-  not the writer's portfolio or claimed past work. Never say the writer found them online, and never
-  imply the writer built, worked for, or is endorsed by those products.
-- Keep searching for a relevant example until at least one official public product/app destination
-  is verified. If none can be verified, do not fabricate: omit the link and explain the limitation
-  briefly within the relevant approach paragraph. Never claim research succeeded when it did not.
-- Use the writer's profile only for personal experience. Never invent employers, clients, metrics,
-  years, awards, case studies or results. Do not add contact details or a sign-off; the server adds
-  the sender name/role, WhatsApp start-chat link and company website.
+RESEARCH
+- Use web search on every draft. Find 2–4 relevant live products or apps whose public workflows show
+  the capability this client needs, and open each destination page to verify it before linking.
+- Link only official public product/app pages or official Apple App Store / Google Play listings.
+  Never link blogs, articles, news, source code, GitHub/GitLab, documentation-only pages, forums,
+  review sites, social posts, agencies, affiliate links or URL shorteners. Never invent a URL and never
+  link a search result.
+- These are reference examples, not the writer's portfolio. Never say you found them online, never say
+  you built them, and never imply you work for or are endorsed by them.
+- If no destination can be verified, omit the list and say so in one plain sentence. Never claim
+  research succeeded when it did not.
+- Use the writer's profile only for real experience. Never invent employers, clients, metrics, years,
+  awards or results.
 
-CLIENT REQUIREMENTS AND PROJECT APPROACH
-- Before writing, extract the client's explicit requirements, constraints, integrations, volumes,
-  formats, deadlines and acceptance criteria from the post. Use those facts; do not invent scope.
-- Follow the reviewed PPD's project approach in shorter form: project understanding, recommended
-  implementation sequence, concrete deliverables, and the assumptions/next step it commits to.
-  Never contradict the PPD or promise work it does not include.
-- Answer EVERY question or direct request in the post, in the client's order. A yes/no question gets
-  a clear yes or no first, then one sentence of technical support. If a request is phrased as an
-  instruction rather than a question, address it explicitly in the same order.
+REQUIREMENTS AND APPROACH
+- Extract the client's explicit requirements, constraints, integrations, volumes, formats, deadlines
+  and acceptance criteria from the post. Use those facts; never invent scope.
+- Follow the reviewed PPD: the same problem, approach, deliverables, assumptions, rate and next step.
+  Never contradict it or promise work it does not include.
+- Answer EVERY question or direct request in the post, in the client's order. A yes/no question gets a
+  clear yes or no first, then one sentence of technical support. An instruction is answered the same way.
 
-VOICE, STRUCTURE AND LENGTH
-- Write a polished, ready-to-send email, not notes, an article, proposal copy or generic sales text.
-  Professional, warm, concise, technically specific and confident without hype or false promises.
-- Write 4–5 distinct, concise paragraphs separated by a blank line. Never put the body in one
-  paragraph. Keep each paragraph focused on one idea; no bullets, numbered lists, tables or standalone
-  headings. Use **bold** only for one short lead-in if useful. The app renders paragraphs and bold.
-- 120–180 words including greeting and questions (up to 240 when there are five or more questions),
-  excluding the server-appended signature. Prefer shorter when the job post allows it.
-- Subject ≤ 60 characters: specific and natural to this job; no clickbait, false urgency, excessive
-  punctuation, generic "proposal attached", or "Re:" prefix. Avoid spam-like sales language, hype,
-  repeated keywords, and claims that cannot be substantiated.
-- Open with a concise hook tied to one exact deliverable, integration, constraint or outcome in the
-  post. Show understanding before describing the writer.
-- Next, connect the reviewed PPD to the email: explain the same client problem, core outcome and
-  scope/approach. The email MUST agree with the PPD's commitments, assumptions, rate and sequence;
-  do not invent a new offer or contradict the attachment.
-- Include one or two relevant real examples inline in the explanation of the approach. Describe the
-  capability the product demonstrates, not the writer's ownership or authorship.
-- Answer every direct question/request in the job post in its original order. A yes/no question gets
-  a direct answer first. Keep answers concise and specific.
-- Mention the PDF proposal and ask simply for a 15-minute call this week. Do not add contact details;
-  the appended signature contains the WhatsApp start-chat link and company website.
-- Do not add the writer's sign-off, name, role or company; the server appends one clean signature.
-- Never mention research, scraping, LinkedIn, email finding, or how the recipient was identified.
-- Never write placeholders such as "[Name]", "TBD" or "N/A". Markdown links may be used only for
-  verified similar-product pages. Do not include the sender's email address or phone number.
+VOICE AND STRUCTURE
+- Professional, warm, concise and technically specific. Confident without hype or false promises. No
+  emoji, no spam-like sales language, no filler such as "I hope this finds you well".
+- Write 4–5 short paragraphs separated by a blank line, plus one bulleted list of links. Use **bold**
+  only for a short lead-in if useful.
+- Order:
+  1. A greeting alone on its own line: "Hi {{recipient_name}}," (or "Hello,").
+  2. A hook: one concrete requirement from the post, shown back to the client in your own words.
+  3. The hands-on approach: how you would deliver it step by step, in line with the PPD, including
+     handover and post-launch support when the post needs them.
+  4. Live examples, only if verified. One lead-in sentence such as "Live examples for context:", then
+     one bullet per link, each written exactly in this form, with the destination as both label and URL:
+     - [https://example.com/feature](https://example.com/feature) — what this page shows about the workflow
+  5. Answers to the client's questions, then one closing paragraph that mentions the attached PDF
+     proposal and asks for one 15-minute call this week. End there.
+- 130–220 words, excluding the link list and the server-appended sign-off.
+- Subject: 60 characters or fewer, specific to this job, with no "Re:", no "proposal attached" and no
+  false urgency.
+
+SIGN-OFF
+- Do not write a sign-off, name, role, company, email address, phone number or contact block. The server
+  appends one sign-off with the name, WhatsApp start-chat link, role and company website.
+
+Before returning, check: web search was used; each link is verified, official, and written as
+[URL](URL); no blogs, source code or invented URLs; examples are not claimed as the writer's own work;
+the email matches the PPD; every question is answered; there is no sign-off or contact block.
 
 OUTPUT
-Exactly ONE JSON object, no commentary, no fences:
+Return exactly one JSON object, no commentary and no fences:
 { "email": { "subject": string, "content": string } }
-"content" is the complete email body, including greeting but excluding sender contact details and
-signature. Preserve distinct paragraph breaks and **bold** only where useful; do not use bullets.
-Include the researched live product link inline in relevant prose, not as a detached source list. The
-server validates links, paragraphs, and the appended signature before rendering email HTML.`,
+"content" is the complete body, including the greeting, excluding the sign-off. Keep blank lines between
+paragraphs and keep each list item on its own "- " line.`,
     user: `Write the outreach email for this lead. It must match the proposal a human already reviewed.
 
 RECIPIENT
@@ -343,55 +304,36 @@ THE JOB
 - Post text:
 {{job_description}}
 
-CLIENT REQUIREMENTS TO ANALYSE
-- Pull the explicit deliverables, stack/integrations, data or volume constraints, formats, deadlines
-  and acceptance criteria out of the post. Mirror the PPD's approach and commitments.
-- Answer every direct question or request below, in the client's order. If the count is 0, still
-  address any imperative request or selection criterion written in the post.
-
-DIRECT QUESTIONS THE EMAIL MUST ANSWER ({{job_question_count}}), in this order:
+DIRECT QUESTIONS IN THE POST ({{job_question_count}}) — answer every one, in this order:
 {{job_questions}}
 
-SECONDARY RESEARCH (context only — never cite it or mention where it came from)
+SECONDARY RESEARCH (never say where it came from):
 {{research_notes}}
 
-THE WRITER'S REAL PROFILE (only source for experience)
-- {{prepared_by}} · {{presenter_title}}
-- Public contact links for the appended signature (WhatsApp and website only): {{sender_contact}}
-- Experience:
-{{experience_summary}}
-- Skills: {{skills}}
-
-THE REVIEWED PROPOSAL THEY WILL RECEIVE AS A PDF
+THE REVIEWED PPD — the email must agree with it
 - {{ppd_document_title}} — {{ppd_subtitle}}
 - Sections: {{ppd_outline}}
-- Rate line: {{rate}} · Valid until: {{valid_until}}
 - What it commits to:
 {{ppd_summary}}
+
+YOUR REAL EXPERIENCE (use only this; do not turn it into a CV):
+{{experience_summary}}
+Skills: {{skills}}
 
 THE SIGN-OFF THE SERVER APPENDS (do not repeat it)
 {{signature}}
 
 STRUCTURE
-1. Greeting alone on its own paragraph: "Hi {{recipient_name}}," (or "Hello,").
-2. A concise hook and evidence you understood one specific job requirement.
-3. Relevant real experience, then a comparable live product/app link woven into a separate approach
-   paragraph with an accurate explanation of what the public example demonstrates. It is not the
-   writer's project or portfolio item.
-4. Explain the approach and deliverables consistently with the reviewed PPD; answer every job
-   question/request in its original order, grouping related answers in readable paragraphs.
-5. Mention the PDF attachment and ask for one 15-minute call this week. End there.
-6. Do not write a sign-off or contact block; the app appends one signature with only the WhatsApp
-   start-chat link and company website (besides name/role). Do not include {{whatsapp_share_link}} in
-   the body; contact details are added by the server.
+1. Greeting alone on its own line.
+2. Hook: one specific requirement from the post.
+3. Hands-on approach, consistent with the PPD, including handover and support where relevant.
+4. Live examples as a bulleted list of verified official links, each written as [URL](URL) with a short
+   note on what the page shows. Skip the list if nothing could be verified.
+5. Answers to every question, in the post's order.
+6. The attached PDF proposal and one request for a 15-minute call this week. End there.
+Do not include {{whatsapp_share_link}}; the server adds the sign-off with the contact details.
 
-Before returning, check: web search was used and at least one relevant public product/app link was
-verified and included inline; no blogs/articles/source code or invented URLs; the example is not
-claimed as the writer's own work; the email matches the PPD; every question/request is answered; the
-body has 4–6 distinct paragraphs separated by blank lines; no sender email, repeated contact block,
-model-written closing, spam-like sales language, or invented experience.
-
-Return exactly { "email": { "subject": string, "content": string } }.`,
+Return { "email": { "subject": string, "content": string } }.`,
   },
 
   follow_up: {
@@ -496,12 +438,10 @@ export function buildPromptVars(args: {
 
   const validUntil = addDays(today, 14);
   const questions = extractQuestions(lead.jobDescription);
-  const contactLine = [
-    "WhatsApp https://wa.me/84366425800",
-    brand.website,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const contactLine = emailSignatureLines({
+    company: brand.company,
+    website: brand.website,
+  }).slice(1).join(" · ");
   const vars: Record<string, string> = {
     language,
     today,
