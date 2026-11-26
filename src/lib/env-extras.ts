@@ -36,26 +36,21 @@ export function brandConfig() {
       website: env.PROPOSAL_WEBSITE,
       preparedBy,
       title,
-      email: from.email || env.EMAIL_FROM,
     }),
   };
 }
 
-/**
- * The sign-off block, so the writer's name, role, email and site are ours on
- * every message even when the model invents something else.
- */
+/** Keep public contact links in the email signature to WhatsApp and the website. */
 function signatureLines(brand: {
   website: string;
   preparedBy: string;
   title: string;
-  email: string;
 }): string[] {
   const lines = ["Best regards,"];
   if (brand.preparedBy) lines.push(brand.preparedBy);
   if (brand.title) lines.push(brand.title);
-  const contact = [brand.email, brand.website].filter(Boolean).join(" · ");
-  if (contact) lines.push(contact);
+  lines.push("WhatsApp: https://wa.me/84366425800");
+  if (brand.website) lines.push(brand.website);
   return lines;
 }
 

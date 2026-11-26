@@ -181,7 +181,11 @@ function deBracket(value: string): string {
     const phraseOut = /^(a|an|the|this|that|our|your|their|some|any)\b/i.test(lowered) ? lowered : `the ${lowered}`;
     return substitute(phraseOut);
   });
-  return out.replace(/\s{2,}/g, " ").replace(/\s+([,.;:])/g, "$1").trim();
+  return out
+    .replace(/[^\S\n]{2,}/g, " ")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/[ \t]+([,.;:])/g, "$1")
+    .trim();
 }
 
 const flat = (value: unknown, max: number): string => {
@@ -343,6 +347,7 @@ export interface EmailContext {
   jobDescription?: string;
   jobQuestions?: string[];
   includeWhatsappContact?: boolean;
+  includeSimilarProjectLink?: boolean;
 }
 
 /** Closing lines a model likes to author, which we replace with the real ones. */
@@ -366,11 +371,14 @@ function withSignature(content: string, signature: string[]): string {
       break;
     }
   }
-  const body = lines
+  let body = lines
     .slice(0, cut)
     .join("\n")
     .replace(/\s+$/, "")
     .trim();
+  // Some models append "Best," to the final sentence instead of putting it on
+  // its own line; remove that inline sign-off before adding our one canonical one.
+  body = body.replace(/[\s,;:—-]+(?:best regards|kind regards|warm regards|regards|thanks|thank you|sincerely|cheers|best)[,!:.]?\s*$/i, "").trimEnd();
   if (!signature.length) return body;
   return `${body}\n\n${signature.map((line) => line.trim()).filter(Boolean).join("\n")}`;
 }
@@ -380,7 +388,34 @@ export function sanitizeEmail(
   raw: unknown,
   ctx: EmailContext,
 ): { subject: string; content: string } {
-  const signature = ctx.signature?.filter(Boolean) ?? [];
+  const signature = ctx.sender
+    ? [
+        "Best regards,",
+        ctx.sender.preparedBy,
+        ctx.sender.title,
+        "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+        ctx.sender.website,
+      ].filter((line) => Boolean(line?.trim()))
+    : ctx.includeWhatsappContact
+      ? (() => {
+          const profileLines = (ctx.signature ?? []).filter((line) =>
+            Boolean(line?.trim()) &&
+            !/best regards|kind regards|warm regards|\bregards\b|\bthanks\b|\bsincerely\b/i.test(line) &&
+            !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(line) &&
+            !/\+?\d[\d\s().-]{7,}/.test(line) &&
+            !/wa\.me|whatsapp|linkedin\.com/i.test(line),
+          );
+          const website = profileLines.find((line) => /^https?:\/\//i.test(line));
+          const identity = profileLines.filter((line) => line !== website);
+          return [
+            "Best regards,",
+            identity[0],
+            identity[1],
+            "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+            website,
+          ].filter((line): line is string => Boolean(line?.trim()));
+        })()
+      : (ctx.signature ?? []).filter((line) => Boolean(line?.trim()) && !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(line));
   const identity = ctx.sender
     ? {
         name: ctx.sender.preparedBy,
@@ -424,7 +459,7 @@ function sanitizeEmailInner(
         `EMAILLINKTOKEN${Buffer.from(JSON.stringify([label, url])).toString("base64url")}ENDTOKEN`,
       )
     : rawBody;
-  let body = stripMarkdown(soft(bodyWithLinkTokens, budget));
+  let body = stripMarkdown(softEmail(bodyWithLinkTokens, budget));
   body = body.replace(/EMAILLINKTOKEN([A-Za-z0-9_-]+)ENDTOKEN/g, (_match, token: string) => {
     try {
       const [label, url] = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as [string, string];
@@ -434,13 +469,35 @@ function sanitizeEmailInner(
     }
   }) || fallbackBody;
   body = stripDisallowedUrls(body);
-  if (ctx.includeWhatsappContact) {
-    const whatsappUrl = "https://wa.me/84366425800?text=Hi%2C%20I%20saw%20your%20proposal%20for%20the%20project.";
-    body = body.replace(/https?:\/\/(?:wa\.me|api\.whatsapp\.com)\/[^\s<>"')\]]+/gi, whatsappUrl);
-    if (!body.includes("wa.me/84366425800")) {
-      body = `${body.trim()}\n\n**How to reach me:** Reply to this email or message me on WhatsApp: ${whatsappUrl}`;
+  if (ctx.includeSimilarProjectLink) {
+    const productLinks = [...body.matchAll(/(?:\]\()?((?:https?:\/\/)[^\s)\]]+)/g)]
+      .map((match) => (match[1] ?? "").replace(/[.,;:!?]+$/, ""))
+      .filter((url) => isAllowedProductUrl(url));
+    if (productLinks.length === 0) {
+      throw ApiError.upstream("The email did not include a verified public similar-product link. Regenerate after web research.");
     }
   }
+  if (ctx.includeWhatsappContact || ctx.sender) {
+    // Contact details live only in the canonical signature. Remove model-added
+    // contact sentences without discarding an entire unformatted body paragraph.
+    const senderEmail = ctx.sender?.senderEmail;
+    const senderEmailPattern = senderEmail ? new RegExp(escapeRegExp(senderEmail), "gi") : null;
+    body = body
+      .split(/\n\s*\n/)
+      .map((paragraph) => paragraph
+        .split(/(?<=[.!?])\s+/)
+        .filter((sentence) =>
+          !/how to reach me|wa\.me\/|api\.whatsapp\.com|message me on whatsapp|whatsapp\s*:/i.test(sentence) &&
+          !/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(sentence),
+        )
+        .join(" "),
+      )
+      .filter(Boolean)
+      .join("\n\n");
+    if (senderEmailPattern) body = body.replace(senderEmailPattern, "");
+  }
+  body = removeModelSignoff(body);
+  body = formatEmailParagraphs(body);
 
   const content = withSignature(body, signature);
 
@@ -842,6 +899,66 @@ function clampSubject(value: string): string {
 }
 
 /** Preserve the small formatting contract used by the email renderer. */
+function removeModelSignoff(value: string): string {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  const start = Math.max(0, lines.length - 8);
+  for (let index = lines.length - 1; index >= start; index -= 1) {
+    if (SALUTATION.test((lines[index] ?? "").trim())) {
+      return lines.slice(0, index).join("\n").trimEnd();
+    }
+  }
+  return lines.join("\n")
+    .replace(/[\s,;:—-]+(?:best regards|kind regards|warm regards|regards|thanks|thank you|sincerely|cheers|best)[,!:.]?\s*$/i, "")
+    .trimEnd();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function softEmail(value: unknown, max: number): string {
+  if (typeof value !== "string") return flat(value, max);
+  return deBracket(
+    value
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.replace(/[\t ]+/g, " ").trim())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  ).slice(0, max);
+}
+
+function formatEmailParagraphs(value: string): string {
+  const blocks = value
+    .replace(/\r\n/g, "\n")
+    .split(/\n\s*\n/)
+    .map((block) => block
+      .split("\n")
+      .map((line) => line.replace(/^\s*(?:[•*-]|\d+[.)])\s+/, "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s{2,}/g, " ")
+      .trim())
+    .filter(Boolean);
+  if (!blocks.length) return "";
+
+  const paragraphs: string[] = [];
+  for (const block of blocks) {
+    const greeting = block.match(/^(Hi\s+[^,\n]{1,80},|Hello,)\s*/i);
+    let remainder = block;
+    if (greeting) {
+      paragraphs.push((greeting[1] ?? "").trim());
+      remainder = block.slice(greeting[0].length).trim();
+    }
+    const sentences = remainder.split(/(?<=[.!?])\s+(?=[A-Z“])/).filter(Boolean);
+    for (let index = 0; index < sentences.length; index += 2) {
+      paragraphs.push(sentences.slice(index, index + 2).join(" ").trim());
+    }
+  }
+  return paragraphs.filter(Boolean).join("\n\n");
+}
+
 function stripMarkdown(value: string): string {
   return value
     .replace(/```[\s\S]*?```/g, "")

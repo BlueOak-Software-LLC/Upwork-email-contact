@@ -21,7 +21,8 @@ describe("email draft prompt", () => {
     expect(prompt.system).toContain("Professional, warm, concise, technically specific");
     expect(prompt.system).toContain("bold");
     expect(prompt.system).toContain("WhatsApp");
-    expect(prompt.user).toContain("{{whatsapp_share_link}}");
+    expect(prompt.user).toContain("only the WhatsApp");
+    expect(prompt.user).toContain("Do not write a sign-off or contact block");
     expect(prompt.system).toContain("source code");
     expect(prompt.user).toContain("{{research_notes}}");
     expect(prompt.user).toContain("{{job_questions}}");

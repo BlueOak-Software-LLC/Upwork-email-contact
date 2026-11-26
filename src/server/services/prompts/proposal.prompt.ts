@@ -74,7 +74,7 @@ export const PROMPT_VARS: Array<{ name: string; description: string }> = [
   { name: "whatsapp_share_link", description: "prefilled direct WhatsApp share link for the sender" },
   { name: "sender_linkedin", description: "LinkedIn URL from the profile" },
   { name: "sender_location", description: "city/timezone from the profile" },
-  { name: "sender_contact", description: "one-line contact block (email, phone, LinkedIn, site)" },
+  { name: "sender_contact", description: "public contact links (WhatsApp and company website only)" },
   { name: "experience_summary", description: "your real experience summary from Settings — use only this, never invent" },
   { name: "skills", description: "your skills list from Settings" },
   { name: "signature", description: "canonical email sign-off block, appended by the server" },
@@ -255,7 +255,7 @@ REMINDERS
   email_draft: {
     key: "email_draft",
     label: "Email draft",
-    note: "Writes a formatted, personalized outreach email that stays faithful to the reviewed PPD, researches live product examples, and includes a direct WhatsApp contact link.",
+    note: "Writes a concise, paragraph-formatted outreach email that follows the reviewed PPD and includes a relevant, researched public product example.",
     temperature: 0.45,
     maxTokens: null,
     reasoningEffort: null,
@@ -264,10 +264,10 @@ real, one-to-one Upwork outreach email in {{language}}. Accuracy beats volume: t
 claim and every link.
 
 RESEARCH FIRST
-- Use web search for the exact client need and find 1–2 REAL, currently available public websites,
-  products or apps whose live user-facing workflow demonstrates a relevant capability. Open and
-  verify the exact destination page before using it; link to the official product/site or official
-  app listing, not a search result.
+- Use web search on every draft. You MUST include at least ONE similar live project/product
+  link. Search for a real, currently available public website, product or app whose user-facing
+  workflow demonstrates a capability relevant to this client's project. Open and verify its exact
+  public destination page before linking; never link a search result.
 - Use only direct public website/product pages or official Apple App Store / Google Play listings.
   Do not link blogs, articles, news, source code, GitHub/GitLab/repositories, documentation-only
   pages, forums, review/aggregator sites, social posts, agencies, affiliate/referral links, or
@@ -277,10 +277,12 @@ RESEARCH FIRST
 - Be transparent without making the email about the research: these are comparable live products,
   not the writer's portfolio or claimed past work. Never say the writer found them online, and never
   imply the writer built, worked for, or is endorsed by those products.
-- If search is unavailable or no suitable destination can be verified, omit the examples rather than
-  fabricating. Keep the email useful by explaining the PPD approach instead.
+- Keep searching for a relevant example until at least one official public product/app destination
+  is verified. If none can be verified, do not fabricate: omit the link and explain the limitation
+  briefly within the relevant approach paragraph. Never claim research succeeded when it did not.
 - Use the writer's profile only for personal experience. Never invent employers, clients, metrics,
-  years, awards, case studies or results.
+  years, awards, case studies or results. Do not add contact details or a sign-off; the server adds
+  the sender name/role, WhatsApp start-chat link and company website.
 
 CLIENT REQUIREMENTS AND PROJECT APPROACH
 - Before writing, extract the client's explicit requirements, constraints, integrations, volumes,
@@ -295,13 +297,14 @@ CLIENT REQUIREMENTS AND PROJECT APPROACH
 VOICE, STRUCTURE AND LENGTH
 - Write a polished, ready-to-send email, not notes, an article, proposal copy or generic sales text.
   Professional, warm, concise, technically specific and confident without hype or false promises.
-- Use readable Markdown-style formatting in the body: **bold** short labels, short paragraphs, and
-  indented • bullets where they improve scanning. Do not use HTML, tables, all-caps headings or emoji.
-  The app renders safe bold, paragraphs, bullets and clickable links as a formatted email.
-- 220–320 words including greeting, contact line and questions (up to 400 when there are five or
-  more questions), excluding the server-appended sign-off.
-- Subject ≤ 70 characters: specific, benefit-led and curiosity-generating without clickbait or false
-  urgency; do not begin with "Re:".
+- Write 4–5 distinct, concise paragraphs separated by a blank line. Never put the body in one
+  paragraph. Keep each paragraph focused on one idea; no bullets, numbered lists, tables or standalone
+  headings. Use **bold** only for one short lead-in if useful. The app renders paragraphs and bold.
+- 120–180 words including greeting and questions (up to 240 when there are five or more questions),
+  excluding the server-appended signature. Prefer shorter when the job post allows it.
+- Subject ≤ 60 characters: specific and natural to this job; no clickbait, false urgency, excessive
+  punctuation, generic "proposal attached", or "Re:" prefix. Avoid spam-like sales language, hype,
+  repeated keywords, and claims that cannot be substantiated.
 - Open with a concise hook tied to one exact deliverable, integration, constraint or outcome in the
   post. Show understanding before describing the writer.
 - Next, connect the reviewed PPD to the email: explain the same client problem, core outcome and
@@ -311,21 +314,20 @@ VOICE, STRUCTURE AND LENGTH
   capability the product demonstrates, not the writer's ownership or authorship.
 - Answer every direct question/request in the job post in its original order. A yes/no question gets
   a direct answer first. Keep answers concise and specific.
-- Include a clear **How to reach me** line inviting a reply to this email or a WhatsApp message via
-  {{whatsapp_share_link}}. This is the writer's contact link, not the client's.
-- Mention the full proposal is attached as a PDF. Close with one ask only: a 15-minute call this week.
-- Do not add the writer's sign-off, name, role or company; the server appends the canonical signature.
+- Mention the PDF proposal and ask simply for a 15-minute call this week. Do not add contact details;
+  the appended signature contains the WhatsApp start-chat link and company website.
+- Do not add the writer's sign-off, name, role or company; the server appends one clean signature.
 - Never mention research, scraping, LinkedIn, email finding, or how the recipient was identified.
-- Never write placeholders such as "[Name]", "TBD" or "N/A". Markdown link syntax is allowed only
-  for verified product URLs.
+- Never write placeholders such as "[Name]", "TBD" or "N/A". Markdown links may be used only for
+  verified similar-product pages. Do not include the sender's email address or phone number.
 
 OUTPUT
 Exactly ONE JSON object, no commentary, no fences:
 { "email": { "subject": string, "content": string } }
-"content" is the complete email body, including greeting and contact line but excluding the
-server-appended signature. Preserve **bold** markers and readable paragraph/bullet breaks. Put every
-live product link inline in relevant prose; do not add detached sources or citations. The server
-validates and removes unsafe/non-product links and renders safe formatting into email HTML.`,
+"content" is the complete email body, including greeting but excluding sender contact details and
+signature. Preserve distinct paragraph breaks and **bold** only where useful; do not use bullets.
+Include the researched live product link inline in relevant prose, not as a detached source list. The
+server validates links, paragraphs, and the appended signature before rendering email HTML.`,
     user: `Write the outreach email for this lead. It must match the proposal a human already reviewed.
 
 RECIPIENT
@@ -355,8 +357,7 @@ SECONDARY RESEARCH (context only — never cite it or mention where it came from
 
 THE WRITER'S REAL PROFILE (only source for experience)
 - {{prepared_by}} · {{presenter_title}}
-- Contact: {{sender_contact}}
-- Website: {{website}}
+- Public contact links for the appended signature (WhatsApp and website only): {{sender_contact}}
 - Experience:
 {{experience_summary}}
 - Skills: {{skills}}
@@ -372,21 +373,23 @@ THE SIGN-OFF THE SERVER APPENDS (do not repeat it)
 {{signature}}
 
 STRUCTURE
-1. "Hi {{recipient_name}}," (or "Hello," when no name is known).
-2. A concise hook tied to a concrete detail and desired outcome in the post.
-3. One or two sentences about relevant, real experience from the profile; never invent credentials.
-4. Weave 1–2 verified public product/app examples into the approach, with direct links and the
-   technical pattern each demonstrates. They are examples, not the writer's projects.
-5. Explain the project understanding, sequence, deliverables and validation in line with the reviewed
-   PPD. Then answer every question/request in the post in its original order.
-6. State that the full proposal is attached as a PDF.
-7. **How to reach me:** invite a reply to this email or a WhatsApp message via {{whatsapp_share_link}}.
-8. Ask for one 15-minute call this week. End after the ask; the server adds the sign-off.
+1. Greeting alone on its own paragraph: "Hi {{recipient_name}}," (or "Hello,").
+2. A concise hook and evidence you understood one specific job requirement.
+3. Relevant real experience, then a comparable live product/app link woven into a separate approach
+   paragraph with an accurate explanation of what the public example demonstrates. It is not the
+   writer's project or portfolio item.
+4. Explain the approach and deliverables consistently with the reviewed PPD; answer every job
+   question/request in its original order, grouping related answers in readable paragraphs.
+5. Mention the PDF attachment and ask for one 15-minute call this week. End there.
+6. Do not write a sign-off or contact block; the app appends one signature with only the WhatsApp
+   start-chat link and company website (besides name/role). Do not include {{whatsapp_share_link}} in
+   the body; contact details are added by the server.
 
-Before returning, check: the hook is job-specific; live examples are relevant official public
-products, not articles/source code; no example is presented as the writer's own project; the email
-matches the PPD; every question/request is answered; WhatsApp link is present; the message is
-formatted, concise, factual and within the length budget; no invented experience, company or sign-off.
+Before returning, check: web search was used and at least one relevant public product/app link was
+verified and included inline; no blogs/articles/source code or invented URLs; the example is not
+claimed as the writer's own work; the email matches the PPD; every question/request is answered; the
+body has 4–6 distinct paragraphs separated by blank lines; no sender email, repeated contact block,
+model-written closing, spam-like sales language, or invented experience.
 
 Return exactly { "email": { "subject": string, "content": string } }.`,
   },
@@ -448,15 +451,11 @@ WHO IS WRITING
 - Skills: {{skills}}
 
 WHAT TO WRITE
-1. Greeting: "Hi {{recipient_name}}," (or "Hello," when no name is known).
-2. A compelling, concise hook tied to a specific detail and outcome in the post.
-3. One or two sentences of real, relevant experience, then inline public product/app examples and
-   the approach from the reviewed PPD. Never claim the examples are the writer's projects.
-4. Answer every direct question/request that is still unanswered, in the post's original order.
-5. Add a concise **How to reach me** line with {{whatsapp_share_link}}; mention that the full PPD is
-   attached as a PDF; ask for one 15-minute call this week.
-6. End after the ask. The server appends this canonical sender signature; do not repeat it:
-{{signature}}
+1. Greeting in its own paragraph.
+2. One new specific idea or next step based on the post and reviewed PPD. Use 2–3 concise paragraphs,
+   each separated by a blank line; answer any still-open question.
+3. Make one short ask and end there. Do not write contact details or a sign-off; the server appends
+   one signature with the WhatsApp start-chat link and company website.
 
 Return { "email": { "subject": string, "content": string } }.`,
   },
@@ -498,12 +497,8 @@ export function buildPromptVars(args: {
   const validUntil = addDays(today, 14);
   const questions = extractQuestions(lead.jobDescription);
   const contactLine = [
-    brand.senderEmail,
-    brand.phone ? `phone ${brand.phone}` : "",
-    brand.whatsapp ? `WhatsApp ${brand.whatsapp}` : "",
-    brand.linkedin,
+    "WhatsApp https://wa.me/84366425800",
     brand.website,
-    brand.location,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -523,7 +518,7 @@ export function buildPromptVars(args: {
     sender_email: brand.senderEmail,
     sender_phone: brand.phone || "(not provided)",
     sender_whatsapp: brand.whatsapp || "(not provided)",
-    whatsapp_share_link: "https://wa.me/84366425800?text=Hi%2C%20I%20saw%20your%20proposal%20for%20the%20project.",
+    whatsapp_share_link: "https://wa.me/84366425800",
     sender_linkedin: brand.linkedin || "(not provided)",
     sender_location: brand.location || "(not provided)",
     sender_contact: contactLine || "(not provided)",

@@ -578,6 +578,7 @@ async function completeEmail(
     jobDescription: lead.job_description ?? "",
     jobQuestions: extractQuestions(lead.job_description),
     includeWhatsappContact: true,
+    includeSimilarProjectLink: true,
   });
   const warnings = [
     ...bracketWarnings(findBracketTokens(parsed)),

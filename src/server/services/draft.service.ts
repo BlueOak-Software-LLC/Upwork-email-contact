@@ -9,6 +9,7 @@ import { sendEmail } from "@/server/services/email.service";
 import { buildThreadHeaders } from "@/server/services/email-threading";
 import { renderProposalPdf } from "@/server/services/pdf.service";
 import { textToHtml } from "@/server/services/templates";
+import { brandFromSender } from "@/server/services/sender-profile.service";
 import type { EmailDraftRow, ProposalRow } from "@/types/lead";
 
 function slug(value: string | null | undefined) {
@@ -56,7 +57,8 @@ export async function createDraftForProposal({
     throw ApiError.badRequest(`${recipient ?? "recipient"} is not an email address`);
   }
 
-  const body = withSignature(proposal.email_content, account?.signature);
+  const sender = brandFromSender(account);
+  const body = withSignature(proposal.email_content, sender.signature.join("\n"), sender.senderEmail);
 
   // Idempotent: re-running generation refreshes the existing draft instead of
   // creating a second one for the same proposal version.
@@ -145,7 +147,8 @@ export async function createFollowUpDraft({
     throw ApiError.badRequest(`${toEmail} is not an email address`);
   }
 
-  const body = withSignature(bodyText, account?.signature);
+  const sender = brandFromSender(account);
+  const body = withSignature(bodyText, sender.signature.join("\n"), sender.senderEmail);
   const draft = await draftsRepo.create({
     leadId: proposal.lead_id,
     leadContactId,
@@ -300,7 +303,7 @@ export async function sendDraft(
   draftId: string,
   opts: { senderAccountId?: string; attachPdf?: boolean } = {},
 ) {
-  const draft = await draftsRepo.byId(draftId);
+  let draft = await draftsRepo.byId(draftId);
   // Follow-ups continue an existing thread; only the first email attaches the
   // proposal PDF by default. An explicit attachPdf still wins for either.
   const attachPdf = opts.attachPdf ?? draft.purpose !== "follow_up";
@@ -318,6 +321,17 @@ export async function sendDraft(
   }
 
   const account = await senderAccountsRepo.getPublic(accountId);
+  const canonicalBody = withSignature(
+    draft.body_text,
+    brandFromSender(account).signature.join("\n"),
+    account.from_email,
+  );
+  if (canonicalBody !== draft.body_text) {
+    draft = await draftsRepo.update(draft.id, {
+      body_text: canonicalBody,
+      body_html: textToHtml(canonicalBody),
+    });
+  }
   const sentToday = await draftsRepo.pendingForSenderToday(accountId);
   if (sentToday >= account.daily_limit) {
     throw ApiError.rateLimited(3600);
@@ -389,12 +403,24 @@ export async function sendDraft(
   }
 }
 
-function withSignature(content: string, signature?: string | null) {
-  const normalized = content.replace(/\r\n/g, "\n").trimEnd();
+function withSignature(content: string, signature?: string | null, senderEmail?: string | null) {
+  let normalized = content.replace(/\r\n/g, "\n").trim();
+  if (senderEmail) {
+    const emailLine = new RegExp(`^.*${escapeRegExp(senderEmail)}.*$`, "gim");
+    normalized = normalized.replace(emailLine, "").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  const lines = normalized.split("\n");
+  const closing = /^(best regards|kind regards|warm regards|regards|thanks(?: you)?|sincerely|cheers|best)[,!:.]?$/i;
+  const searchFrom = Math.max(0, lines.length - 12);
+  for (let index = lines.length - 1; index >= searchFrom; index -= 1) {
+    if (closing.test((lines[index] ?? "").trim())) {
+      normalized = lines.slice(0, index).join("\n").trimEnd();
+      break;
+    }
+  }
+  normalized = normalized.replace(/[\s,;:—-]+(?:best regards|kind regards|warm regards|regards|thanks|thank you|sincerely|cheers|best)[,!:.]?\s*$/i, "").trimEnd();
   if (!signature) return normalized;
-  // The sanitizer already appended the profile signature; only add it when the
-  // editor removed it. Compare the same trimmed form the sanitizer writes, so
-  // a trailing blank line in Settings cannot produce a second sign-off.
   const signoff = signature
     .replace(/\r\n/g, "\n")
     .split("\n")
@@ -402,7 +428,11 @@ function withSignature(content: string, signature?: string | null) {
     .join("\n")
     .trim();
   if (!signoff) return normalized;
-  return normalized.endsWith(signoff) ? normalized : `${normalized}\n\n${signoff}`;
+  return `${normalized}\n\n${signoff}`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export type ProposalForRow = ProposalRow;

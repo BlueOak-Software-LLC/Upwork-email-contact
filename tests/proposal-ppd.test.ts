@@ -155,6 +155,37 @@ describe("sanitizeEmail · product links", () => {
     expect(email.content).toContain("https://wa.me/84366425800");
   });
 
+  it("keeps paragraphs readable and replaces model closings/contact details with one canonical signature", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content: [
+            "Hi team,",
+            "",
+            "Your triage queue needs a clear owner and reliable routing. I would map the intake rules first.",
+            "",
+            "Then I would build the workflow in stages and validate the handoffs with your team.",
+            "",
+            "The reviewed proposal is attached as a PDF. Are you available for a short call?",
+            "",
+            "Best regards,",
+            "Luan Le",
+            "luan@example.com",
+          ].join("\n"),
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("Hi team,\n\n");
+    expect(email.content).toContain("rules first.\n\nThen I would");
+    expect(email.content).toContain("team.\n\nThe reviewed proposal");
+    expect(email.content).not.toContain("luan@example.com");
+    expect(email.content.match(/Best regards,/g)).toHaveLength(1);
+    expect(email.content).toContain("WhatsApp: [Start chatting](https://wa.me/84366425800)");
+    expect(email.content).toContain("https://luanle.dev");
+  });
+
   it("keeps an allowed reference link inline and returns exactly subject/content", () => {
     const email = sanitizeEmail(
       {

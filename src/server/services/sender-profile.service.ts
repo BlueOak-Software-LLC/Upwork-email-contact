@@ -27,9 +27,7 @@ export function brandFromSender(account: SenderAccountDto | null): ProposalBrand
   const location = account?.location?.trim() || "";
   const experience = account?.experience_summary?.trim() || "";
   const skills = account?.skills?.trim() || "";
-  const signature = account?.signature?.trim()
-    ? account.signature.split(/\r?\n/).map((line) => line.trimEnd())
-    : signatureLines({ preparedBy, title, senderEmail, phone, whatsapp, linkedin, website });
+  const signature = signatureLines({ preparedBy, title, website });
 
   return {
     company: "",
@@ -71,22 +69,14 @@ export async function resolveSenderBrand(senderAccountId?: string | null): Promi
 function signatureLines(brand: {
   preparedBy: string;
   title: string;
-  senderEmail: string;
-  phone: string;
-  whatsapp: string;
-  linkedin: string;
   website: string;
 }): string[] {
-  const contact = [
-    brand.senderEmail,
-    brand.phone ? `Tel ${brand.phone}` : "",
-    brand.whatsapp ? `WhatsApp ${brand.whatsapp}` : "",
-    brand.linkedin,
+  const whatsapp = "https://wa.me/84366425800";
+  return [
+    "Best regards,",
+    brand.preparedBy,
+    brand.title,
+    `WhatsApp: [Start chatting](${whatsapp})`,
     brand.website,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  return ["Best regards,", brand.preparedBy, brand.title, contact].filter(
-    (line) => Boolean(line && line.trim()),
-  );
+  ].filter((line) => Boolean(line && line.trim()));
 }
