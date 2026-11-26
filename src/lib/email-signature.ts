@@ -6,6 +6,7 @@ export interface EmailSignatureProfile {
 }
 
 const WHATSAPP_URL = "https://wa.me/84366425800";
+const WHATSAPP_LABEL = "+84 36 642 5800";
 
 export function whatsappStartUrl(): string {
   return WHATSAPP_URL;
@@ -24,7 +25,7 @@ export function emailSignatureLines(profile: EmailSignatureProfile): string[] {
   return [
     "Best Regards,",
     name,
-    `WhatsApp: [Start chatting](${whatsappStartUrl()})`,
+    `WhatsApp: [${WHATSAPP_LABEL}](${whatsappStartUrl()})`,
     roleCompany,
   ].filter((line): line is string => Boolean(line?.trim()));
 }

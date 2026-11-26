@@ -43,7 +43,7 @@ describe("canonical email signature", () => {
     })).toEqual([
       "Best Regards,",
       "Luan Le",
-      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "WhatsApp: [+84 36 642 5800](https://wa.me/84366425800)",
       "Senior Software Engineer | [Luan Labs](https://luanle.dev)",
     ]);
   });
@@ -57,7 +57,7 @@ describe("canonical email signature", () => {
     })).toEqual([
       "Best Regards,",
       "Luan Le",
-      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "WhatsApp: [+84 36 642 5800](https://wa.me/84366425800)",
       "Engineer | Luan Labs",
     ]);
   });

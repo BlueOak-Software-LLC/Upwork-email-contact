@@ -214,6 +214,13 @@ describe("public surface (middleware)", () => {
     expect(isPublic(path)).toBe(true);
   });
 
+  it("lets POST store a manual draft without a session, but not GET", () => {
+    const drafts = "/api/leads/00000000-0000-0000-0000-000000000000/drafts";
+    expect(isPublic(drafts, "POST")).toBe(true);
+    expect(isPublic(drafts, "GET")).toBe(false);
+    expect(isPublic("/api/drafts/00000000-0000-0000-0000-000000000000", "PATCH")).toBe(false);
+  });
+
   it.each([
     "/",
     "/emails",

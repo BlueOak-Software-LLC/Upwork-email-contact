@@ -121,7 +121,7 @@ describe("sanitizeEmail · product links", () => {
     signature: [
       "Best Regards,",
       "Luan Le",
-      "WhatsApp: [Start chatting](https://wa.me/84366425800)",
+      "WhatsApp: [+84 36 642 5800](https://wa.me/84366425800)",
       "Senior Software Engineer | [Luan Labs](https://luanle.dev)",
     ],
     includeWhatsappContact: true,
@@ -221,7 +221,7 @@ describe("sanitizeEmail · product links", () => {
     expect(email.content).toContain("team.\n\nThe reviewed proposal");
     expect(email.content).not.toContain("luan@example.com");
     expect(email.content.match(/Best Regards,/g)).toHaveLength(1);
-    expect(email.content).toContain("WhatsApp: [Start chatting](https://wa.me/84366425800)");
+    expect(email.content).toContain("WhatsApp: [+84 36 642 5800](https://wa.me/84366425800)");
     expect(email.content).toContain("Senior Software Engineer | [Luan Labs](https://luanle.dev)");
     expect(email.content).not.toContain("luan@example.com");
     expect(email.content.match(/Best Regards,/g)).toHaveLength(1);

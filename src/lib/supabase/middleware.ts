@@ -40,10 +40,18 @@ const PUBLIC_PATHS = [
  */
 const PUBLIC_EXACT = ["/api/leads"];
 
+/**
+ * POST routes reachable without a cookie because the route calls requireApiKey,
+ * which rejects anonymous callers in production. POST /api/leads/:id/drafts
+ * stores a manual draft. GET and every other method stay behind the session gate.
+ */
+const PUBLIC_POST_PATTERNS = [/^\/api\/leads\/[^/]+\/drafts$/];
+
 /** Exported so the public surface stays testable when `REQUIRE_SESSION` flips. */
-export function isPublic(pathname: string) {
+export function isPublic(pathname: string, method = "GET") {
   return (
     PUBLIC_EXACT.includes(pathname) ||
+    (method === "POST" && PUBLIC_POST_PATTERNS.some((re) => re.test(pathname))) ||
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
   );
 }
@@ -74,7 +82,7 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  if (REQUIRE_SESSION && !isPublic(pathname)) {
+  if (REQUIRE_SESSION && !isPublic(pathname, request.method)) {
     const {
       data: { user },
     } = await supabase.auth.getUser();
