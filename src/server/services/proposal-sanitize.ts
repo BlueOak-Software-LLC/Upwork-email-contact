@@ -440,6 +440,35 @@ export function sanitizeEmail(
   return bracketIdentity.run(identity, () => sanitizeEmailInner(raw, ctx, signature));
 }
 
+/**
+ * Outreach email text is plain ASCII on purpose. Em and en dashes, curly quotes,
+ * bullet glyphs, arrows, emoji and exclamation marks are common in model output
+ * and are weak signals to spam filters. Accented letters are kept.
+ */
+export function plainEmailText(value: string): string {
+  return value
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+    .replace(/\s*\u2014\s*/g, ", ")
+    .replace(/\s*[\u2012\u2013]\s*/g, "-")
+    .replace(/[\u2018\u2019\u201A\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u2033]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/\u2192|\u2794|\u27A4/g, " to ")
+    .replace(/^[ \t]*[\u2022\u2023\u25E6\u2043\u2219\u00B7\u25CF\u25AA\u25A0][ \t]*/gm, "- ")
+    .replace(/[^\x00-\x7F\p{L}\p{N}\p{M}\p{Sc}]/gu, "")
+    .replace(/!+(?![^(]*\))/g, ".")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +([,.;:?])/g, "$1")
+    .replace(/,\s*,/g, ",");
+}
+
+/** Keeps the first `max` links in the body as links and turns the rest into plain label text. */
+function capEmailLinks(body: string, max: number): string {
+  let seen = 0;
+  return body.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, url: string) =>
+    ++seen <= max ? `[${label}](${url})` : label);
+}
+
 function sanitizeEmailInner(
   raw: unknown,
   ctx: EmailContext,
@@ -453,7 +482,7 @@ function sanitizeEmailInner(
     clampSubject(
       stripMarkdown(flat(emailRaw.subject, MAX.emailSubject)).replace(/^re\s*:\s*/i, ""),
     ) ||
-    clampSubject(ctx.jobTitle ? `${ctx.jobTitle} — proposal` : "Your project — proposal");
+    clampSubject(ctx.jobTitle ? `Proposal: ${ctx.jobTitle}` : "Proposal for your project");
 
   const fallbackBody = ppd
     ? `${ppd.subtitle}\n\n${ppd.sections
@@ -463,7 +492,7 @@ function sanitizeEmailInner(
         .filter(Boolean)
         .slice(0, 2)
         .join("\n\n")}\n\nFull proposal attached as a PDF. Are you open to a quick 15-minute call this week?`
-    : `I would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
+    : `I would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF. Are you open to a quick 15-minute call this week?`;
 
   const budget = Math.max(600, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
   const rawBody = pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody;
@@ -510,14 +539,15 @@ function sanitizeEmailInner(
       .join("\n\n");
     if (senderEmailPattern) body = body.replace(senderEmailPattern, "");
   }
+  body = capEmailLinks(body, 2);
   body = removeModelSignoff(body);
   body = formatEmailParagraphs(body);
 
-  const content = withSignature(body, signature);
+  const content = plainEmailText(withSignature(body, signature));
 
   const parsed = z
     .object({ subject: z.string().min(1), content: z.string().min(1) })
-    .safeParse({ subject, content });
+    .safeParse({ subject: plainEmailText(subject), content });
   if (!parsed.success) {
     throw ApiError.upstream("The ChatGPT answer had no usable email subject/body");
   }
