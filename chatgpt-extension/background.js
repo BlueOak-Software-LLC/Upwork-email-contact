@@ -23,8 +23,6 @@ let state = {
 };
 
 const ports = new Set();
-// Jobs that already handed the foreground back to the dashboard after typing.
-const focusReturned = new Set();
 let loaded = false;
 let loading = null;
 
@@ -205,6 +203,23 @@ async function ping(tabId) {
   }
 }
 
+async function managedChatTab() {
+  // A running job belongs to the tab that already holds its content script.
+  // Prefer that tab over a newer ChatGPT tab the person happened to open.
+  if (Number.isInteger(state.chatTabId)) {
+    try {
+      const tab = await chrome.tabs.get(state.chatTabId);
+      if (tab && CHATGPT_URLS.some((pattern) => matchUrl(tab.url, pattern))) return tab;
+    } catch {
+      /* the remembered tab was closed */
+    }
+    // Do not silently move a running job into a different conversation.
+    state.chatTabId = null;
+    return null;
+  }
+  return findChatTab();
+}
+
 async function openChatTab() {
   const existing = await findChatTab();
   if (existing?.id) {
@@ -213,7 +228,7 @@ async function openChatTab() {
     await keepTabAlive(existing.id);
     return existing.id;
   }
-  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
+  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
   if (!tab.id) throw new Error("Chrome did not create the ChatGPT tab");
   state.chatTabId = tab.id;
   await saveState();
@@ -238,30 +253,23 @@ async function ensureChatPage(tabId) {
   await sleep(400);
 }
 
-/**
- * A tab that was open when the extension was reloaded keeps a dead copy of the
- * content script and its "already loaded" flag. Clearing the flag lets the
- * fresh script register instead of returning immediately.
- */
-async function clearInjectedFlag(tabId) {
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        try {
-          delete window.__upworkEmailChatGptLoaded;
-        } catch {
-          window.__upworkEmailChatGptLoaded = false;
-        }
-      },
-    });
-  } catch {
-    /* the file injection below reports the real failure */
-  }
+function loadedFlagName() {
+  return "__upworkEmailChatGptLoaded_" + chrome.runtime.getManifest().version.replace(/[^a-z0-9]/gi, "_");
 }
 
 async function injectContent(tabId) {
-  await clearInjectedFlag(tabId);
+  // A dead context from a reloaded extension leaves the versioned flag behind.
+  // Polling for an answer that can never arrive just delays the tab reload.
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (name) => Boolean(window[name]),
+      args: [loadedFlagName()],
+    });
+    if (probe?.result) return null;
+  } catch {
+    /* the file injection below reports the real failure */
+  }
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ["chatgpt-content.js"] });
   } catch {
@@ -296,13 +304,9 @@ async function ensureContent(tabId) {
   );
 }
 
-// Focus changes must run one at a time. The dashboard is focused while waiting
-// and the ChatGPT tab is focused again for Copy; without a queue a late
-// dashboard focus can steal the tab back just before the clipboard write.
+// Focus changes must run one at a time. The ChatGPT tab owns the foreground
+// from Generate through Copy; only the finished result returns to the app.
 let focusChain = Promise.resolve();
-// Once Copy starts, keep the ChatGPT window. A late dashboard focus would make
-// the clipboard write fail again; only the final result may return to the app.
-let pinChatFocus = false;
 
 function withFocusLock(task) {
   const next = focusChain.then(task, task);
@@ -319,27 +323,25 @@ async function focusWindow(windowId) {
   await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
 }
 
-async function focusAppTab(force = false) {
-  if (!state.appTabId) return;
-  if (!force && pinChatFocus) return;
-  if (!force && state.current?.phase !== "waiting") return;
-  await withFocusLock(async () => {
-    if (!force && pinChatFocus) return;
-    if (!force && state.current?.phase !== "waiting") return;
+async function focusAppTab() {
+  if (!state.appTabId) return false;
+  return withFocusLock(async () => {
     try {
       const tab = await chrome.tabs.get(state.appTabId);
       await chrome.tabs.update(state.appTabId, { active: true });
       await focusWindow(tab.windowId);
+      return true;
     } catch {
       /* the dashboard tab was closed */
+      return false;
     }
   });
 }
 
-// A background tab can still be typed into, but execCommand and the editor's
-// key handling are unreliable without document focus, so the run briefly owns
-// the foreground while the prompt is typed and sent. The same activation is
-// used again before Copy because ChatGPT writes to the async clipboard.
+// The ChatGPT tab owns the foreground from Generate through Copy. That keeps
+// the editor reliable while the prompt is typed, lets the person watch the
+// answer, and gives the async clipboard API the focus it needs. The dashboard
+// is focused again only after the answer has been handed back.
 async function activateChatTab(tabId) {
   return withFocusLock(async () => {
     try {
@@ -374,15 +376,16 @@ async function resumeCurrent() {
   const job = state.current;
   if (!job) return;
   logEvent(job.jobId, job.phase || "opening", "Resume: picking the job up after a worker reload");
-  const tab = await findChatTab();
+  const tab = await managedChatTab();
   if (!tab?.id) {
     await failCurrent("The ChatGPT tab was closed before the answer arrived");
     return;
   }
   try {
+    await activateChatTab(tab.id);
+    logEvent(job.jobId, job.phase || "opening", "Resume: ChatGPT tab is in the foreground");
     await ensureContent(tab.id);
     logEvent(job.jobId, job.phase || "opening", "Resume: the ChatGPT bridge is ready");
-    await activateChatTab(tab.id);
     const reply = await chrome.tabs.sendMessage(tab.id, {
       type: "RUN_CHATGPT",
       jobId: job.jobId,
@@ -414,7 +417,6 @@ async function processQueue() {
     await saveState();
     return;
   }
-  pinChatFocus = false;
   state.current = { ...job, phase: "opening" };
   await saveState();
   broadcast({ type: "RUNNING", jobId: job.jobId, phase: "opening" });
@@ -422,6 +424,8 @@ async function processQueue() {
   try {
     const tabId = await openChatTab();
     logEvent(job.jobId, "opening", "Open: ChatGPT tab is ready (tab " + tabId + ")");
+    await activateChatTab(tabId);
+    logEvent(job.jobId, "opening", "Open: ChatGPT is in the foreground; preparing the page");
     const alive = await ensureContent(tabId);
     logEvent(
       job.jobId,
@@ -430,7 +434,6 @@ async function processQueue() {
         ? "Bridge: the content script is ready but still busy with the previous answer"
         : "Bridge: content script is ready",
     );
-    await activateChatTab(tabId);
     logEvent(job.jobId, "opening", "Prompt: handing the prompt to the ChatGPT page");
     const reply = await chrome.tabs.sendMessage(tabId, {
       type: "RUN_CHATGPT",
@@ -442,9 +445,15 @@ async function processQueue() {
     });
     if (!reply?.ok) {
       if (reply?.busy) {
+        // The page may already be running this exact job after a reload or a
+        // worker restart. Keep it current instead of sending a duplicate prompt.
+        if (reply.jobId === job.jobId) {
+          logEvent(job.jobId, "typing", "Prompt: the page is already running this job");
+          await armWatchdog(job.jobId);
+          return;
+        }
         state.queue.unshift(job);
         state.current = null;
-        pinChatFocus = false;
         await saveState();
         setTimeout(processQueue, 3_000);
         return;
@@ -509,7 +518,6 @@ async function cancelJob(jobId) {
       chrome.tabs.sendMessage(state.chatTabId, { type: "CANCEL", jobId }).catch(() => undefined);
     }
     state.current = null;
-    pinChatFocus = false;
   }
   await saveState();
   broadcast({ type: "CANCELLED", jobId });
@@ -535,7 +543,6 @@ async function failCurrent(message) {
   await disarmWatchdog();
   logEvent(job.jobId, "done", "Stopped: " + message);
   state.current = null;
-  pinChatFocus = false;
   await saveState();
   broadcast({ type: "ERROR", jobId: job.jobId, message });
   setTimeout(processQueue, 1_000);
@@ -561,13 +568,19 @@ async function completeCurrent(jobId, text) {
   state.results[jobId] = text;
   if (owns) {
     state.current = null;
-    pinChatFocus = false;
   }
   await saveState();
   logEvent(jobId, "done", "Result: answer saved; handing it to the dashboard now");
   broadcast({ type: "RESULT", jobId, text });
   if (owns) {
-    await focusAppTab(true);
+    const appFocused = await focusAppTab();
+    logEvent(
+      jobId,
+      "done",
+      appFocused
+        ? "Result: dashboard is back in front"
+        : "Result: answer saved; the dashboard tab is no longer open",
+    );
     setTimeout(processQueue, 800);
   }
   return true;
@@ -638,15 +651,22 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message?.type === "CHATGPT_ROLE") {
+    awaitReady().then(() => {
+      respond({
+        ok: true,
+        managed: Boolean(sender.tab?.id && state.chatTabId === sender.tab.id && state.current),
+        jobId: state.current?.jobId ?? null,
+      });
+    });
+    return true;
+  }
   if (message?.type === "CHATGPT_CLIPBOARD") {
     readClipboard().then((text) => respond({ text }));
     return true;
   }
   if (message?.type === "CHATGPT_FOCUS") {
     awaitReady().then(async () => {
-      if (message.reason === "copy" && state.current?.jobId === message.jobId) {
-        pinChatFocus = true;
-      }
       if (state.chatTabId) await activateChatTab(state.chatTabId);
       respond({ ok: true });
     });
@@ -662,10 +682,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         phase: message.phase,
         chars: message.chars,
       });
-      if (message.phase === "waiting" && !focusReturned.has(message.jobId)) {
-        focusReturned.add(message.jobId);
-        await focusAppTab();
-      }
     });
     respond({ ok: true });
     return;
@@ -709,10 +725,19 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   ports.add(port);
   port.onDisconnect.addListener(() => ports.delete(port));
   loadState().then(async () => {
-    // Adopt a ChatGPT tab the person already has open so the drawer and the
-    // tab-update listener know about it before the first run.
-    const tab = await findChatTab().catch(() => null);
-    if (tab?.id) await saveState();
+    // Remember which dashboard tab is connected even when it reconnects to a
+    // job that is already running; completion returns the person here.
+    if (Number.isInteger(port.sender?.tab?.id)) {
+      state.appTabId = port.sender.tab.id;
+      await saveState();
+    }
+    // Adopt a ChatGPT tab the person already has open before the first run.
+    // Never re-adopt while a job is running: another ChatGPT tab must not
+    // become the managed tab and receive its focus/copy commands.
+    if (!state.current) {
+      const tab = await findChatTab().catch(() => null);
+      if (tab?.id) await saveState();
+    }
     await postStatus(port);
     const results = await pendingResults();
     if (results.length) {

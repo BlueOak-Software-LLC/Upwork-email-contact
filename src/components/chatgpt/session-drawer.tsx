@@ -121,8 +121,8 @@ export function ChatGptSessionDrawer() {
             <div className="rounded-xl border border-dashed border-line p-5 text-sm text-muted">
               <p className="font-medium text-ink">No ChatGPT jobs for this lead yet.</p>
               <p className="mt-1 text-xs">
-                Click <b>Generate PPD</b> or <b>Generate email draft</b>. The prompt appears here,
-                the extension types it into ChatGPT, and the answer comes back into this drawer.
+                Click <b>Generate PPD</b> or <b>Generate email draft</b>. The extension opens
+                ChatGPT, waits for the answer, copies it, and brings the result back into this drawer.
               </p>
             </div>
           ) : (

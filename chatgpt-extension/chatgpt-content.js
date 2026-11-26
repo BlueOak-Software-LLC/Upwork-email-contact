@@ -7,8 +7,12 @@
  */
 
 (() => {
-  if (window.__upworkEmailChatGptLoaded) return;
-  window.__upworkEmailChatGptLoaded = true;
+  // Never let a second copy of this file register a second listener. The flag
+  // is versioned so a reloaded extension can replace a dead context, while a
+  // declarative content script and a programmatic injection still coexist.
+  const loadedFlag = "__upworkEmailChatGptLoaded_" + String(chrome.runtime.getManifest().version).replace(/[^a-z0-9]/gi, "_");
+  if (window[loadedFlag]) return;
+  window[loadedFlag] = true;
 
   const COMPOSER_FINDERS = [
     "#prompt-textarea",
@@ -215,6 +219,7 @@
   // for document focus before clicking; retry because Windows sometimes hands
   // focus over a moment after chrome.windows.update().
   async function focusChatForCopy(jobId) {
+    if (document.hasFocus()) return true;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await Promise.race([
@@ -567,17 +572,126 @@
     return !stopButton();
   }
 
+  /**
+   * ChatGPT moves the Copy control between the message body and the turn's
+   * action group depending on the build and the hover state. Search the whole
+   * turn and prefer the explicit copy test id/aria label instead of relying on
+   * one class or the order of the buttons.
+   */
+  function isCopyControl(button) {
+    if (!button || !button.isConnected) return false;
+    if (button.closest("pre, code")) return false;
+    const testId = clean(button.getAttribute("data-testid") || "").toLowerCase();
+    if (testId === "copy-turn-action-button" || testId === "copy-message-button") return true;
+    const label = clean(
+      button.getAttribute("aria-label") || button.getAttribute("title") || button.textContent || "",
+    ).toLowerCase();
+    if (!label) return false;
+    if (label.includes("code") || label.includes("markdown") || label.includes("latex")) return false;
+    if (label.includes("link") || label.includes("table") || label.includes("image")) return false;
+    return (
+      label === "copy" ||
+      label === "copy response" ||
+      label === "copy message" ||
+      label === "copy answer" ||
+      label === "copy text" ||
+      label.includes("copy response") ||
+      label.includes("copy message") ||
+      label.includes("copy answer") ||
+      label.includes("copy text") ||
+      label.includes("copy to clipboard") ||
+      label.includes("复制")
+    );
+  }
+
+  function belongsToTurn(button, turn) {
+    if (!button || !turn) return true;
+    const owner = button.closest(
+      'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
+    );
+    if (!owner) return true; // a portal action row has no turn wrapper
+    return owner === turn || turn.contains(owner) || owner.contains(turn);
+  }
+
   function copyControl(turn) {
     if (!turn) return null;
-    const buttons = Array.from(turn.querySelectorAll('button, [role="button"], [data-testid="copy-turn-action-button"]'));
-    const candidates = buttons.filter((button) => {
-      if (button.closest("pre")) return false;
-      const label = clean(
-        button.getAttribute("aria-label") || button.getAttribute("title") || button.getAttribute("data-testid") || "",
-      ).toLowerCase();
-      return label === "copy" || (label.includes("copy") && !label.includes("code"));
-    });
-    return candidates.length ? candidates[candidates.length - 1] : null;
+    const scopes = [];
+    const add = (scope) => {
+      if (scope && !scopes.includes(scope)) scopes.push(scope);
+    };
+    add(turn);
+    // A caller may pass the assistant message itself; the action row normally
+    // lives on the enclosing conversation turn.
+    add(
+      turn.closest(
+        'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
+      ),
+    );
+    for (const scope of scopes.slice()) {
+      try {
+        for (const group of scope.querySelectorAll(
+          '[role="group"][aria-label*="action" i], [aria-label*="message actions" i], [aria-label*="response actions" i]',
+        )) {
+          add(group);
+        }
+      } catch {
+        /* selectors are progressive enhancements */
+      }
+    }
+    const selectors = [
+      'button[data-testid="copy-turn-action-button"]',
+      'button[data-testid="copy-message-button"]',
+      '[data-testid="copy-turn-action-button"]',
+      '[data-testid="copy-message-button"]',
+      'button[aria-label="Copy" i]',
+      'button[aria-label="Copy response" i]',
+      'button[aria-label="Copy message" i]',
+      'button[aria-label="Copy answer" i]',
+      'button[title="Copy" i]',
+      '[role="button"][aria-label="Copy" i]',
+      '[role="button"][aria-label*="Copy response" i]',
+      'button[aria-label*="Copy" i]',
+      '[role="button"][aria-label*="Copy" i]',
+    ];
+    for (const scope of scopes) {
+      for (const selector of selectors) {
+        let list = [];
+        try {
+          list = Array.from(scope.querySelectorAll(selector));
+        } catch {
+          continue;
+        }
+        for (let index = list.length - 1; index >= 0; index -= 1) {
+          if (isCopyControl(list[index])) return list[index];
+        }
+      }
+    }
+    // Some builds portal the action row outside the conversation turn. Try
+    // the document's copy controls from the end; the clipboard check still
+    // rejects a previous turn's answer if the page has newer JSON.
+    for (const selector of selectors) {
+      let list = [];
+      try {
+        list = Array.from(document.querySelectorAll(selector));
+      } catch {
+        continue;
+      }
+      for (let index = list.length - 1; index >= 0; index -= 1) {
+        if (isCopyControl(list[index]) && belongsToTurn(list[index], turn)) return list[index];
+      }
+    }
+    // Last resort for a renamed test id: look for a button whose visible
+    // tooltip says Copy, while still rejecting Copy code/link controls.
+    let buttons = [];
+    try {
+      buttons = Array.from(turn.querySelectorAll('button, [role="button"]'));
+    } catch {
+      return null;
+    }
+    for (let index = buttons.length - 1; index >= 0; index -= 1) {
+      if (isCopyControl(buttons[index])) return buttons[index];
+    }
+    return null;
   }
 
   function reveal(button) {
@@ -739,7 +853,20 @@
       ask({ type: "CHATGPT_CLIPBOARD" }),
       sleep(3000).then(() => null),
     ]);
-    return clean(reply?.text || "");
+    const fromWorker = clean(reply?.text || "");
+    if (fromWorker) return fromWorker;
+    // The offscreen document is the reliable path, but a focused ChatGPT tab
+    // can also read the clipboard it just wrote. This fallback keeps Copy
+    // working if the worker/offscreen context was restarted mid-run.
+    try {
+      if (navigator.clipboard?.readText) {
+        const fromPage = clean(await navigator.clipboard.readText());
+        if (fromPage) return fromPage;
+      }
+    } catch {
+      /* focus/permission can reject; the retry loop handles it */
+    }
+    return "";
   }
 
   async function readAnswer(jobId, kind, node, pageText) {
@@ -748,6 +875,8 @@
     }
     logStep(jobId, "copying", `Copy: expecting the ${kind || "structured"} JSON shape`);
     const pageAnswer = structuredAnswer(kind, pageText);
+    // When the page has no readable JSON, a shape-valid clipboard is accepted;
+    // the turn filter above keeps a previous turn's Copy button out of reach.
     const giveUp = () => {
       if (pageAnswer) {
         logStep(jobId, "copying", "Copy: using the structured JSON visible in the page");
@@ -761,7 +890,10 @@
       logStep(jobId, "copying", "Copy: no assistant message node; checking the visible answer");
       return giveUp();
     }
-    const turn = node.closest('[data-testid^="conversation-turn"]') || node.closest("article") || node.parentElement;
+    const turn =
+      node.closest(
+        'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
+      ) || node.parentElement;
     if (!copyControl(turn)) {
       logStep(jobId, "copying", "Copy: no Copy control on this turn; checking the visible answer");
       return giveUp();
@@ -802,7 +934,9 @@
           /* older Chrome ignores the options object */
         }
         logStep(jobId, "copying", `Copy: clicking the Copy button (attempt ${attempt} of 3)`);
-        button.click();
+        // Use the same trusted-looking pointer sequence as Send. A plain
+        // .click() sometimes leaves ChatGPT's hover-only action row inert.
+        activate(button);
       } catch {
         logStep(jobId, "copying", `Copy: the Copy action failed (attempt ${attempt} of 3)`);
         await sleep(500);
@@ -820,7 +954,10 @@
         if (!structured) continue;
         const samePage = sameAnswer(copied, pageText);
         const sameJson = pageAnswer && JSON.stringify(structured) === JSON.stringify(pageAnswer);
-        if (samePage || sameJson) {
+        // The page may render the answer in a canvas/table that has no
+        // readable JSON even though ChatGPT's own Copy button has it. In that
+        // case the freshly copied, shape-valid JSON is the only usable source.
+        if (samePage || sameJson || !pageAnswer) {
           logStep(jobId, "copying", `Copy: the clipboard holds the structured answer (attempt ${attempt})`);
           return copied;
         }
@@ -836,12 +973,14 @@
       );
       await sleep(600);
     }
+    logStep(jobId, "copying", "Copy: falling back to the structured JSON visible in the page");
     return giveUp();
   }
 
   async function waitForReply(jobId, kind, beforeCount, beforeLast, usersBefore) {
     const startedAt = Date.now();
     let lastText = "";
+    let lastNode = null;
     let lastChange = Date.now();
     let stopSeen = false;
     let stopGoneAt = 0;
@@ -854,6 +993,7 @@
       const current = newestAnswer(beforeCount, beforeLast);
       if (current.text && current.text !== lastText) {
         lastText = current.text;
+        if (current.node) lastNode = current.node;
         lastChange = Date.now();
       }
       const stop = stopButton();
@@ -891,17 +1031,22 @@
         // on screen: a long JSON answer pauses between fields, and treating
         // that as done truncated the PPD. Stable is only a fallback for builds
         // that do not render a stop control at all.
-        const stable =
-          Date.now() - lastChange > STABLE_MS && Boolean(structuredAnswer(kind, lastText));
+        // If the stop control was never rendered (fast answer or an older
+        // build), a structured answer can settle quickly. A rendered answer
+        // that has no readable JSON (for example a canvas/table) still needs a
+        // longer quiet window so a long JSON body is not cut mid-field.
+        const structured = Boolean(structuredAnswer(kind, lastText));
+        const stableWindow = structured ? STABLE_MS : stopSeen ? STABLE_MS : 8000;
+        const stable = Date.now() - lastChange > stableWindow;
         if (finished || stable) {
           logStep(jobId, "copying", `Answer finished (${lastText.length} characters)`);
-          return { node: current.node, text: current.text };
+          return { node: lastNode, text: lastText };
         }
       }
 
       if (lastText && !stop && Date.now() - lastChange > STALL_MS) {
         logStep(jobId, "copying", `Answer stopped changing (${lastText.length} characters)`);
-        return { node: current.node, text: lastText };
+        return { node: lastNode, text: lastText };
       }
 
       if (!lastText && Date.now() - startedAt > 15000 && isBlocked()) {
@@ -1194,7 +1339,7 @@
         return;
       }
       if (activeJobId) {
-        respond({ ok: false, busy: true });
+        respond({ ok: false, busy: true, jobId: activeJobId });
         return;
       }
       runTask(job, false);
@@ -1203,14 +1348,22 @@
   });
 
   // A reload/navigation keeps the job in chrome.storage, so the answer can be
-  // read from the page instead of typing the prompt a second time.
-  try {
-    chrome.storage.local.get(ACTIVE_KEY, (stored) => {
+  // read from the page instead of typing the prompt a second time. Only the
+  // tab the worker is managing may resume: this file also loads in every other
+  // ChatGPT tab, and those tabs must not type the active prompt by themselves.
+  void (async () => {
+    try {
+      const role = await Promise.race([
+        ask({ type: "CHATGPT_ROLE" }),
+        sleep(3000).then(() => null),
+      ]);
+      if (!role?.managed || !role.jobId || activeJobId) return;
+      const stored = await chrome.storage.local.get(ACTIVE_KEY);
       const job = stored?.[ACTIVE_KEY];
-      if (job?.jobId && !activeJobId) runTask(job, true);
-    });
-  } catch {
-    /* no stored job */
-  }
+      if (job?.jobId === role.jobId && !activeJobId) runTask(job, true);
+    } catch {
+      /* no stored job or the worker is starting */
+    }
+  })();
 
 })();
