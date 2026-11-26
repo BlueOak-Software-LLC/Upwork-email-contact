@@ -4,7 +4,19 @@ This unpacked extension lets the dashboard run its PPD and email prompts in the
 ChatGPT tab you are already signed in to. The server never sees your ChatGPT
 cookies and never needs an OpenAI API key.
 
-## 1.1.0
+## 1.1.1
+
+- Seeing ChatGPT's Stop control now permanently proves that generation started;
+  a missing user-turn/assistant-text selector can no longer produce the false
+  "prompt did not start" failure after generation finishes.
+- Assistant discovery merges role-marked messages with assistant conversation
+  turns, so an older role-marked message cannot hide a newer unmarked answer.
+- If generation was observed but the answer takes longer to render, the script
+  waits for the latest turn's Copy action and clipboard instead of failing on
+  the prompt-start timeout.
+- The extension hands the copied response to the dashboard, which posts it to
+  `POST /api/chatgpt/jobs/:id/complete`; ChatGPT pages do not call the app API
+  directly.
 
 - Before typing, the content script looks for ChatGPT's own **New chat** pill
   (`button.no-drag.rounded-full`, labelled New chat / New conversation /
@@ -93,8 +105,9 @@ replace the key and get a different ID.
 - The content script waits up to 25 seconds for the composer to render. If the
   tab is signed out, still loading, or genuinely empty, the job fails with that
   explanation instead of sitting in **running** forever.
-- A send only counts when a new user turn appears; a cleared composer alone is
-  not treated as success.
+- A send is confirmed by a new user turn, a Stop control, a URL change, or the
+  composer clearing after Send. Once Stop has appeared, the job cannot be
+  misreported as “prompt did not start”; it waits for the answer/Copy action.
 - A two-minute `chrome.alarms` watchdog fails a job whose content script stopped
   answering, so a dead tab does not hang the queue.
 - Completed answers stay in `chrome.storage.local` until the dashboard sends

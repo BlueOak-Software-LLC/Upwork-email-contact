@@ -116,6 +116,7 @@ describe("sanitizeEmail · product links", () => {
       website: "https://luanle.dev",
     },
     signature: ["Best regards,", "Luan Le", "luan@example.com"],
+    includeWhatsappContact: true,
   };
 
   it("removes blogs, review sites and affiliate URLs, keeping official product links", () => {
@@ -139,6 +140,21 @@ describe("sanitizeEmail · product links", () => {
     expect(email).not.toHaveProperty("similarProducts");
   });
 
+  it("preserves bold and inline product links, and adds the requested WhatsApp contact", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content: "Hi team,\n\n**Approach:** See [Linear](https://linear.app) for the queue pattern.\n\nLet's discuss.",
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).toContain("**Approach:**");
+    expect(email.content).toContain("[Linear](https://linear.app)");
+    expect(email.content).toContain("https://wa.me/84366425800");
+  });
+
   it("keeps an allowed reference link inline and returns exactly subject/content", () => {
     const email = sanitizeEmail(
       {
@@ -151,7 +167,24 @@ describe("sanitizeEmail · product links", () => {
       emailContext,
     );
     expect(email.content).toContain("https://linear.app");
+    expect(email.content).toContain("https://wa.me/84366425800");
     expect(Object.keys(email).sort()).toEqual(["content", "subject"]);
+  });
+
+  it("rejects source code, documentation and article destinations", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Support routing",
+          content: "See [source](https://github.com/acme/project) or [docs](https://docs.linear.app/api), plus https://linear.app/blog/update.",
+        },
+      },
+      emailContext,
+    );
+    expect(email.content).not.toContain("github.com");
+    expect(email.content).not.toContain("docs.linear.app");
+    expect(email.content).not.toContain("linear.app/blog");
+    expect(email.content).toContain("https://wa.me/84366425800");
   });
 
   it("does not start a fresh email subject with Re:", () => {

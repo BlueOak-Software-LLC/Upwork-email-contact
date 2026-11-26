@@ -342,6 +342,7 @@ export interface EmailContext {
   };
   jobDescription?: string;
   jobQuestions?: string[];
+  includeWhatsappContact?: boolean;
 }
 
 /** Closing lines a model likes to author, which we replace with the real ones. */
@@ -417,10 +418,29 @@ function sanitizeEmailInner(
     : `I would like to help with ${ctx.jobTitle || "this project"}. Full proposal attached as a PDF — are you open to a quick 15-minute call this week?`;
 
   const budget = Math.max(600, MAX.emailContent - signature.reduce((n, l) => n + l.length + 1, 2));
-  let body =
-    stripMarkdown(soft(pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody, budget)) ||
-    fallbackBody;
+  const rawBody = pick(emailRaw, ["content", "body", "text", "email_content"]) ?? fallbackBody;
+  const bodyWithLinkTokens = typeof rawBody === "string"
+    ? rawBody.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, url: string) =>
+        `EMAILLINKTOKEN${Buffer.from(JSON.stringify([label, url])).toString("base64url")}ENDTOKEN`,
+      )
+    : rawBody;
+  let body = stripMarkdown(soft(bodyWithLinkTokens, budget));
+  body = body.replace(/EMAILLINKTOKEN([A-Za-z0-9_-]+)ENDTOKEN/g, (_match, token: string) => {
+    try {
+      const [label, url] = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as [string, string];
+      return `[${label}](${url})`;
+    } catch {
+      return "";
+    }
+  }) || fallbackBody;
   body = stripDisallowedUrls(body);
+  if (ctx.includeWhatsappContact) {
+    const whatsappUrl = "https://wa.me/84366425800?text=Hi%2C%20I%20saw%20your%20proposal%20for%20the%20project.";
+    body = body.replace(/https?:\/\/(?:wa\.me|api\.whatsapp\.com)\/[^\s<>"')\]]+/gi, whatsappUrl);
+    if (!body.includes("wa.me/84366425800")) {
+      body = `${body.trim()}\n\n**How to reach me:** Reply to this email or message me on WhatsApp: ${whatsappUrl}`;
+    }
+  }
 
   const content = withSignature(body, signature);
 
@@ -471,6 +491,11 @@ const BLOCKED_HOSTS = [
   "amazon.com",
   "ebay.com",
   "wikipedia.org",
+  "github.com",
+  "gitlab.com",
+  "bitbucket.org",
+  "codeberg.org",
+  "sourceforge.net",
   "google.com",
   "bing.com",
   "bit.ly",
@@ -479,7 +504,7 @@ const BLOCKED_HOSTS = [
 ];
 
 const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "buff.ly"]);
-const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?)(\/|$)/i;
+const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?|docs?|documentation|api|source|src|repository|repo)(\/|$)/i;
 
 function isAllowedProductUrl(value: string): boolean {
   const cleaned = value.trim().replace(/[),.;:!?]+$/, "");
@@ -497,7 +522,7 @@ function isAllowedProductUrl(value: string): boolean {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  if (!host.includes(".")) return false;
+  if (!host.includes(".") || host.startsWith("docs.") || host.startsWith("developer.")) return false;
   // App stores are first-class product links, even though google.com itself
   // is blocked as a search/aggregator host below.
   if (host === "play.google.com") return url.pathname.startsWith("/store/apps/details");
@@ -515,6 +540,9 @@ function isAllowedProductUrl(value: string): boolean {
 /** Drop disallowed URLs, then clean the punctuation they leave behind. */
 function stripDisallowedUrls(value: string): string {
   return value
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, url: string) =>
+      isAllowedProductUrl(url) ? `[${label}](${url})` : label,
+    )
     .replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => (isAllowedProductUrl(url) ? url : ""))
     .replace(/\(\s*\)/g, "")
     .replace(/[ \t]+([,.;:!?])/g, "$1")
@@ -813,19 +841,15 @@ function clampSubject(value: string): string {
   return `${head.replace(/[,;:\-\s/.]+$/, "")}…`;
 }
 
-/** Emails are plain text: drop markdown syntax the model may add anyway. */
+/** Preserve the small formatting contract used by the email renderer. */
 function stripMarkdown(value: string): string {
   return value
     .replace(/```[\s\S]*?```/g, "")
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)/g, "$1")
+    .replace(/__(.+?)__/g, "**$1**")
+    .replace(/(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)/g, "**$1**")
     .replace(/`([^`]+)`/g, "$1")
-    // [text](url) → "text (url)": the link survives, the syntax does not.
     .replace(/!\[[^\]]*\]\(([^)\s]+)\)/g, "$1")
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, "$1 ($2)")
-    .replace(/^\s*[-•]\s+/gm, "• ")
     .replace(/^\s*Subject:\s*/i, "")
     .replace(/<[^>]+>/g, "")
     .trim();

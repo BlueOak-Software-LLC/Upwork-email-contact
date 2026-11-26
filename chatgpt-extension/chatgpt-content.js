@@ -42,6 +42,8 @@
   const SENT_KEY_PREFIX = "upworkChatSent:";
   const ANSWER_KEY_PREFIX = "upworkChatAnswer:";
   const BUDGET_MS = 20 * 60 * 1000;
+  const COPY_ONLY_WAIT_MS = 8 * 1000;
+  const NO_ANSWER_AFTER_SEND_MS = 90 * 1000;
   // The stop button disappearing is the primary finish signal; this stable
   // window is the fallback for builds that do not expose one.
   const STABLE_MS = 4000;
@@ -268,14 +270,32 @@
   function answerNodes() {
     try {
       const roles = Array.from(document.querySelectorAll(ASSISTANT));
-      if (roles.length) return roles;
-      // Some builds drop the role attributes but keep conversation turns.
-      return Array.from(document.querySelectorAll('[data-testid^="conversation-turn"]')).filter(
-        (turn) => !turn.querySelector(USER),
-      );
+      // ChatGPT sometimes keeps an older role-marked message but renders the
+      // new answer only as a conversation turn. Merge both forms instead of
+      // letting any old role node hide the newer turn from the scraper.
+      const turns = Array.from(
+        document.querySelectorAll('[data-testid^="conversation-turn"], [data-turn="assistant"]'),
+      ).filter((turn) => !turn.querySelector(USER));
+      const nodes = [...new Set([...roles, ...turns])];
+      nodes.sort((left, right) => {
+        if (left === right) return 0;
+        return left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+      });
+      return nodes;
     } catch {
       return [];
     }
+  }
+
+  function latestAnswerTurn(beforeCount, beforeLast) {
+    const nodes = answerNodes();
+    const latest = nodes[nodes.length - 1];
+    if (!latest) return null;
+    const text = textOf(latest);
+    if (nodes.length <= beforeCount && (!text || text === beforeLast)) return null;
+    return latest.closest(
+      'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
+    ) || latest;
   }
 
   function answerBody(node) {
@@ -645,8 +665,9 @@
   async function waitForSendSignal(usersBefore, startUrl, timeoutMs) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (userCount() > usersBefore) return true;
-      if (stopButton() || location.href !== startUrl) return true;
+      if (stopButton()) return "stop";
+      if (userCount() > usersBefore) return "user";
+      if (location.href !== startUrl) return "url";
       await sleep(200);
     }
     return false;
@@ -687,7 +708,8 @@
         /* the next attempt is tried */
       }
       if (!fired) continue;
-      if (await waitForSendSignal(usersBefore, startUrl, 6000)) return;
+      const signal = await waitForSendSignal(usersBefore, startUrl, 6000);
+      if (signal) return { accepted: true, generationSeen: signal === "stop" };
       const current = findComposer() || composer;
       if (!clean(composerText(current))) {
         // An emptied box is the page's own acceptance signal. Give the stop
@@ -695,10 +717,11 @@
         // the answer; the prompt is never put back, so a slow request cannot
         // become a duplicate.
         for (let tries = 0; tries < 6; tries += 1) {
-          if (await waitForSendSignal(usersBefore, startUrl, 300)) return;
+          const signal = await waitForSendSignal(usersBefore, startUrl, 300);
+          if (signal) return { accepted: true, generationSeen: signal === "stop" };
           await sleep(150);
         }
-        return;
+        return { accepted: true, generationSeen: false };
       }
       composer = current;
     }
@@ -820,9 +843,18 @@
         } catch {
           continue;
         }
-        for (let index = list.length - 1; index >= 0; index -= 1) {
-          if (isCopyControl(list[index])) return list[index];
+        let candidates = list.filter((button) => isCopyControl(button));
+        if (scope === document.body) {
+          const users = document.querySelectorAll(USER);
+          const latestUser = users[users.length - 1];
+          if (latestUser) {
+            candidates = candidates.filter(
+              (button) =>
+                latestUser.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+            );
+          }
         }
+        if (candidates.length) return candidates[candidates.length - 1];
       }
     }
     // Some builds portal the action row outside the conversation turn. Try
@@ -835,9 +867,22 @@
       } catch {
         continue;
       }
-      for (let index = list.length - 1; index >= 0; index -= 1) {
-        if (isCopyControl(list[index]) && belongsToTurn(list[index], turn)) return list[index];
+      let candidates = list.filter((button) => isCopyControl(button) && belongsToTurn(button, turn));
+      // When no assistant node can be identified and the whole page is the
+      // search scope, mirror ChatGPT's turn ordering: prefer Copy actions
+      // that appear after the latest user message, never a previous turn.
+      if (turn === document.body) {
+        const users = document.querySelectorAll(USER);
+        const latestUser = users[users.length - 1];
+        if (latestUser) {
+          const afterUser = candidates.filter(
+            (button) =>
+              latestUser.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+          candidates = afterUser;
+        }
       }
+      if (candidates.length) return candidates[candidates.length - 1];
     }
     // Last resort for a renamed test id: look for a button whose visible
     // tooltip says Copy, while still rejecting Copy code/link controls.
@@ -1057,8 +1102,10 @@
     }
     logStep(jobId, "copying", `Copy: expecting the ${kind || "structured"} JSON shape`);
     const pageAnswer = structuredAnswer(kind, pageText);
-    // When the page has no readable JSON, a shape-valid clipboard is accepted;
-    // the turn filter above keeps a previous turn's Copy button out of reach.
+    // If ChatGPT's build does not expose the message node, still search the
+    // page's latest action row for Copy before falling back to rendered JSON.
+    // A valid freshly copied shape is accepted when there is no readable page
+    // JSON to compare it with.
     const giveUp = () => {
       if (pageAnswer) {
         logStep(jobId, "copying", "Copy: using the structured JSON visible in the page");
@@ -1068,16 +1115,19 @@
         "ChatGPT's answer did not contain the expected JSON. Wait for the stop button to disappear, click Copy again, then paste the answer below.",
       );
     };
-    if (!node) {
-      logStep(jobId, "copying", "Copy: no assistant message node; checking the visible answer");
-      return giveUp();
-    }
-    const turn =
-      node.closest(
-        'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
-      ) || node.parentElement;
+    const turn = node
+      ? node.closest(
+          'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
+        ) || node.parentElement
+      : document.body;
     if (!(await ensureCopyControl(turn))) {
-      logStep(jobId, "copying", "Copy: no Copy control appeared after hovering the answer; checking the visible answer");
+      logStep(
+        jobId,
+        "copying",
+        node
+          ? "Copy: no Copy control appeared after hovering the answer; checking the visible answer"
+          : "Copy: answer node is unavailable; no page Copy control appeared; checking rendered JSON",
+      );
       return giveUp();
     }
 
@@ -1159,12 +1209,22 @@
     return giveUp();
   }
 
-  async function waitForReply(jobId, kind, beforeCount, beforeLast, usersBefore) {
+  async function waitForReply(
+    jobId,
+    kind,
+    beforeCount,
+    beforeLast,
+    usersBefore,
+    generationSeen = false,
+    sendWasAccepted = false,
+  ) {
     const startedAt = Date.now();
     let lastText = "";
     let lastNode = null;
     let lastChange = Date.now();
-    let stopSeen = false;
+    let stopSeen = generationSeen;
+    let sendAccepted = sendWasAccepted;
+    let copyOnlyWaitLogged = false;
     let stopGoneAt = 0;
     let toldAt = 0;
     let loggedText = 0;
@@ -1173,15 +1233,18 @@
     while (Date.now() - startedAt < BUDGET_MS) {
       if (cancelled.has(jobId)) throw new Error("Cancelled");
       const current = newestAnswer(beforeCount, beforeLast);
+      // Remember a fresh turn even while it has no readable text yet; some
+      // ChatGPT builds render the Copy action/markdown after the generation UI.
+      if (current.node) lastNode = current.node;
       if (current.text && current.text !== lastText) {
         lastText = current.text;
-        if (current.node) lastNode = current.node;
         lastChange = Date.now();
       }
       const stop = stopButton();
       if (stop) {
         if (!stopSeen) logStep(jobId, "waiting", "Wait: ChatGPT is generating the answer");
         stopSeen = true;
+        sendAccepted = true;
         stopGoneAt = 0;
       } else if (stopSeen && !stopGoneAt) {
         stopGoneAt = Date.now();
@@ -1205,6 +1268,58 @@
         );
         loggedText = lastText.length;
         loggedAt = Date.now();
+      }
+
+      if (!lastText && stopSeen && stopGoneAt && Date.now() - stopGoneAt > 1200) {
+        // Some ChatGPT builds expose generation via Stop but render the final
+        // response outside the assistant selectors. Once Stop has disappeared,
+        // trust the current turn's Copy control and read the structured answer
+        // from the clipboard rather than reporting that the prompt never ran.
+        const lateNode = lastNode || latestAnswerTurn(beforeCount, beforeLast);
+        if (lateNode) {
+          lastNode = lateNode;
+          const lateText = textOf(lateNode);
+          if (lateText) {
+            logStep(jobId, "copying", `Answer finished (${lateText.length} characters; rendered after Stop disappeared)`);
+            return { node: lateNode, text: lateText };
+          }
+          if (copyControl(lateNode)) {
+            logStep(jobId, "copying", "Answer finished; the new assistant turn has a Copy button but no readable text");
+            return { node: lateNode, text: "" };
+          }
+        }
+        if (copyControl(document.body)) {
+          logStep(jobId, "copying", "Answer finished; using the latest Copy action because the answer markup is unavailable");
+          return { node: null, text: "" };
+        }
+        if (Date.now() - stopGoneAt > NO_ANSWER_AFTER_SEND_MS) {
+          throw new Error(
+            "ChatGPT finished generating, but its answer and Copy button were not found. Keep the ChatGPT tab open and run again.",
+          );
+        }
+      }
+
+      if (!lastText && sendAccepted && !stop) {
+        const elapsed = Date.now() - startedAt;
+        if (elapsed > COPY_ONLY_WAIT_MS) {
+          const lateNode = latestAnswerTurn(beforeCount, beforeLast);
+          const copyTurn = lateNode || document.body;
+          const copy = copyControl(copyTurn);
+          if (copy) {
+            lastNode = lateNode;
+            logStep(jobId, "copying", "Answer finished; ChatGPT accepted the prompt and exposed Copy without readable assistant text");
+            return { node: lateNode, text: "" };
+          }
+          if (!copyOnlyWaitLogged) {
+            copyOnlyWaitLogged = true;
+            logStep(jobId, "waiting", "Wait: ChatGPT accepted the prompt, but no assistant text or Copy control is visible yet");
+          }
+        }
+        if (elapsed > NO_ANSWER_AFTER_SEND_MS) {
+          throw new Error(
+            "ChatGPT accepted the prompt, but no answer or Copy control appeared within 90 seconds. Check the ChatGPT tab and run again.",
+          );
+        }
       }
 
       if (lastText && !stop) {
@@ -1239,11 +1354,18 @@
       if (
         !lastText &&
         !stop &&
+        !stopSeen &&
+        !sendAccepted &&
         userCount() <= usersBefore &&
         Date.now() - startedAt > 30000
       ) {
+        logStep(
+          jobId,
+          "done",
+          `Wait: no answer signal after send (assistant turns ${answerNodes().length}, user turns ${userCount()}, Stop was never seen)`,
+        );
         throw new Error(
-          "The prompt did not start in the ChatGPT tab — press Enter there, then press Run again. If ChatGPT is already answering, wait for it to finish.",
+          "The ChatGPT tab accepted the prompt box but no answer, user turn, or generation control appeared. Check the open ChatGPT tab and run again.",
         );
       }
       await sleep(500);
@@ -1393,17 +1515,24 @@
         "opening",
         "Opening: checking the ChatGPT tab (" + location.host + location.pathname + ")",
       );
-      if (resume && job.phase !== "waiting") {
+      if (resume) {
         const sent = await readSent(job.jobId);
         if (sent && Number.isFinite(sent.beforeCount)) {
-          state = { ...job, ...sent, phase: "waiting" };
+          // Keep the exact send baseline and acceptance signals across a tab or
+          // extension reload; otherwise a worker resume can mistake a real
+          // generation for a prompt that never started.
+          state = { ...job, ...sent, accepted: sent.accepted !== false, phase: "waiting" };
           needsSend = false;
           await setActive(state);
           tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting" });
-          logStep(job.jobId, "waiting", "Prompt was already sent; waiting for the answer");
+          logStep(job.jobId, "waiting", "Resume: the prompt was already sent; waiting for the answer");
+        } else if (job.phase === "waiting") {
+          // Older extension versions did not persist send markers. A persisted
+          // waiting phase is still proof that sendPrompt accepted this job.
+          state = { ...job, accepted: true, phase: "waiting" };
+          needsSend = false;
+          logStep(job.jobId, "waiting", "Resume: this prompt was already sent; waiting for the answer");
         }
-      } else if (resume && job.phase === "waiting") {
-        logStep(job.jobId, "waiting", "Resume: this prompt was already sent; waiting for the answer");
       }
       const system = clean(job.system || "");
       const prompt = system ? system + "\n\n---\n\n" + job.prompt : job.prompt;
@@ -1464,11 +1593,18 @@
           logStep(job.jobId, "typing", "Start: prompt is in the message box; sending it");
           const composer = findComposer();
           if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
-          await sendPrompt(composer, usersBefore);
+          const sendState = await sendPrompt(composer, usersBefore);
+          state = {
+            ...state,
+            accepted: Boolean(sendState?.accepted),
+            generationSeen: Boolean(sendState?.generationSeen),
+          };
           await writeSent(job.jobId, {
             beforeCount: state.beforeCount,
             beforeLast: state.beforeLast,
             usersBefore: state.usersBefore,
+            generationSeen: state.generationSeen,
+            accepted: Boolean(sendState?.accepted),
             at: Date.now(),
           });
           state = { ...state, phase: "waiting" };
@@ -1487,6 +1623,8 @@
           state.beforeCount ?? 0,
           state.beforeLast ?? "",
           state.usersBefore ?? 0,
+          Boolean(state.generationSeen),
+          Boolean(state.accepted),
         );
         if (cancelled.has(job.jobId)) throw new Error("Cancelled");
 

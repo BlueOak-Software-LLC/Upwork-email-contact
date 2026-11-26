@@ -577,6 +577,7 @@ async function completeEmail(
     sender: brand,
     jobDescription: lead.job_description ?? "",
     jobQuestions: extractQuestions(lead.job_description),
+    includeWhatsappContact: true,
   });
   const warnings = [
     ...bracketWarnings(findBracketTokens(parsed)),

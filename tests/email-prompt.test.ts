@@ -17,8 +17,12 @@ describe("email draft prompt", () => {
     expect(prompt.system).toContain("reviewed PPD");
     expect(prompt.system).toContain("Answer EVERY question or direct request");
     expect(prompt.system).toContain("Use web search");
-    expect(prompt.system).toContain("experience/approach paragraph");
-    expect(prompt.system).toContain("Professional, technical");
+    expect(prompt.system).toContain("examples inline in the explanation of the approach");
+    expect(prompt.system).toContain("Professional, warm, concise, technically specific");
+    expect(prompt.system).toContain("bold");
+    expect(prompt.system).toContain("WhatsApp");
+    expect(prompt.user).toContain("{{whatsapp_share_link}}");
+    expect(prompt.system).toContain("source code");
     expect(prompt.user).toContain("{{research_notes}}");
     expect(prompt.user).toContain("{{job_questions}}");
     expect(prompt.user).toContain("{{ppd_summary}}");

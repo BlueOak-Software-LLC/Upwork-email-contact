@@ -14,6 +14,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { TimeAgo } from "@/components/ui/time-ago";
 import { useToast } from "@/components/ui/toast";
 import { errorMessage } from "@/lib/api/errors";
+import { EmailBodyPreview } from "./email-body-preview";
 
 /**
  * Step 4 of the pipeline: the draft a human approves.
@@ -319,9 +320,9 @@ export function DraftCard({
               <div className="text-sm font-medium">{draft.subject || "(no subject)"}</div>
               {draft.subject ? <CopyButton value={draft.subject} label="Copy subject" /> : null}
             </div>
-            <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-relaxed text-muted">
-              {draft.body_text}
-            </pre>
+            <div className="mt-3">
+              <EmailBodyPreview text={draft.body_text} />
+            </div>
             <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
               <CopyButton value={draft.body_text} label="Copy message" />
               <span>{draft.body_text.split(/\s+/).filter(Boolean).length} words</span>

@@ -177,6 +177,22 @@ describe("buildTrackedHtml", () => {
     expect(built.html.indexOf("<img")).toBeGreaterThan(built.html.indexOf("Hi there"));
   });
 
+  it("renders safe bold, bullet and inline-link formatting into email HTML", () => {
+    const html = textToHtml("**Approach:**\n\n- Validate each event\n\nSee [Linear](https://linear.app) for the queue pattern.");
+    expect(html).toContain("<strong>Approach:</strong>");
+    expect(html).toContain("<ul");
+    expect(html).toContain("<li");
+    expect(html).toContain('<a href="https://linear.app"');
+    expect(html).not.toContain("**Approach:**");
+  });
+
+  it("escapes markup that is not part of the supported formatting", () => {
+    const html = textToHtml("<img src=x onerror=alert(1)> **safe**");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).toContain("<strong>safe</strong>");
+    expect(html).not.toContain("<img src=x");
+  });
+
   it("rewrites a bare URL in the text to the click redirect", () => {
     const built = buildTrackedHtml({
       html: textToHtml("See https://acme.com/portfolio for work."),
