@@ -268,8 +268,9 @@ VOICE AND STRUCTURE
   3. The hands-on approach: how you would deliver it step by step, in line with the PPD, including
      handover and post-launch support when the post needs them.
   4. Live examples, only if verified. One lead-in sentence such as "Live examples for context:", then
-     one bullet per link, each written exactly in this form, with the destination as both label and URL:
-     - [https://example.com/feature](https://example.com/feature) — what this page shows about the workflow
+     one bullet per link, written as [Label](URL). The label is 2–4 words naming the page. Never write
+     a bare URL, and never use the URL as its own label:
+     - [Feature workflow](https://example.com/feature) — what this page shows about the workflow
   5. Answers to the client's questions, then one closing paragraph that mentions the attached PDF
      proposal and asks for one 15-minute call this week. End there.
 - 130–220 words, excluding the link list and the server-appended sign-off.
@@ -281,7 +282,7 @@ SIGN-OFF
   appends one sign-off with the name, WhatsApp start-chat link, role and company website.
 
 Before returning, check: web search was used; each link is verified, official, and written as
-[URL](URL); no blogs, source code or invented URLs; examples are not claimed as the writer's own work;
+[Label](URL) with a 2–4 word label; no blogs, source code or invented URLs; examples are not claimed as the writer's own work;
 the email matches the PPD; every question is answered; there is no sign-off or contact block.
 
 OUTPUT
@@ -327,8 +328,8 @@ STRUCTURE
 1. Greeting alone on its own line.
 2. Hook: one specific requirement from the post.
 3. Hands-on approach, consistent with the PPD, including handover and support where relevant.
-4. Live examples as a bulleted list of verified official links, each written as [URL](URL) with a short
-   note on what the page shows. Skip the list if nothing could be verified.
+4. Live examples as a bulleted list of verified official links, each written as [Label](URL) with a 2–4
+   word label and a short note on what the page shows. Skip the list if nothing could be verified.
 5. Answers to every question, in the post's order.
 6. The attached PDF proposal and one request for a 15-minute call this week. End there.
 Do not include {{whatsapp_share_link}}; the server adds the sign-off with the contact details.

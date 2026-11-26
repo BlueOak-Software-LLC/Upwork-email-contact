@@ -215,8 +215,8 @@ booked" is one story in one table.
 # 1. apply the migration once (Supabase SQL editor, after 0001–0004)
 #    supabase/migrations/0005_email_tracking.sql
 
-# 2. tell the app where recipients can reach it — a public HTTPS origin, not localhost
-TRACKING_DOMAIN=https://your-app.vercel.app
+# 2. tracked links use the branded domain (default; set it only to change it)
+TRACKING_DOMAIN=https://email.blueoaksoftware.cloud
 EMAIL_TRACKING=true
 LINK_TRACKING=true
 TRACKING_RETENTION_DAYS=365

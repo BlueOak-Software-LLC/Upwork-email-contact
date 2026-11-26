@@ -164,7 +164,6 @@ export async function sendEmail(
         ...(input.headers ?? {}),
         ...(contact ? { "X-Contact-Id": contact.id } : {}),
         ...(options.draftId ? { "X-Draft-Id": options.draftId } : {}),
-        ...(token ? { "X-Tracking-Id": token } : {}),
       },
     };
 

@@ -1,5 +1,16 @@
 import type { Contact } from "@/types/domain";
 
+/** Readable link text for a URL: host and path, without scheme, "www." or trailing slash. */
+export function readableLinkLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const label = `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/+$/, "")}`;
+    return label.length <= 60 ? label : `${label.slice(0, 57)}...`;
+  } catch {
+    return url;
+  }
+}
+
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, "&amp;")
@@ -53,7 +64,7 @@ function formatEmailInline(value: string): string {
         safeUrl = null;
       }
       if (!safeUrl || !["http:", "https:"].includes(safeUrl.protocol)) return match;
-      const anchor = `<a href="${escapeHtml(url)}" style="color:#1769aa;text-decoration:underline">${escapeHtml(label ?? url)}</a>${escapeHtml(suffix)}`;
+      const anchor = `<a href="${escapeHtml(url)}" style="color:#1769aa;text-decoration:underline">${escapeHtml(label?.trim() && !/^https?:\/\//i.test(label.trim()) ? label : readableLinkLabel(url))}</a>${escapeHtml(suffix)}`;
       const token = `\u0000${tokens.length}\u0000`;
       tokens.push(anchor);
       return token;
@@ -71,7 +82,14 @@ export function htmlToText(html: string) {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ")
     .replace(/<\/li>/gi, "\n")
+    .replace(/<\/ul>/gi, "\n")
     .replace(/<\/p>/gi, "\n\n")
+    // A labelled link keeps its destination in the plain-text part: "Label (URL)".
+    .replace(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const text = label.replace(/<[^>]+>/g, "").trim();
+      if (!text || text === href) return href;
+      return `${text} (${href})`;
+    })
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")

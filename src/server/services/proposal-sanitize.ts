@@ -9,6 +9,7 @@ import type {
 } from "@/types/lead";
 import { ApiError } from "@/server/http/errors";
 import { emailSignatureLines } from "@/lib/email-signature";
+import { readableLinkLabel } from "@/server/services/templates";
 
 /**
  * The model is asked for the PPD block contract, but we never trust it:
@@ -580,9 +581,11 @@ function linkifyPlainUrls(value: string): string {
   const tokens: string[] = [];
   const protectedMarkdown = value.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-    (match) => {
+    (match, label: string, url: string) => {
+      // A URL used as its own label becomes a readable label; other labels are kept as written.
+      const fixed = /^https?:\/\//.test(label.trim()) ? `[${readableLinkLabel(url)}](${url})` : match;
       const token = `EMAILMARKDOWNLINK${tokens.length}ENDTOKEN`;
-      tokens.push(match);
+      tokens.push(fixed);
       return token;
     },
   );
@@ -591,7 +594,7 @@ function linkifyPlainUrls(value: string): string {
     (raw) => {
       const url = raw.replace(/[.,;:!?]+$/, "");
       const trailing = raw.slice(url.length);
-      return `[${url}](${url})${trailing}`;
+      return `[${readableLinkLabel(url)}](${url})${trailing}`;
     },
   );
   return linked.replace(/EMAILMARKDOWNLINK(\d+)ENDTOKEN/g, (_match, index: string) => tokens[Number(index)] ?? "");

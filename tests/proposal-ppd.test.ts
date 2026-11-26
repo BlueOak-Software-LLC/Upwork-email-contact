@@ -143,7 +143,7 @@ describe("sanitizeEmail · product links", () => {
       emailContext,
     );
     expect(email.content).toContain("https://linear.app");
-    expect(email.content).toContain("[https://linear.app](https://linear.app)");
+    expect(email.content).toContain("[linear.app](https://linear.app)");
     expect(email.content).not.toContain("medium.com");
     expect(email.content).not.toContain("g2.com");
     expect(email).not.toHaveProperty("similarProducts");
@@ -182,16 +182,16 @@ describe("sanitizeEmail · product links", () => {
       },
       emailContext,
     );
-    expect(email.content).toContain("- [https://linear.app](https://linear.app)");
-    expect(email.content).toContain("- [https://developers.notion.com/](https://developers.notion.com/)");
+    expect(email.content).toContain("- [linear.app](https://linear.app)");
+    expect(email.content).toContain("- [developers.notion.com](https://developers.notion.com/)");
 
     const html = textToHtml(email.content);
     expect(html.match(/<li/g)).toHaveLength(2);
-    expect(html.match(/https:\/\/linear\.app/g)).toHaveLength(2); // href + visible text only
+    expect(html.match(/https:\/\/linear\.app/g)).toHaveLength(1); // href only; the label is "linear.app"
     expect(html).not.toMatch(/<\/a>\s*https?:\/\//);
     const text = htmlToText(html);
     expect(text.match(/https:\/\/linear\.app/g)).toHaveLength(1);
-    expect(text).toContain("- https://linear.app");
+    expect(text).toContain("- linear.app (https://linear.app)");
   });
 
   it("keeps paragraphs readable and replaces model closings/contact details with one canonical signature", () => {

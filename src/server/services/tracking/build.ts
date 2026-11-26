@@ -1,5 +1,5 @@
 import { clickUrl, pixelUrl } from "@/server/services/tracking/token";
-import { escapeHtml } from "@/server/services/templates";
+import { escapeHtml, readableLinkLabel } from "@/server/services/templates";
 
 /**
  * Turns a stored body into the HTML that actually leaves the building.
@@ -85,6 +85,13 @@ export function buildTrackedHtml(options: {
     );
   }
 
+  // 2b. an anchor whose visible text is just a URL gets a readable label
+  out = out.replace(
+    /(<a\b[^>]*>)(\s*)(https?:\/\/[^<\s]+)(\s*)(<\/a>)/gi,
+    (_m, open: string, lead: string, text: string, trail: string, close: string) =>
+      `${open}${lead}${escapeHtml(readableLinkLabel(text.replace(/&amp;/g, "&")))}${trail}${close}`,
+  );
+
   // 3. the pixel
   const src = pixelUrl(domain, token, preview);
   const pixelSrc = preview ? null : src;
@@ -92,7 +99,7 @@ export function buildTrackedHtml(options: {
     out = insertPixel(
       out,
       `<img src="${escapeHtml(src)}" width="1" height="1" alt="" role="presentation" ` +
-        `style="border:0;width:1px;height:1px;display:block;opacity:0" />`,
+        `border="0" />`,
     );
   }
 

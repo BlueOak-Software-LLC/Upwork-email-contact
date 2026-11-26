@@ -138,7 +138,7 @@ The drawer shows one timestamped line per step, from both sides of the bridge:
 ## Allowed dashboard origins
 
 `externally_connectable` lists localhost, the production
-`upwork-email-contact.vercel.app` origin, and the exact preview origin
+`email.blueoaksoftware.cloud` origin, the `upwork-email-contact.vercel.app` origin, and the exact preview origin
 `upwork-email-contact-coredev367.vercel.app`. Chrome match patterns cannot express a
 prefix wildcard such as `upwork-email-contact-*.vercel.app`, so a preview URL
 (or any other domain) must be added to `manifest.json` as an **exact** origin

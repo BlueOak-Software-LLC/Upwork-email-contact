@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** Branded origin for open and click links. Recipients must be able to reach it. */
+export const DEFAULT_TRACKING_DOMAIN = "https://email.blueoaksoftware.cloud";
+
 /**
  * Server-only environment access.
  *
@@ -85,10 +88,10 @@ const ServerEnvSchema = z.object({
   LINK_TRACKING: booleanish(true),
   /**
    * Public HTTPS origin that serves `/o/*` and `/c/*`. Must be this app.
-   * Falls back to `NEXT_PUBLIC_APP_URL`. Unsetting it after a send is not
+   * Defaults to `DEFAULT_TRACKING_DOMAIN`, never the Vercel host. Unsetting it after a send is not
    * cosmetic: every already-delivered email keeps the original URLs.
    */
-  TRACKING_DOMAIN: z.string().url().optional(),
+  TRACKING_DOMAIN: z.string().url().default(DEFAULT_TRACKING_DOMAIN),
   /** Days of `open`/`click` rows kept before `purge_tracking_events` deletes them. */
   TRACKING_RETENTION_DAYS: z.coerce.number().int().min(7).max(3650).default(365),
   /**
@@ -235,7 +238,7 @@ function enforceProviderContracts(raw: RawServerEnv): ServerEnv {
  * it also refuses `log` mode, so a staging run cannot mint live tokens.
  */
 export function trackingOrigin(env: ServerEnv = getServerEnv()): string {
-  return (env.TRACKING_DOMAIN ?? env.NEXT_PUBLIC_APP_URL).replace(/\/+$/, "");
+  return env.TRACKING_DOMAIN.replace(/\/+$/, "");
 }
 
 export function trackingEnabled(env: ServerEnv = getServerEnv()): boolean {

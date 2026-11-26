@@ -266,7 +266,7 @@ describe("GET /api/tracking/stats", () => {
     expect(json.data.configured).toEqual({
       enabled: true,
       linkTracking: true,
-      domain: "https://track.example.com",
+      domain: "https://email.blueoaksoftware.cloud",
       retentionDays: 365,
     });
     expect(stats).toHaveBeenCalledWith(7);

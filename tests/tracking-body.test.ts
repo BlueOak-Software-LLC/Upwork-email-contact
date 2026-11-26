@@ -188,11 +188,29 @@ describe("buildTrackedHtml", () => {
 
   it("shows a Markdown destination URL only once as a clickable link", () => {
     const html = textToHtml("[https://linear.app](https://linear.app) and WhatsApp: [Start chatting](https://wa.me/84366425800)");
-    expect(html.match(/<a href="https:\/\/linear\.app"[^>]*>https:\/\/linear\.app<\/a>/g)).toHaveLength(1);
+    expect(html.match(/<a href="https:\/\/linear\.app"[^>]*>linear\.app<\/a>/g)).toHaveLength(1);
     expect(html).not.toContain("</a>https://linear.app");
     expect(html).toContain('<a href="https://wa.me/84366425800"');
     expect(html).toContain(">Start chatting</a>");
     expect(html).not.toContain("</a>https://wa.me/84366425800");
+  });
+
+  it("labels a URL used as link text with its host and path", () => {
+    const built = buildTrackedHtml({
+      html: '<p><a href="https://developers.notion.com/">https://developers.notion.com/</a></p>',
+      token: TOKEN,
+      domain: DOMAIN,
+      links: [link("https://developers.notion.com/")],
+    });
+    expect(built.html).toContain(">developers.notion.com</a>");
+    expect(built.html).not.toContain(">https://developers.notion.com/</a>");
+  });
+
+  it("adds a plain 1x1 pixel without hiding styles", () => {
+    const built = buildTrackedHtml({ html: "<p>Hi</p>", token: TOKEN, domain: DOMAIN, links: [] });
+    const pixel = built.html.match(/<img [^>]*\/o\/[^>]*>/)?.[0] ?? "";
+    expect(pixel).toContain('width="1" height="1"');
+    expect(pixel).not.toMatch(/opacity|display:\s*none|hidden/i);
   });
 
   it("escapes markup that is not part of the supported formatting", () => {
@@ -359,7 +377,7 @@ describe("tracked email body · one link per URL", () => {
     // Visible text of every anchor is the destination itself, never a raw URL after an anchor.
     expect(built.html).not.toMatch(/<\/a>\s*https?:\/\//);
     const visible = [...built.html.matchAll(/<a [^>]*>([^<]*)<\/a>/g)].map((match) => match[1]);
-    expect(visible).toEqual(["https://linear.app", "https://developers.notion.com/", "https://linear.app"]);
+    expect(visible).toEqual(["linear.app", "developers.notion.com", "linear.app"]);
     expect(built.html.match(/<li/g)).toHaveLength(2);
   });
 });

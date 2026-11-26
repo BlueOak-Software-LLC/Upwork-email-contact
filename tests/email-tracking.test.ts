@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { htmlToText } from "@/server/services/templates";
 
 /**
  * The send path with tracking wired in.
@@ -373,5 +374,16 @@ describe("sendEmail · when the audit row cannot be written", () => {
 
     const results = await sendEmail(message({ text: "See https://acme.example.com/x" }));
     expect(results[0]!.status).toBe("sent");
+  });
+});
+
+describe("htmlToText · links in the plain-text part", () => {
+  it("keeps the destination after a labelled link and drops the duplicate for a bare one", () => {
+    expect(htmlToText('<p>WhatsApp: <a href="https://wa.me/1">Start chatting</a></p>')).toBe(
+      "WhatsApp: Start chatting (https://wa.me/1)",
+    );
+    expect(htmlToText('<p><a href="https://acme.example.com/x">https://acme.example.com/x</a></p>')).toBe(
+      "https://acme.example.com/x",
+    );
   });
 });

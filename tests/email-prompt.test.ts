@@ -22,10 +22,10 @@ describe("email draft prompt", () => {
     expect(prompt.user).toContain("{{ppd_summary}}");
   });
 
-  it("asks for a hands-on pitch with a bulleted list of verified links in [URL](URL) form", () => {
+  it("asks for a hands-on pitch with a bulleted list of verified links in [Label](URL) form", () => {
     expect(prompt.system).toContain("hands-on");
     expect(prompt.system).toContain("handover");
-    expect(prompt.system).toContain("- [https://example.com/feature](https://example.com/feature)");
+    expect(prompt.system).toContain("- [Feature workflow](https://example.com/feature)");
     expect(prompt.system).toContain("official Apple App Store / Google Play");
     expect(prompt.system).toContain("keep each list item on its own");
   });
