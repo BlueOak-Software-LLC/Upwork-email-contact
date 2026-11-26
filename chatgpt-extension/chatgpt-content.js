@@ -79,6 +79,22 @@
     return true;
   }
 
+  // A control can be laid out outside the current scroll position and still be
+  // clickable. This is used for the New chat pill; the composer keeps the
+  // stricter viewport check below.
+  function rendered(element) {
+    if (!element || !element.isConnected) return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 1 || rect.height <= 1) return false;
+    try {
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    } catch {
+      /* keep the rect result */
+    }
+    return true;
+  }
+
   // ChatGPT renders responsive copies of its controls; the hidden one must not
   // receive the prompt, so only a laid-out element counts.
   function find(finders) {
@@ -218,12 +234,13 @@
   // no-op in a background document. Ask the worker to raise the tab and wait
   // for document focus before clicking; retry because Windows sometimes hands
   // focus over a moment after chrome.windows.update().
-  async function focusChatForCopy(jobId) {
+  async function focusChat(jobId, reason = "copy") {
     if (document.hasFocus()) return true;
+    const label = reason === "new chat" ? "New chat focus" : "Copy focus";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         await Promise.race([
-          ask({ type: "CHATGPT_FOCUS", jobId, reason: "copy" }),
+          ask({ type: "CHATGPT_FOCUS", jobId, reason }),
           sleep(1200),
         ]);
       } catch {
@@ -236,6 +253,7 @@
       }
       if (document.hasFocus()) return true;
       if (await waitForDocumentFocus(800)) return true;
+      logStep(jobId, "opening", label + ": the tab is still in the background; trying again");
       await sleep(150);
     }
     return document.hasFocus();
@@ -329,37 +347,178 @@
     }
   }
 
-  function newChatControl() {
-    const finders = [
-      'a[data-testid="create-new-chat-button"]',
-      'button[data-testid="create-new-chat-button"]',
-      'a[aria-label="New chat" i]',
-      'button[aria-label="New chat" i]',
-      'a[href="/"]',
-    ];
-    for (const finder of finders) {
-      try {
-        const elements = Array.from(document.querySelectorAll(finder));
-        const control = elements.find((element) => {
-          const label = clean(element.getAttribute("aria-label") || element.textContent || "").toLowerCase();
-          return element.getAttribute("href") === "/" || label.includes("new chat");
-        });
-        if (control) return control;
-      } catch {
-        /* next finder */
-      }
-    }
-    return null;
+  // ---- ChatGPT's own "New chat" controls --------------------------------
+  // The flow follows the same button rules as the scraper extension:
+  //   <button type="button" class="no-drag ... rounded-full ... min-h-9 px-3
+  //     text-sm leading-5 font-medium">New chat</button>
+  // The sidebar row (data-testid="sidebar-new-chat", .sidebar-item) is never
+  // used, and neither is a button inside an answer. "Start new chat" is the
+  // smaller pill ChatGPT shows where an answer should be; it is included.
+  const NEW_CHAT_LABEL =
+    /^(?:new (?:chat|conversation|thread)|start (?:a |an )?new (?:chat|conversation|thread))$/i;
+  const NEW_CHAT_KEY_PREFIX = "upworkChatNewChat:";
+  const NEW_CHAT_WAIT_MS = 20000;
+  const NEW_CHAT_AGAIN_MS = 5 * 60 * 1000;
+
+  function newChatGuardKey(jobId, again) {
+    return NEW_CHAT_KEY_PREFIX + (again ? "again:" : "") + jobId;
   }
 
-  // The current conversation is reused. The New chat control is only used as a
-  // readiness check: its presence means the signed-in shell has rendered. It is
-  // never clicked, because switching chats drops the conversation the user is
-  // looking at and makes the dashboard's phase disagree with the tab.
+  function readNewChatGuard(key) {
+    try {
+      return Number(sessionStorage.getItem(key) || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  function writeNewChatGuard(key) {
+    try {
+      sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      /* the job still works; only the duplicate guard is lost */
+    }
+  }
+
+  function newChatScore(button) {
+    let classes = "";
+    try {
+      classes = String(button.className || "");
+    } catch {
+      /* a button without a class string scores zero */
+    }
+    return (
+      (/\bno-drag\b/.test(classes) ? 4 : 0) +
+      (/\brounded-full\b/.test(classes) ? 2 : 0) +
+      (/\bmin-h-9\b/.test(classes) ? 1 : 0) +
+      (/\bpx-3\b/.test(classes) ? 1 : 0)
+    );
+  }
+
+  function newChatButton() {
+    let buttons = [];
+    try {
+      buttons = Array.from(document.querySelectorAll("button"));
+    } catch {
+      return null;
+    }
+    const hits = buttons.filter((button) => {
+      if (!button || String(button.tagName || "").toLowerCase() !== "button") return false;
+      if (button.hasAttribute("disabled")) return false;
+      if (button.getAttribute("aria-disabled") === "true") return false;
+      if (!rendered(button)) return false;
+      let classes = "";
+      try {
+        classes = String(button.className || "");
+      } catch {
+        return false;
+      }
+      // The sidebar row is also called "New chat"; it must never be clicked.
+      if (/\bsidebar-item\b/.test(classes)) return false;
+      if (button.getAttribute("data-testid") === "sidebar-new-chat") return false;
+      if (button.closest('[data-message-author-role], [data-testid^="conversation-turn"], article, pre')) {
+        return false;
+      }
+      const label = clean(
+        button.innerText || button.textContent || button.getAttribute("aria-label") || "",
+      );
+      if (!NEW_CHAT_LABEL.test(label)) return false;
+      // The real header/CTA pill carries both of these classes. A menu entry
+      // or a copied template without them is not the ChatGPT button.
+      return /\bno-drag\b/.test(classes) && /\brounded-full\b/.test(classes);
+    });
+    if (!hits.length) return null;
+    hits.sort((left, right) => newChatScore(right) - newChatScore(left));
+    return hits[0];
+  }
+
+  // Click New chat only when ChatGPT actually renders the pill. The initial
+  // click and the after-answer click have separate guards, so a reload into
+  // either fresh chat does not click again.
+  async function startNewChat(jobId, again = false) {
+    const guardKey = newChatGuardKey(jobId, again);
+    const last = readNewChatGuard(guardKey);
+    if (last && Date.now() - last < NEW_CHAT_AGAIN_MS) {
+      logStep(
+        jobId,
+        "opening",
+        again
+          ? "New chat: this job already followed the second New chat button; keeping the current answer"
+          : "New chat: this job already clicked New chat in this tab; using the open chat",
+      );
+      return false;
+    }
+    if (stopButton()) {
+      logStep(jobId, "opening", "New chat: waiting for the current answer to stop before switching");
+      if (!(await waitForStopGone(jobId))) return false;
+    }
+    const button = newChatButton();
+    if (!button) {
+      logStep(
+        jobId,
+        "opening",
+        again
+          ? "New chat: no New chat button after the answer; copying the answer in this chat"
+          : "New chat: no New chat button on this page; using the conversation that is open",
+      );
+      return false;
+    }
+    // Mark before clicking: a click that reloads the page must not be repeated
+    // by the auto-resume path in the fresh chat.
+    writeNewChatGuard(guardKey);
+    const buttonLabel = clean(
+      button.innerText || button.textContent || button.getAttribute("aria-label") || "New chat",
+    );
+    logStep(jobId, "opening", 'New chat: found the "' + buttonLabel + '" button; clicking it');
+    await focusChat(jobId, "new chat");
+    const oldUrl = location.href;
+    const oldUsers = userCount();
+    const oldAnswers = answerNodes().length;
+    try {
+      activate(button);
+    } catch {
+      logStep(jobId, "opening", "New chat: the button could not be clicked; using the conversation that is open");
+      return false;
+    }
+    logStep(jobId, "opening", `New chat: clicked; waiting up to ${NEW_CHAT_WAIT_MS / 1000} seconds for the new chat`);
+    const startedAt = Date.now();
+    let switched = false;
+    while (Date.now() - startedAt < NEW_CHAT_WAIT_MS) {
+      if (isBlocked()) break;
+      const composer = findComposer();
+      const users = userCount();
+      const answers = answerNodes().length;
+      const urlChanged = location.href !== oldUrl;
+      // On an already-empty new-chat page the click changes nothing visible;
+      // that page is already the fresh chat this job needs. Give a navigation
+      // a beat to start before treating the old empty page as settled.
+      const alreadyFresh = oldUsers === 0 && oldAnswers === 0;
+      const freshSettled = alreadyFresh && Date.now() - startedAt > 800;
+      if (composer && (urlChanged || users < oldUsers || answers < oldAnswers || freshSettled)) {
+        switched = true;
+        break;
+      }
+      await sleep(300);
+    }
+    if (switched) {
+      await waitForComposer(8000);
+      logStep(jobId, "opening", "New chat: the new chat is open; the prompt will be typed there");
+    } else {
+      logStep(
+        jobId,
+        "opening",
+        "New chat: the button did not open a new chat in time; using the conversation that is open",
+      );
+    }
+    return switched;
+  }
+
+  // The signed-in shell is ready when the composer exists. New chat is checked
+  // separately, because some valid conversations do not render that pill.
   async function waitForShell(timeoutMs = 4000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (findComposer() && newChatControl()) return true;
+      if (findComposer()) return true;
       await sleep(200);
     }
     return Boolean(findComposer());
@@ -701,6 +860,8 @@
         node.style.setProperty("--actions-opacity", "1");
         node.style.visibility = "visible";
         node.style.contentVisibility = "visible";
+        node.style.opacity = "1";
+        node.style.pointerEvents = "auto";
       } catch {
         /* next ancestor */
       }
@@ -714,6 +875,27 @@
     const host = button.parentElement || button;
     host.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, view: window }));
     host.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true, view: window }));
+  }
+
+  // The action row can be mounted only when the answer is hovered. Search the
+  // turn first; if the Copy control is not there yet, hover the turn and look
+  // again before giving up on the clipboard.
+  async function ensureCopyControl(turn) {
+    if (!turn) return null;
+    let button = copyControl(turn);
+    if (button) return button;
+    try {
+      turn.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const options = { bubbles: true, cancelable: true, view: window };
+      turn.dispatchEvent(new MouseEvent("mouseover", options));
+      turn.dispatchEvent(new MouseEvent("mouseenter", options));
+      turn.dispatchEvent(new MouseEvent("mousemove", options));
+    } catch {
+      /* the selector search below is still worth a try */
+    }
+    await sleep(600);
+    button = copyControl(turn);
+    return button;
   }
 
   function ask(message) {
@@ -894,8 +1076,8 @@
       node.closest(
         'section[data-turn="assistant"], [data-turn="assistant"], [data-testid^="conversation-turn"], article',
       ) || node.parentElement;
-    if (!copyControl(turn)) {
-      logStep(jobId, "copying", "Copy: no Copy control on this turn; checking the visible answer");
+    if (!(await ensureCopyControl(turn))) {
+      logStep(jobId, "copying", "Copy: no Copy control appeared after hovering the answer; checking the visible answer");
       return giveUp();
     }
 
@@ -906,7 +1088,7 @@
         ? "Copy focus: ChatGPT tab is already focused"
         : "Copy focus: bringing the ChatGPT tab forward",
     );
-    const focused = await focusChatForCopy(jobId);
+    const focused = await focusChat(jobId, "copy");
     logStep(
       jobId,
       "copying",
@@ -921,10 +1103,10 @@
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       if (attempt > 1 && !document.hasFocus()) {
         logStep(jobId, "copying", `Copy: refocusing the ChatGPT tab before attempt ${attempt}`);
-        await focusChatForCopy(jobId);
+        await focusChat(jobId, "copy");
         await sleep(300);
       }
-      const button = copyControl(turn);
+      const button = await ensureCopyControl(turn);
       if (!button) break;
       try {
         reveal(button);
@@ -1121,6 +1303,14 @@
     }
   }
 
+  async function clearSent(jobId) {
+    try {
+      await chrome.storage.local.remove(SENT_KEY_PREFIX + jobId);
+    } catch {
+      /* nothing to clear */
+    }
+  }
+
   // A finished answer is persisted before the handoff. If the worker misses the
   // message (or the page reloads at that moment), the next RUN/resume sends the
   // saved answer instead of typing the whole prompt again.
@@ -1197,96 +1387,167 @@
         return;
       }
       let state = job;
-      let alreadySent = false;
-      logStep(job.jobId, "opening", `Opening: checking the ChatGPT tab (${location.host}${location.pathname})`);
+      let needsSend = !(resume && job.phase === "waiting");
+      logStep(
+        job.jobId,
+        "opening",
+        "Opening: checking the ChatGPT tab (" + location.host + location.pathname + ")",
+      );
       if (resume && job.phase !== "waiting") {
         const sent = await readSent(job.jobId);
         if (sent && Number.isFinite(sent.beforeCount)) {
           state = { ...job, ...sent, phase: "waiting" };
-          alreadySent = true;
+          needsSend = false;
           await setActive(state);
           tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting" });
           logStep(job.jobId, "waiting", "Prompt was already sent; waiting for the answer");
         }
+      } else if (resume && job.phase === "waiting") {
+        logStep(job.jobId, "waiting", "Resume: this prompt was already sent; waiting for the answer");
       }
-      if (!alreadySent && (!resume || job.phase !== "waiting")) {
-        // The worker brings the tab forward before this message; wait for the
-        // document to actually own focus, because the editor ignores some
-        // programmatic input while it is in the background.
-        try {
-          await Promise.race([ask({ type: "CHATGPT_FOCUS" }), sleep(1500)]);
-        } catch {
-          /* the tab is already active */
-        }
-        await waitForDocumentFocus(3000);
-        if (!(await waitForIdle())) {
-          throw new Error(
-            "ChatGPT is still writing the previous answer — wait for it to finish in the ChatGPT tab, then press Run again",
-          );
-        }
-        // Persist the job before touching the page so a reload can resume it.
-        await setActive({ ...job, phase: "opening" });
-        // Check that the signed-in shell is ready without clicking New chat:
-        // the user's current conversation is the one this job uses.
-        await waitForShell();
-        logStep(job.jobId, "opening", "Ready: using the open ChatGPT conversation");
-        const nodes = answerNodes();
-        const beforeCount = nodes.length;
-        const beforeLast = nodes.length ? textOf(nodes[nodes.length - 1]) : "";
-        const usersBefore = userCount();
-        const system = clean(job.system || "");
-        const prompt = system ? `${system}\n\n---\n\n${job.prompt}` : job.prompt;
-        state = { ...job, phase: "typing", beforeCount, beforeLast, usersBefore };
-        await setActive(state);
-        tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "typing" });
-        logStep(job.jobId, "typing", `Input: typing the prompt (${prompt.length} characters)`);
-        await typePrompt(prompt);
-        logStep(job.jobId, "typing", "Start: prompt is in the message box; sending it");
-        const composer = findComposer();
-        if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
-        await sendPrompt(composer, usersBefore);
-        await writeSent(job.jobId, {
-          beforeCount: state.beforeCount,
-          beforeLast: state.beforeLast,
-          usersBefore: state.usersBefore,
-          at: Date.now(),
-        });
-        state = { ...state, phase: "waiting" };
-        await setActive(state);
-        // Send this before waiting for the first token; this is the status the
-        // person needs to see while ChatGPT is generating.
-        tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting", chars: 0 });
-        logStep(job.jobId, "waiting", "Sent: ChatGPT accepted the prompt; waiting for the answer");
-        await sleep(900);
-      }
+      const system = clean(job.system || "");
+      const prompt = system ? system + "\n\n---\n\n" + job.prompt : job.prompt;
+      let retriedNewChat = false;
+      let freshChat = false;
 
-      const result = await waitForReply(
-        job.jobId,
-        job.kind,
-        state.beforeCount ?? 0,
-        state.beforeLast ?? "",
-        state.usersBefore ?? 0,
-      );
-      if (cancelled.has(job.jobId)) throw new Error("Cancelled");
-      logStep(
-        job.jobId,
-        "copying",
-        "Answer: captured " + result.text.length + " characters from the page",
-      );
-      tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
-      const answer = await readAnswer(job.jobId, job.kind, result.node, result.text);
-      if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
-      if (cancelled.has(job.jobId)) throw new Error("Cancelled");
-      logStep(job.jobId, "copying", "Answer: ready to hand over (" + answer.length + " characters)");
-      // Do not report "done" yet: the answer is only done once the worker has
-      // stored it and the dashboard has claimed it. The worker emits the done
-      // phase from completeCurrent after the handoff.
-      tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: answer.length });
-      const stored = await sendReplyToApp(job.jobId, answer);
-      if (stored) await clearActive(job.jobId);
+      while (true) {
+        if (needsSend) {
+          // The worker brings the tab forward before this message; wait for the
+          // document to actually own focus, because the editor ignores some
+          // programmatic input while it is in the background.
+          try {
+            await Promise.race([ask({ type: "CHATGPT_FOCUS" }), sleep(1500)]);
+          } catch {
+            /* the tab is already active */
+          }
+          await waitForDocumentFocus(3000);
+          if (!(await waitForIdle())) {
+            throw new Error(
+              "ChatGPT is still writing the previous answer — wait for it to finish in the ChatGPT tab, then press Run again",
+            );
+          }
+          // Persist the job before touching the page so a reload can resume it.
+          await setActive({ ...job, phase: "opening" });
+          await waitForShell();
+
+          let opened = false;
+          if (freshChat) {
+            opened = true;
+            freshChat = false;
+            logStep(job.jobId, "opening", "New chat: the automatic New chat is open; typing there");
+          } else {
+            opened = await startNewChat(job.jobId, false);
+          }
+          if (opened) await waitForShell();
+          logStep(
+            job.jobId,
+            "opening",
+            opened
+              ? "Ready: using the fresh ChatGPT conversation"
+              : "Ready: using the open ChatGPT conversation",
+          );
+
+          const nodes = answerNodes();
+          const beforeCount = nodes.length;
+          const beforeLast = nodes.length ? textOf(nodes[nodes.length - 1]) : "";
+          const usersBefore = userCount();
+          state = { ...job, phase: "typing", beforeCount, beforeLast, usersBefore };
+          await setActive(state);
+          // A second New chat restarts the prompt after the first "waiting"
+          // phase. Do not send a lower phase that the worker/dashboard would
+          // ignore; the next "waiting" heartbeat is valid again.
+          if (!retriedNewChat) {
+            tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "typing" });
+          }
+          logStep(job.jobId, "typing", "Input: typing the prompt (" + prompt.length + " characters)");
+          await typePrompt(prompt);
+          logStep(job.jobId, "typing", "Start: prompt is in the message box; sending it");
+          const composer = findComposer();
+          if (!composer) throw new Error("The ChatGPT message box disappeared before sending");
+          await sendPrompt(composer, usersBefore);
+          await writeSent(job.jobId, {
+            beforeCount: state.beforeCount,
+            beforeLast: state.beforeLast,
+            usersBefore: state.usersBefore,
+            at: Date.now(),
+          });
+          state = { ...state, phase: "waiting" };
+          await setActive(state);
+          // Send this before waiting for the first token; this is the status the
+          // person needs to see while ChatGPT is generating.
+          tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "waiting", chars: 0 });
+          logStep(job.jobId, "waiting", "Sent: ChatGPT accepted the prompt; waiting for the answer");
+          await sleep(900);
+          needsSend = false;
+        }
+
+        const result = await waitForReply(
+          job.jobId,
+          job.kind,
+          state.beforeCount ?? 0,
+          state.beforeLast ?? "",
+          state.usersBefore ?? 0,
+        );
+        if (cancelled.has(job.jobId)) throw new Error("Cancelled");
+
+        // Step 3: only once the stop button is gone, look for a New chat
+        // button again. "Start new chat" means this chat is not the place to
+        // take an answer from, so click it and run the prompt again there.
+        await waitForStopGone(job.jobId);
+        if (!retriedNewChat && !stopButton()) {
+          const nextChat = newChatButton();
+          if (!nextChat) {
+            logStep(job.jobId, "copying", "New chat: no New chat button after the answer; copying this answer");
+          } else {
+            retriedNewChat = true;
+            logStep(
+              job.jobId,
+              "copying",
+              'New chat: found the "' + clean(nextChat.innerText || nextChat.textContent) + '" button after the answer; running the prompt again there',
+            );
+            // The old prompt's "sent" marker must not make the fresh chat look
+            // like it is already waiting for an answer.
+            await clearSent(job.jobId);
+            await setActive({ ...job, phase: "opening" });
+            const switched = await startNewChat(job.jobId, true);
+            if (switched) {
+              freshChat = true;
+              needsSend = true;
+              state = { ...job, phase: "typing" };
+              await setActive(state);
+              logStep(job.jobId, "typing", "New chat: starting the prompt again in the new chat");
+              continue;
+            }
+            if (result.node && !result.node.isConnected) {
+              throw new Error(
+                "Clicking New chat after the answer cleared the chat, but the new chat did not finish opening. Wait for ChatGPT, then press Run again.",
+              );
+            }
+            logStep(job.jobId, "copying", "New chat: could not switch; copying the answer in this chat");
+          }
+        }
+
+        logStep(
+          job.jobId,
+          "copying",
+          "Answer: captured " + result.text.length + " characters from the page",
+        );
+        tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: result.text.length });
+        const answer = await readAnswer(job.jobId, job.kind, result.node, result.text);
+        if (!clean(answer)) throw new Error("ChatGPT finished but the answer was empty");
+        if (cancelled.has(job.jobId)) throw new Error("Cancelled");
+        logStep(job.jobId, "copying", "Answer: ready to hand over (" + answer.length + " characters)");
+        // Do not report "done" yet: the answer is only done once the worker has
+        // stored it and the dashboard has claimed it. The worker emits the done
+        // phase from completeCurrent after the handoff.
+        tell({ type: "CHATGPT_PROGRESS", jobId: job.jobId, phase: "copying", chars: answer.length });
+        const stored = await sendReplyToApp(job.jobId, answer);
+        if (stored) await clearActive(job.jobId);
+        break;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logStep(job.jobId, "done", cancelled.has(job.jobId) ? "Stopped by the dashboard" : `Stopped: ${message}`);
+      logStep(job.jobId, "done", cancelled.has(job.jobId) ? "Stopped by the dashboard" : "Stopped: " + message);
       if (cancelled.has(job.jobId)) {
         tell({ type: "CHATGPT_CANCELLED", jobId: job.jobId });
         await clearPendingReply(job.jobId);

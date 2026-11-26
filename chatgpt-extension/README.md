@@ -4,13 +4,23 @@ This unpacked extension lets the dashboard run its PPD and email prompts in the
 ChatGPT tab you are already signed in to. The server never sees your ChatGPT
 cookies and never needs an OpenAI API key.
 
-## 1.0.10
+## 1.1.0
 
+- Before typing, the content script looks for ChatGPT's own **New chat** pill
+  (`button.no-drag.rounded-full`, labelled New chat / New conversation /
+  Start new chat). It clicks it once at the start and waits up to 20 seconds for
+  the fresh chat. The sidebar `data-testid="sidebar-new-chat"` row and buttons
+  inside answers are never clicked.
+- After the stop button disappears, it checks for that New chat button again.
+  If ChatGPT shows one (for example **Start new chat** where the answer should
+  be), it clicks it and runs the prompt again in the new chat once. If no New
+  chat button is present, it copies the final answer in the current chat.
 - The manifest now declares `chatgpt-content.js`, so the Copy implementation
   is loaded on every ChatGPT page instead of relying only on a background
   injection.
-- Copy-control detection searches the turn, its action group and the document
-  for the real answer Copy button, and rejects Copy code/link/table controls.
+- Copy-control detection hovers the answer first, then searches the turn, its
+  action group and the document for the real answer Copy button, and rejects
+  Copy code/link/table controls.
 - Copy is clicked after the stop control disappears; the clipboard is retried,
   validated against the job's JSON shape, and a rendered page JSON fallback is
   used when the clipboard cannot be read.
@@ -40,23 +50,27 @@ replace the key and get a different ID.
    Copy code is present as soon as the tab loads. When Generate is clicked, the
    background worker opens or focuses one ChatGPT tab, brings it to the front,
    re-injects the file only if that copy is missing, and sends the prompt.
-3. The ChatGPT tab stays in front while the answer is generated. The content
-   script types into the composer, clicks Send, waits for the stop control to
-   disappear, and then copies the answer. It clicks ChatGPT’s own Copy button
-   and reads the clipboard. The clipboard is accepted only when it contains the
-   JSON shape this job needs (a `ppd` object with sections, or an `email`
-   object with subject and content). It must also
-   match the answer on the page, unless the page has no readable JSON at all
-   (for example a rendered table or canvas) — then the freshly copied JSON is
-   the only usable source. If it is stale, empty or unstructured, the script
-   clicks Copy again, up to three times; only then does it use structured JSON
-   visible in the page, and it fails with a clear message instead of saving
-   plain text.
-4. The content script saves the answer under `upworkChatAnswer:<jobId>`, sends
+3. The content script checks for ChatGPT’s **New chat** pill before typing. If
+   it is there, it clicks the pill and waits for the fresh chat; otherwise it
+   uses the conversation that is open. It then types the prompt and presses
+   Send.
+4. The ChatGPT tab stays in front while the answer is generated. Once the stop
+   button disappears, the content script checks for a New chat button again.
+   If one is there, it clicks it and repeats the prompt in the new chat once.
+   Otherwise it clicks ChatGPT’s own **Copy** button and reads the clipboard.
+   The clipboard is accepted only when it contains the JSON shape this job
+   needs (a `ppd` object with sections, or an `email` object with subject and
+   content). It must also match the answer on the page, unless the page has no
+   readable JSON at all (for example a rendered table or canvas) — then the
+   freshly copied JSON is the only usable source. If it is stale, empty or
+   unstructured, the script clicks Copy again, up to three times; only then
+   does it use structured JSON visible in the page, and it fails with a clear
+   message instead of saving plain text.
+5. The content script saves the answer under `upworkChatAnswer:<jobId>`, sends
    `CHATGPT_REPLY`, and waits for the worker’s acknowledgement. If the worker
    was asleep, the send is retried; if the page reloads first, the saved answer
    is sent on the next run instead of typing the prompt again.
-5. The worker stores the text in its pending-result cache, broadcasts
+6. The worker stores the text in its pending-result cache, broadcasts
    `RESULT`, and returns the foreground to the dashboard. The app posts it to
    `POST /api/chatgpt/jobs/:id/complete`; the server parses the JSON, sanitises
    it, and saves the proposal/draft. The browser never writes a draft directly.
