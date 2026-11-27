@@ -83,3 +83,76 @@ describe("email spam safety", () => {
     expect(email.subject).not.toMatch(/\u2014/);
   });
 });
+
+/** Links must be live work, and the email never says what the writer cannot show. */
+describe("email research and gap rules", () => {
+  const prompt = DEFAULT_PROMPTS.email_draft;
+  const all = `${prompt.system}\n${prompt.user}`;
+  const emailCtx = { jobTitle: "Phone build", ppd: undefined as never };
+
+  it("asks for live apps, not overview or reference pages, and omits links silently", () => {
+    expect(all).toContain("third-party live apps or production projects");
+    expect(all).toContain("product overview, features, pricing");
+    expect(all).toContain("omit every link and do not mention links or research");
+    expect(all).toContain("Describe your own work, not the app's");
+  });
+
+  it("bans phrases about what the writer cannot show", () => {
+    expect(all).toContain('"I cannot"');
+    expect(all).toContain('"no verified"');
+    expect(all).toContain("Never write about what you cannot show");
+  });
+
+  it("drops gap sentences from the email and keeps the rest", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Phone build",
+          content: [
+            "Hi Sam,",
+            "",
+            "I cannot provide substantiated telephone-system examples or verified experience with Twilio. I can build the call flow and handover.",
+            "",
+            "I have not worked with SIP phones yet. I will test them in week two.",
+          ].join("\n"),
+        },
+      },
+      emailCtx,
+    );
+    expect(email.content).not.toMatch(/cannot|have not|verified experience/i);
+    expect(email.content).toContain("I can build the call flow and handover.");
+    expect(email.content).toContain("I will test them in week two.");
+  });
+
+  it("drops a bullet that is itself a gap statement", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Phone build",
+          content: "Hi Sam,\n\n- I cannot show a live SIP example.\n- [Call flow](https://example.com/app): live call flow\n\nThanks.",
+        },
+      },
+      emailCtx,
+    );
+    expect(email.content).not.toContain("cannot show");
+    expect(email.content).toContain("[Call flow](https://example.com/app)");
+  });
+
+  it("sends an email with no links instead of failing", () => {
+    const email = sanitizeEmail({ email: { subject: "Phone build", content: "Hi Sam,\n\nI can build it in six weeks." } }, emailCtx);
+    expect(email.content).toContain("I can build it in six weeks.");
+  });
+
+  it("strips overview and pricing pages, not just blogs", () => {
+    const email = sanitizeEmail(
+      {
+        email: {
+          subject: "Phone build",
+          content: "Hi Sam,\n\n- [Voice](https://vendor.example.com/voice/features): overview\n- [Pricing](https://vendor.example.com/pricing): plans",
+        },
+      },
+      emailCtx,
+    );
+    expect(email.content).not.toContain("vendor.example.com");
+  });
+});

@@ -359,7 +359,6 @@ export interface EmailContext {
   jobDescription?: string;
   jobQuestions?: string[];
   includeWhatsappContact?: boolean;
-  includeSimilarProjectLink?: boolean;
 }
 
 /** Closing lines a model likes to author, which we replace with the real ones. */
@@ -469,6 +468,29 @@ function capEmailLinks(body: string, max: number): string {
     ++seen <= max ? `[${label}](${url})` : label);
 }
 
+/**
+ * Sentences in which the writer says what they cannot show or have not done.
+ * The prompt bans these; this drops any that slip through.
+ */
+const GAP_SENTENCE =
+  /\b(?:I|we)\s+(?:cannot|can'?t|can not|do not have|don'?t have|have not|haven'?t|am unable|am not able)\b|\bunable to\b|\bno (?:verified|substantiated|documented|public|live)\b|\b(?:verified|substantiated|documented)\s+(?:experience|examples?|links?|projects?|products?|apps?|evidence|proof)\b|\bno experience with\b/i;
+
+/** Line by line: bullets are dropped whole, prose loses only the gap sentences. */
+function removeGapSentences(body: string): string {
+  return body
+    .split("\n")
+    .map((line) => {
+      if (/^\s*- /.test(line)) return GAP_SENTENCE.test(line) ? "" : line;
+      return line
+        .split(/(?<=[.!?])\s+/)
+        .filter((sentence) => !GAP_SENTENCE.test(sentence))
+        .join(" ");
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function sanitizeEmailInner(
   raw: unknown,
   ctx: EmailContext,
@@ -512,14 +534,7 @@ function sanitizeEmailInner(
   }) || fallbackBody;
   body = stripDisallowedUrls(body);
   body = linkifyPlainUrls(body);
-  if (ctx.includeSimilarProjectLink) {
-    const productLinks = [...body.matchAll(/(?:\]\()?((?:https?:\/\/)[^\s)\]]+)/g)]
-      .map((match) => (match[1] ?? "").replace(/[.,;:!?]+$/, ""))
-      .filter((url) => isAllowedProductUrl(url));
-    if (productLinks.length === 0) {
-      throw ApiError.upstream("The email did not include a verified public similar-product link. Regenerate after web research.");
-    }
-  }
+  body = removeGapSentences(body);
   if (ctx.includeWhatsappContact || ctx.sender) {
     // Contact details live only in the canonical signature. Remove model-added
     // contact sentences without discarding an entire unformatted body paragraph.
@@ -605,7 +620,7 @@ const BLOCKED_HOSTS = [
 ];
 
 const SHORTENERS = new Set(["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "buff.ly"]);
-const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?|docs?|documentation|api|source|src|repository|repo)(\/|$)/i;
+const BLOCKED_PATH = /(^|\/)(blog|blogs|article|articles|news|review|reviews|compare|comparison|alternatives?|listicle|best|resources?|guides?|docs?|documentation|api|source|src|repository|repo|features?|pricing|solutions?|use-?cases?|industries|plans|case-studies|customers|learn|help|support|developers?)(\/|$)/i;
 
 function linkifyPlainUrls(value: string): string {
   const tokens: string[] = [];
